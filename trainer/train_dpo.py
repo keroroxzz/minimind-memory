@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import DPODataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_model_paths
 
 warnings.filterwarnings('ignore')
 
@@ -106,8 +106,7 @@ def train_epoch(epoch, loader, iters, ref_model, lm_config, start_step=0, wandb=
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+            ckp, _ = get_model_paths(args.save_dir, args.save_weight, lm_config)
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()

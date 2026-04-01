@@ -23,7 +23,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoTokenizer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import AgentRLDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_model_paths
 from trainer.rollout_engine import create_rollout_engine, compute_per_token_logps
 
 warnings.filterwarnings('ignore')
@@ -348,8 +348,7 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
-            moe_suffix = '_moe' if lm_config.use_moe else ''
-            ckp = f'{args.save_dir}/{args.save_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+            ckp, _ = get_model_paths(args.save_dir, args.save_weight, lm_config)
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()

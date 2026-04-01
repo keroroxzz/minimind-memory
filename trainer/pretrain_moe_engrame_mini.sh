@@ -1,0 +1,1 @@
+python3 train_pretrain.py --batch_size 16 --accumulation_steps 16 --use_moe 1 --use_engram 1 --data_path "../dataset/pretrain_t2t_mini.jsonl" --use_wandb

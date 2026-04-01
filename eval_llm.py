@@ -6,7 +6,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from model.model_lora import *
-from trainer.trainer_utils import setup_seed, get_model_params
+from trainer.trainer_utils import setup_seed, get_model_params, get_model_paths
 warnings.filterwarnings('ignore')
 
 def init_model(args):
@@ -16,11 +16,11 @@ def init_model(args):
             hidden_size=args.hidden_size,
             num_hidden_layers=args.num_hidden_layers,
             use_moe=bool(args.use_moe),
+            use_engram=bool(args.use_engram),
             inference_rope_scaling=args.inference_rope_scaling
         ))
-        moe_suffix = '_moe' if args.use_moe else ''
-        ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
-        model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
+        ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
+        model.load_state_dict(torch.load(ckp_path, map_location=args.device), strict=False)
         if args.lora_weight != 'None':
             apply_lora(model)
             load_lora(model, f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth')
@@ -37,7 +37,8 @@ def main():
     parser.add_argument('--lora_weight', default='None', type=str, help="LoRA权重名称（None表示不使用，可选：lora_identity, lora_medical）")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--use_moe', default=1, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
     parser.add_argument('--max_new_tokens', default=8192, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
     parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")

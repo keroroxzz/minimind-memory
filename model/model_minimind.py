@@ -3,6 +3,8 @@ from torch import nn
 from transformers.activations import ACT2FN
 from transformers import PreTrainedModel, GenerationMixin, PretrainedConfig
 from transformers.modeling_outputs import MoeCausalLMOutputWithPast
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Config
@@ -42,6 +44,69 @@ class MiniMindConfig(PretrainedConfig):
         self.moe_intermediate_size = kwargs.get("moe_intermediate_size", self.intermediate_size)
         self.norm_topk_prob = kwargs.get("norm_topk_prob", True)
         self.router_aux_loss_coef = kwargs.get("router_aux_loss_coef", 5e-4)
+
+        # --- DeepSeek Engram 新增參數 ---
+        self.use_engram: bool = kwargs.get("use_engram", True)
+        self.engram_n: int = kwargs.get("engram_n", 2)                 # 使用 2-gram (Bigram)
+        self.engram_table_size: int = kwargs.get("engram_table_size", 131072)   # Hash table 大小 (128K)
+        self.engram_layers: List[int] = kwargs.get("engram_layers", [2,]) # 作用層數
+
+
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+#                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+class EngramModule(nn.Module):
+    def __init__(self, config: MiniMindConfig):
+        super().__init__()
+        self.n = config.engram_n
+        self.table_size = config.engram_table_size
+        self.dim = config.hidden_size
+        
+        # Engram 的 Embedding 表
+        self.engram_emb = nn.Embedding(self.table_size, self.dim)
+        
+        # Gating 機制：用來決定要將多少 Engram 知識混入主網路
+        self.gate = nn.Linear(self.dim, self.dim, bias=False)
+        
+        # 簡單的質數用於 Hash 碰撞打散
+        self.prime = 31 
+
+    def forward(self, input_ids: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
+        """
+        input_ids: [batch_size, seq_len]
+        hidden_states: [batch_size, seq_len, dim]
+        """
+        b, seq_len = input_ids.shape
+        device = input_ids.device
+
+        # 1. 構建 N-gram Hash ID (支援平行的 Tensor 運算)
+        if self.n == 2:
+            # Bigram 實作：將序列向右平移一格，補 0
+            shifted_ids = torch.cat([
+                torch.zeros((b, 1), dtype=input_ids.dtype, device=device), 
+                input_ids[:, :-1]
+            ], dim=1)
+            # Hash 函數: (ID_prev * Prime + ID_curr) % Table_Size
+            hash_ids = (shifted_ids * self.prime + input_ids) % self.table_size
+        else:
+            # 通用 N-gram 實作
+            hash_ids = input_ids.clone()
+            for i in range(1, self.n):
+                shifted = torch.cat([
+                    torch.zeros((b, i), dtype=input_ids.dtype, device=device), 
+                    input_ids[:, :-i]
+                ], dim=1)
+                hash_ids = (hash_ids * self.prime + shifted) % self.table_size
+
+        # 2. 查表取得 Engram 特徵
+        # engram_features shape: [batch_size, seq_len, dim]
+        engram_features = self.engram_emb(hash_ids)
+
+        # 3. Gating 機制 (Information Fusion)
+        # 依據當前的 hidden_states 來決定每個維度要吸收多少 Engram 資訊
+        gate_weights = torch.sigmoid(self.gate(hidden_states))
+
+        return engram_features * gate_weights
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Model
@@ -204,6 +269,12 @@ class MiniMindModel(nn.Module):
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
 
+        # --- 初始化 Engram 模組 ---
+        self.use_engram = getattr(config, 'use_engram', False)
+        if self.use_engram:
+            self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
+            self.engram_module = EngramModule(config)
+
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
@@ -212,7 +283,13 @@ class MiniMindModel(nn.Module):
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
         presents = []
-        for layer, past_key_value in zip(self.layers, past_key_values):
+        for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
+            # --- 注入 Engram 知識 ---
+            # 如果目前層數在設定的 engram_layers 中，則加上 Engram 特徵
+            if self.use_engram and i in self.engram_layers:
+                engram_h = self.engram_module(input_ids, hidden_states)
+                hidden_states = hidden_states + engram_h  # 將 Engram 特徵直接加到 Residual Stream 中
+
             hidden_states, present = layer(
                 hidden_states,
                 position_embeddings,
