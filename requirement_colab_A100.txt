@@ -10,7 +10,7 @@ nltk==3.8
 numpy
 openai
 psutil==5.9.8
-pydantic==
+pydantic
 rich==13.7.1
 scikit_learn
 sentence_transformers
