@@ -64,7 +64,8 @@ def get_model_paths(save_dir, weight, lm_config):
     model_name = [weight,
                   lm_config.hidden_size,
                   'moe' if lm_config.use_moe else '',
-                  'engram' if lm_config.use_engram else '']
+                  'engram' if lm_config.use_engram else '',
+                  'dde' if getattr(lm_config, 'use_dde', False) else '']
     model_name = "_".join([str(x) for x in model_name if x != ''])
 
     ckp_path = os.path.join(save_dir, f'{model_name}.pth')
@@ -129,12 +130,18 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', sav
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindForCausalLM(lm_config)
 
-    if from_weight!= 'none':
+    if from_weight != 'none':
         if from_weight.endswith('.pth'):
             weight_path = from_weight
+            weights = torch.load(weight_path, map_location=device)
+        elif from_weight.endswith('.safetensors'):
+            from safetensors.torch import load_file
+            weight_path = from_weight
+            weights = load_file(weight_path, device=device)
         else:
             weight_path, _ = get_model_paths(save_dir, from_weight, lm_config)
-        weights = torch.load(weight_path, map_location=device)
+            weights = torch.load(weight_path, map_location=device)
+
         model.load_state_dict(weights, strict=False)
 
     get_model_params(model, lm_config)

@@ -51,6 +51,110 @@ class MiniMindConfig(PretrainedConfig):
         self.engram_table_size: int = kwargs.get("engram_table_size", 131072)   # Hash table 大小 (128K)
         self.engram_layers: List[int] = kwargs.get("engram_layers", [2,]) # 作用層數
 
+        # --- MiniMind DDE-v1 新增參數 ---
+        self.use_dde: bool = kwargs.get("use_dde", False)
+        self.dde_layer: int = kwargs.get("dde_layer", 4)             # 在第幾層做 memory I/O
+        self.dde_num_slots: int = kwargs.get("dde_num_slots", 1024)  # 記憶槽總數
+        self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)  # 層次化定址：粗粒度
+        self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)      # 層次化定址：細粒度
+        self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 256) # 記憶向量維度
+        self.dde_key_dim: int = kwargs.get("dde_key_dim", 128)       # 定址 Key 的維度
+        self.dde_diversity_weight: float = kwargs.get("dde_diversity_weight", 0.05)
+        self.dde_sparsity_weight: float = kwargs.get("dde_sparsity_weight", 0.01)
+
+
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+#                   DDE Module (Dynamic Discrete Engram v1)
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+class DDEModule(nn.Module):
+    def __init__(self, config: MiniMindConfig):
+        super().__init__()
+        self.num_slots = config.dde_num_slots
+        self.num_coarse = config.dde_num_coarse
+        self.num_fine = config.dde_num_fine
+        self.mem_dim = config.dde_memory_dim
+        self.key_dim = config.dde_key_dim
+        self.dim = config.hidden_size
+        
+        # [記憶表] 使用 Buffer，不參與梯度更新
+        self.register_buffer('memory_table', torch.randn(self.num_slots, self.mem_dim) * 0.01)
+        
+        # [小模型 A] Packer (寫入壓縮) 與 Unpacker (讀取解壓縮)
+        self.packer = nn.Sequential(
+            nn.Linear(self.dim, self.dim // 2),
+            nn.SiLU(),
+            nn.Linear(self.dim // 2, self.mem_dim),
+            nn.LayerNorm(self.mem_dim)
+        )
+        self.unpacker = nn.Linear(self.mem_dim, self.dim)
+        
+        # [小模型 B] Indexer (層次化定址)
+        self.indexer = nn.Sequential(
+            nn.Linear(self.dim, self.dim),
+            nn.SiLU(),
+            nn.Linear(self.dim, self.num_coarse + self.num_fine + 2)
+        )
+        
+        # 初始化 Gate Bias 為負數，冷啟動
+        nn.init.constant_(self.indexer[-1].bias[-2:], -1.0)
+
+    def forward(self, h: torch.Tensor, temp: float = 1.0):
+        """
+        h: [batch_size, seq_len, dim]
+        """
+        b, seq_len, _ = h.shape
+        device = h.device
+        
+        # 1. 索引器生成控制訊號
+        indexer_out = self.indexer(h) # [b, seq_len, num_coarse + num_fine + 2]
+        
+        coarse_logits = indexer_out[..., :self.num_coarse]
+        fine_logits = indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine]
+        write_gate = torch.sigmoid(indexer_out[..., -2 : -1])
+        read_gate = torch.sigmoid(indexer_out[..., -1 : ])
+        
+        # 2. 層次化定址權重 (Hierarchical Addressing)
+        w_coarse = F.softmax(coarse_logits / temp, dim=-1) # [b, seq_len, num_coarse]
+        w_fine = F.softmax(fine_logits / temp, dim=-1)     # [b, seq_len, num_fine]
+        
+        read_weights = (w_coarse.unsqueeze(-1) * w_fine.unsqueeze(-2)).view(b, seq_len, self.num_slots)
+        
+        # 3. 讀取階段 (Read Phase)
+        read_vec = torch.matmul(read_weights, self.memory_table)
+        h_mem = self.unpacker(read_vec) * read_gate
+        
+        # 4. 寫入階段 (Write Phase)
+        if not self.training:
+            with torch.no_grad():
+                packed_h = self.packer(h)
+                c_idx = coarse_logits.argmax(dim=-1)
+                f_idx = fine_logits.argmax(dim=-1)
+                slot_idx = c_idx * self.num_fine + f_idx
+                for i in range(b):
+                    for j in range(seq_len):
+                        g = write_gate[i, j]
+                        idx = slot_idx[i, j]
+                        self.memory_table[idx] = (1 - g) * self.memory_table[idx] + g * packed_h[i, j]
+        else:
+            with torch.no_grad():
+                packed_h = self.packer(h)
+                flat_w_weights = read_weights.view(-1, self.num_slots)
+                flat_w_gate = write_gate.view(-1, 1)
+                flat_packed = packed_h.view(-1, self.mem_dim)
+                update_ratio = (flat_w_gate * flat_w_weights).sum(dim=0, keepdim=True).t()
+                update_ratio = torch.clamp(update_ratio, 0, 1)
+                weighted_packed = torch.matmul((flat_w_gate * flat_w_weights).t(), flat_packed)
+                denom = update_ratio + 1e-10
+                new_mem_content = weighted_packed / denom
+                self.memory_table = (1 - update_ratio) * self.memory_table + update_ratio * new_mem_content
+
+        # 5. 計算輔助 Loss
+        avg_prob = read_weights.mean(dim=(0, 1))
+        div_loss = torch.sum(avg_prob * torch.log(avg_prob + 1e-10))
+        sparsity_loss = write_gate.mean()
+        
+        return h + h_mem, div_loss, sparsity_loss
+
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
@@ -61,51 +165,23 @@ class EngramModule(nn.Module):
         self.n = config.engram_n
         self.table_size = config.engram_table_size
         self.dim = config.hidden_size
-        
-        # Engram 的 Embedding 表
         self.engram_emb = nn.Embedding(self.table_size, self.dim)
-        
-        # Gating 機制：用來決定要將多少 Engram 知識混入主網路
         self.gate = nn.Linear(self.dim, self.dim, bias=False)
-        
-        # 簡單的質數用於 Hash 碰撞打散
         self.prime = 31 
 
     def forward(self, input_ids: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
-        """
-        input_ids: [batch_size, seq_len]
-        hidden_states: [batch_size, seq_len, dim]
-        """
         b, seq_len = input_ids.shape
         device = input_ids.device
-
-        # 1. 構建 N-gram Hash ID (支援平行的 Tensor 運算)
         if self.n == 2:
-            # Bigram 實作：將序列向右平移一格，補 0
-            shifted_ids = torch.cat([
-                torch.zeros((b, 1), dtype=input_ids.dtype, device=device), 
-                input_ids[:, :-1]
-            ], dim=1)
-            # Hash 函數: (ID_prev * Prime + ID_curr) % Table_Size
+            shifted_ids = torch.cat([torch.zeros((b, 1), dtype=input_ids.dtype, device=device), input_ids[:, :-1]], dim=1)
             hash_ids = (shifted_ids * self.prime + input_ids) % self.table_size
         else:
-            # 通用 N-gram 實作
             hash_ids = input_ids.clone()
             for i in range(1, self.n):
-                shifted = torch.cat([
-                    torch.zeros((b, i), dtype=input_ids.dtype, device=device), 
-                    input_ids[:, :-i]
-                ], dim=1)
+                shifted = torch.cat([torch.zeros((b, i), dtype=input_ids.dtype, device=device), input_ids[:, :-i]], dim=1)
                 hash_ids = (hash_ids * self.prime + shifted) % self.table_size
-
-        # 2. 查表取得 Engram 特徵
-        # engram_features shape: [batch_size, seq_len, dim]
         engram_features = self.engram_emb(hash_ids)
-
-        # 3. Gating 機制 (Information Fusion)
-        # 依據當前的 hidden_states 來決定每個維度要吸收多少 Engram 資訊
         gate_weights = torch.sigmoid(self.gate(hidden_states))
-
         return engram_features * gate_weights
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -116,16 +192,14 @@ class RMSNorm(torch.nn.Module):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
-
     def norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
     def forward(self, x):
         return (self.weight * self.norm(x.float())).type_as(x)
 
 def precompute_freqs_cis(dim: int, end: int = int(32 * 1024), rope_base: float = 1e6, rope_scaling: dict = None):
     freqs, attn_factor = 1.0 / (rope_base ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)), 1.0
-    if rope_scaling is not None: # YaRN: f'(i) = f(i)((1-γ) + γ/s), where γ∈[0,1] is linear ramp
+    if rope_scaling is not None:
         orig_max, factor, beta_fast, beta_slow, attn_factor = (
             rope_scaling.get("original_max_position_embeddings", 2048), rope_scaling.get("factor", 16),
             rope_scaling.get("beta_fast", 32.0), rope_scaling.get("beta_slow", 1.0), rope_scaling.get("attention_factor", 1.0)
@@ -170,7 +244,6 @@ class Attention(nn.Module):
         self.resid_dropout = nn.Dropout(config.dropout)
         self.dropout = config.dropout
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and config.flash_attn
-
     def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
         bsz, seq_len, _ = x.shape
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
@@ -204,7 +277,6 @@ class FeedForward(nn.Module):
         self.down_proj = nn.Linear(intermediate_size, config.hidden_size, bias=False)
         self.up_proj = nn.Linear(config.hidden_size, intermediate_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
-
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
@@ -214,8 +286,6 @@ class MOEFeedForward(nn.Module):
         self.config = config
         self.gate = nn.Linear(config.hidden_size, config.num_experts, bias=False)
         self.experts = nn.ModuleList([FeedForward(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.num_experts)])
-        self.act_fn = ACT2FN[config.hidden_act]
-
     def forward(self, x):
         batch_size, seq_len, hidden_dim = x.shape
         x_flat = x.view(-1, hidden_dim)
@@ -229,13 +299,10 @@ class MOEFeedForward(nn.Module):
                 token_idx = mask.any(dim=-1).nonzero().flatten()
                 weight = topk_weight[mask].view(-1, 1)
                 y.index_add_(0, token_idx, (expert(x_flat[token_idx]) * weight).to(y.dtype))
-            elif self.training:
-                y[0, 0] += 0 * sum(p.sum() for p in expert.parameters())
         if self.training and self.config.router_aux_loss_coef > 0:
             load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)
             self.aux_loss = (load * scores.mean(0)).sum() * self.config.num_experts * self.config.router_aux_loss_coef
-        else:
-            self.aux_loss = scores.new_zeros(1).squeeze()
+        else: self.aux_loss = scores.new_zeros(1).squeeze()
         return y.view(batch_size, seq_len, hidden_dim)
 
 class MiniMindBlock(nn.Module):
@@ -245,13 +312,9 @@ class MiniMindBlock(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
-
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
         residual = hidden_states
-        hidden_states, present_key_value = self.self_attn(
-            self.input_layernorm(hidden_states), position_embeddings,
-            past_key_value, use_cache, attention_mask
-        )
+        hidden_states, present_key_value = self.self_attn(self.input_layernorm(hidden_states), position_embeddings, past_key_value, use_cache, attention_mask)
         hidden_states += residual
         hidden_states = hidden_states + self.mlp(self.post_attention_layernorm(hidden_states))
         return hidden_states, present_key_value
@@ -260,46 +323,39 @@ class MiniMindModel(nn.Module):
     def __init__(self, config: MiniMindConfig):
         super().__init__()
         self.config = config
-        self.vocab_size, self.num_hidden_layers = config.vocab_size, config.num_hidden_layers
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.dropout = nn.Dropout(config.dropout)
-        self.layers = nn.ModuleList([MiniMindBlock(l, config) for l in range(self.num_hidden_layers)])
+        self.layers = nn.ModuleList([MiniMindBlock(l, config) for l in range(config.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         freqs_cos, freqs_sin = precompute_freqs_cis(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
-
-        # --- 初始化 Engram 模組 ---
         self.use_engram = getattr(config, 'use_engram', False)
         if self.use_engram:
             self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
             self.engram_module = EngramModule(config)
-
+        self.use_dde = getattr(config, 'use_dde', False)
+        if self.use_dde:
+            self.dde_layer = config.dde_layer
+            self.dde_module = DDEModule(config)
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
-        if hasattr(past_key_values, 'layers'): past_key_values = None
         past_key_values = past_key_values or [None] * len(self.layers)
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
-        presents = []
+        presents, dde_div_loss, dde_sparsity_loss = [], 0.0, 0.0
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
-            # --- 注入 Engram 知識 ---
-            # 如果目前層數在設定的 engram_layers 中，則加上 Engram 特徵
             if self.use_engram and i in self.engram_layers:
-                engram_h = self.engram_module(input_ids, hidden_states)
-                hidden_states = hidden_states + engram_h  # 將 Engram 特徵直接加到 Residual Stream 中
-
-            hidden_states, present = layer(
-                hidden_states,
-                position_embeddings,
-                past_key_value=past_key_value,
-                use_cache=use_cache,
-                attention_mask=attention_mask
-            )
+                hidden_states = hidden_states + self.engram_module(input_ids, hidden_states)
+            if self.use_dde and i == self.dde_layer:
+                temp = kwargs.get("dde_temp", 1.0)
+                hidden_states, dde_div_loss, dde_sparsity_loss = self.dde_module(hidden_states, temp=temp)
+            hidden_states, present = layer(hidden_states, position_embeddings, past_key_value, use_cache, attention_mask)
             presents.append(present)
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
+        if self.use_dde: aux_loss = aux_loss + (self.config.dde_diversity_weight * dde_div_loss) + (self.config.dde_sparsity_weight * dde_sparsity_loss)
         return hidden_states, presents, aux_loss
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
@@ -310,47 +366,37 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         self.model = MiniMindModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.model.embed_tokens.weight = self.lm_head.weight
-    
+    def freeze_backbone(self):
+        for name, param in self.named_parameters(): param.requires_grad = ('dde_module' in name)
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
-        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-        logits = self.lm_head(hidden_states[:, slice_indices, :])
+        logits = self.lm_head(hidden_states[:, -logits_to_keep:, :]) if logits_to_keep > 0 else self.lm_head(hidden_states)
         loss = None
         if labels is not None:
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
         return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
-    
-    # https://github.com/jingyaogong/minimind/discussions/611
     @torch.inference_mode()
-    def generate(self, inputs=None, attention_mask=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, num_return_sequences=1, do_sample=True, repetition_penalty=1.0, **kwargs):
-        input_ids = kwargs.pop("input_ids", inputs).repeat(num_return_sequences, 1)
-        attention_mask = attention_mask.repeat(num_return_sequences, 1) if attention_mask is not None else None
-        past_key_values = kwargs.pop("past_key_values", None)
+    def generate(self, inputs=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, do_sample=True, repetition_penalty=1.0, **kwargs):
+        input_ids = kwargs.pop("input_ids", inputs)
         finished = torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
         if streamer: streamer.put(input_ids.cpu())
         for _ in range(max_new_tokens):
-            past_len = past_key_values[0][0].shape[1] if past_key_values else 0
-            outputs = self.forward(input_ids[:, past_len:], attention_mask, past_key_values, use_cache=use_cache, **kwargs)
-            attention_mask = torch.cat([attention_mask, attention_mask.new_ones(attention_mask.shape[0], 1)], -1) if attention_mask is not None else None
+            outputs = self.forward(input_ids, use_cache=use_cache, **kwargs)
             logits = outputs.logits[:, -1, :] / temperature
             if repetition_penalty != 1.0:
                 for i in range(input_ids.shape[0]): logits[i, torch.unique(input_ids[i])] /= repetition_penalty
-            if top_k > 0: 
-                logits[logits < torch.topk(logits, top_k)[0][..., -1, None]] = -float('inf')
+            if top_k > 0: logits[logits < torch.topk(logits, top_k)[0][..., -1, None]] = -float('inf')
             if top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                mask = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1) > top_p
-                mask[..., 1:], mask[..., 0] = mask[..., :-1].clone(), 0
+                mask = (torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1) > top_p); mask[..., 1:], mask[..., 0] = mask[..., :-1].clone(), 0
                 logits[mask.scatter(1, sorted_indices, mask)] = -float('inf')
-            next_token = torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1) if do_sample else torch.argmax(logits, dim=-1, keepdim=True)
+            next_token = torch.multinomial(torch.softmax(logits, dim=-1), 1) if do_sample else torch.argmax(logits, dim=-1, keepdim=True)
             if eos_token_id is not None: next_token = torch.where(finished.unsqueeze(-1), next_token.new_full((next_token.shape[0], 1), eos_token_id), next_token)
             input_ids = torch.cat([input_ids, next_token], dim=-1)
-            past_key_values = outputs.past_key_values if use_cache else None
             if streamer: streamer.put(next_token.cpu())
             if eos_token_id is not None:
                 finished |= next_token.squeeze(-1).eq(eos_token_id)
                 if finished.all(): break
         if streamer: streamer.end()
-        if kwargs.get("return_kv"): return {'generated_ids': input_ids, 'past_kv': past_key_values}
         return input_ids
