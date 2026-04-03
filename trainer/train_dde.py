@@ -29,9 +29,10 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     temp_end = args.dde_temp_end
     total_steps = args.epochs * iters
     
-    for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
+    for step, (input_ids, labels, split_idx) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
+        split_idx = split_idx.to(args.device)
         last_step = step
         
         # 計算當前步數的總進度
@@ -46,8 +47,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
         current_temp = max(temp_end, temp_start - (temp_start - temp_end) * (global_step / total_steps))
 
         with autocast_ctx:
-            # 傳入 dde_temp 給模型
-            res = model(input_ids, labels=labels, dde_temp=current_temp)
+            # 傳入 dde_temp 與 split_idx 給模型
+            res = model(input_ids, labels=labels, dde_temp=current_temp, split_idx=split_idx)
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
 

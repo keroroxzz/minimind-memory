@@ -47,18 +47,18 @@ class MiniMindConfig(PretrainedConfig):
 
         # --- DeepSeek Engram 新增參數 ---
         self.use_engram: bool = kwargs.get("use_engram", True)
-        self.engram_n: int = kwargs.get("engram_n", 2)                 # 使用 2-gram (Bigram)
-        self.engram_table_size: int = kwargs.get("engram_table_size", 131072)   # Hash table 大小 (128K)
-        self.engram_layers: List[int] = kwargs.get("engram_layers", [2,]) # 作用層數
+        self.engram_n: int = kwargs.get("engram_n", 2)
+        self.engram_table_size: int = kwargs.get("engram_table_size", 131072)
+        self.engram_layers: List[int] = kwargs.get("engram_layers", [2,])
 
         # --- MiniMind DDE-v1 新增參數 ---
         self.use_dde: bool = kwargs.get("use_dde", False)
-        self.dde_layer: int = kwargs.get("dde_layer", 4)             # 在第幾層做 memory I/O
-        self.dde_num_slots: int = kwargs.get("dde_num_slots", 1024)  # 記憶槽總數
-        self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)  # 層次化定址：粗粒度
-        self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)      # 層次化定址：細粒度
-        self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 256) # 記憶向量維度
-        self.dde_key_dim: int = kwargs.get("dde_key_dim", 128)       # 定址 Key 的維度
+        self.dde_layer: int = kwargs.get("dde_layer", 4)
+        self.dde_num_slots: int = kwargs.get("dde_num_slots", 1024)
+        self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)
+        self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)
+        self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 256)
+        self.dde_key_dim: int = kwargs.get("dde_key_dim", 128)
         self.dde_diversity_weight: float = kwargs.get("dde_diversity_weight", 0.05)
         self.dde_sparsity_weight: float = kwargs.get("dde_sparsity_weight", 0.01)
 
@@ -73,11 +73,10 @@ class DDEModule(nn.Module):
         self.num_coarse = config.dde_num_coarse
         self.num_fine = config.dde_num_fine
         self.mem_dim = config.dde_memory_dim
-        self.key_dim = config.dde_key_dim
         self.dim = config.hidden_size
         
-        # [記憶表] 使用 Buffer，不參與梯度更新
-        self.register_buffer('memory_table', torch.randn(self.num_slots, self.mem_dim) * 0.01)
+        # [可學習初始記憶] 作為計算圖的起點，確保梯度可微
+        self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.01)
         
         # [小模型 A] Packer (寫入壓縮) 與 Unpacker (讀取解壓縮)
         self.packer = nn.Sequential(
@@ -95,69 +94,67 @@ class DDEModule(nn.Module):
             nn.Linear(self.dim, self.num_coarse + self.num_fine + 2)
         )
         
-        # 初始化 Gate Bias 為負數，冷啟動
         nn.init.constant_(self.indexer[-1].bias[-2:], -1.0)
+        self.ema_decay = 0.9
 
-    def forward(self, h: torch.Tensor, temp: float = 1.0):
-        """
-        h: [batch_size, seq_len, dim]
-        """
+    def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0):
         b, seq_len, _ = h.shape
         device = h.device
         
-        # 1. 索引器生成控制訊號
-        indexer_out = self.indexer(h) # [b, seq_len, num_coarse + num_fine + 2]
-        
-        coarse_logits = indexer_out[..., :self.num_coarse]
-        fine_logits = indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine]
-        write_gate = torch.sigmoid(indexer_out[..., -2 : -1])
-        read_gate = torch.sigmoid(indexer_out[..., -1 : ])
-        
-        # 2. 層次化定址權重 (Hierarchical Addressing)
-        w_coarse = F.softmax(coarse_logits / temp, dim=-1) # [b, seq_len, num_coarse]
-        w_fine = F.softmax(fine_logits / temp, dim=-1)     # [b, seq_len, num_fine]
-        
-        read_weights = (w_coarse.unsqueeze(-1) * w_fine.unsqueeze(-2)).view(b, seq_len, self.num_slots)
-        
-        # 3. 讀取階段 (Read Phase)
-        read_vec = torch.matmul(read_weights, self.memory_table)
-        h_mem = self.unpacker(read_vec) * read_gate
-        
-        # 4. 寫入階段 (Write Phase)
-        if not self.training:
-            with torch.no_grad():
-                packed_h = self.packer(h)
-                c_idx = coarse_logits.argmax(dim=-1)
-                f_idx = fine_logits.argmax(dim=-1)
-                slot_idx = c_idx * self.num_fine + f_idx
-                for i in range(b):
-                    for j in range(seq_len):
-                        g = write_gate[i, j]
-                        idx = slot_idx[i, j]
-                        self.memory_table[idx] = (1 - g) * self.memory_table[idx] + g * packed_h[i, j]
-        else:
-            with torch.no_grad():
-                packed_h = self.packer(h)
-                flat_w_weights = read_weights.view(-1, self.num_slots)
-                flat_w_gate = write_gate.view(-1, 1)
-                flat_packed = packed_h.view(-1, self.mem_dim)
-                update_ratio = (flat_w_gate * flat_w_weights).sum(dim=0, keepdim=True).t()
-                update_ratio = torch.clamp(update_ratio, 0, 1)
-                weighted_packed = torch.matmul((flat_w_gate * flat_w_weights).t(), flat_packed)
-                denom = update_ratio + 1e-10
-                new_mem_content = weighted_packed / denom
-                self.memory_table = (1 - update_ratio) * self.memory_table + update_ratio * new_mem_content
+        # 初始記憶狀態
+        current_memory = self.memory_init.unsqueeze(0).expand(b, -1, -1).clone()
 
-        # 5. 計算輔助 Loss
-        avg_prob = read_weights.mean(dim=(0, 1))
-        div_loss = torch.sum(avg_prob * torch.log(avg_prob + 1e-10))
-        sparsity_loss = write_gate.mean()
+        if split_idx is None or split_idx <= 0 or split_idx >= seq_len:
+            # 推論模式或單一 Chunk：使用初始記憶讀取 (無寫入梯度傳回)
+            indexer_out = self.indexer(h)
+            coarse = F.softmax(indexer_out[..., :self.num_coarse] / temp, dim=-1)
+            fine = F.softmax(indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / temp, dim=-1)
+            read_gate = torch.sigmoid(indexer_out[..., -1 : ])
+            address = (coarse.unsqueeze(-1) * fine.unsqueeze(-2)).view(b, seq_len, self.num_slots)
+            read_vec = torch.matmul(address, current_memory)
+            return h + self.unpacker(read_vec) * read_gate, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+
+        # 1. 物理切開
+        h_context = h[:, :split_idx, :]
+        h_query = h[:, split_idx:, :]
+
+        # 階段 1: Context (純寫入)
+        ctx_indexer_out = self.indexer(h_context)
+        ctx_coarse = F.softmax(ctx_indexer_out[..., :self.num_coarse] / temp, dim=-1)
+        ctx_fine = F.softmax(ctx_indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / temp, dim=-1)
+        ctx_write_gate = torch.sigmoid(ctx_indexer_out[..., -2 : -1])
+        ctx_address = (ctx_coarse.unsqueeze(-1) * ctx_fine.unsqueeze(-2)).view(b, split_idx, self.num_slots)
+        ctx_packed = self.packer(h_context)
+
+        update_strength = ctx_write_gate * ctx_address
+        chunk_updates = torch.bmm(update_strength.transpose(1, 2), ctx_packed)
+        chunk_weights = update_strength.sum(dim=1).unsqueeze(-1) + 1e-10
+        normalized_updates = chunk_updates / chunk_weights
         
-        return h + h_mem, div_loss, sparsity_loss
+        update_mask = (chunk_weights > 0.01).float()
+        new_memory = current_memory * (1 - update_mask * (1 - self.ema_decay)) + \
+                     normalized_updates * update_mask * (1 - self.ema_decay)
+
+        # 階段 2: Query (純讀取)
+        q_indexer_out = self.indexer(h_query)
+        q_coarse = F.softmax(q_indexer_out[..., :self.num_coarse] / temp, dim=-1)
+        q_fine = F.softmax(q_indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / temp, dim=-1)
+        q_read_gate = torch.sigmoid(q_indexer_out[..., -1 : ])
+        q_address = (q_coarse.unsqueeze(-1) * q_fine.unsqueeze(-2)).view(b, seq_len - split_idx, self.num_slots)
+        
+        read_vec = torch.bmm(q_address, new_memory)
+        h_query_mem = self.unpacker(read_vec) * q_read_gate
+        
+        h_out = torch.cat([h_context, h_query + h_query_mem], dim=1)
+        avg_prob = ctx_address.mean(dim=(0, 1))
+        div_loss = torch.sum(avg_prob * torch.log(avg_prob + 1e-10))
+        sparsity_loss = ctx_write_gate.mean()
+        
+        return h_out, div_loss, sparsity_loss
 
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
-#                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
+#                   Engram Module
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 class EngramModule(nn.Module):
     def __init__(self, config: MiniMindConfig):
@@ -258,7 +255,12 @@ class Attention(nn.Module):
             xv = torch.cat([past_key_value[1], xv], dim=1)
         past_kv = (xk, xv) if use_cache else None
         xq, xk, xv = (xq.transpose(1, 2), repeat_kv(xk, self.n_rep).transpose(1, 2), repeat_kv(xv, self.n_rep).transpose(1, 2))
-        if self.flash and (seq_len > 1) and (past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
+        
+        if attention_mask is not None and attention_mask.dim() == 4:
+            scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
+            scores = scores + attention_mask
+            output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
+        elif self.flash and (seq_len > 1) and (past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
             output = F.scaled_dot_product_attention(xq, xk, xv, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
         else:
             scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
@@ -338,65 +340,107 @@ class MiniMindModel(nn.Module):
         if self.use_dde:
             self.dde_layer = config.dde_layer
             self.dde_module = DDEModule(config)
+
+    def create_chunked_mask(self, seq_len, split_idx, device):
+        mask = torch.tril(torch.ones((seq_len, seq_len), device=device))
+        if split_idx is not None and 0 < split_idx < seq_len:
+            mask[split_idx:, :split_idx] = 0.0
+        attention_mask = torch.zeros((seq_len, seq_len), device=device)
+        attention_mask = attention_mask.masked_fill(mask == 0, float('-inf'))
+        return attention_mask.unsqueeze(0).unsqueeze(0)
+
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
         past_key_values = past_key_values or [None] * len(self.layers)
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
+        
+        split_idx = kwargs.get("split_idx", None)
+        if split_idx is not None and isinstance(split_idx, torch.Tensor):
+            split_idx = split_idx[0].item() # Assume batch consistent split for simplicity
+            
+        if self.use_dde and split_idx is not None:
+            attention_mask = self.create_chunked_mask(seq_length, split_idx, input_ids.device)
+
         presents, dde_div_loss, dde_sparsity_loss = [], 0.0, 0.0
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
             if self.use_engram and i in self.engram_layers:
                 hidden_states = hidden_states + self.engram_module(input_ids, hidden_states)
+            
             if self.use_dde and i == self.dde_layer:
                 temp = kwargs.get("dde_temp", 1.0)
-                hidden_states, dde_div_loss, dde_sparsity_loss = self.dde_module(hidden_states, temp=temp)
+                hidden_states, dde_div_loss, dde_sparsity_loss = self.dde_module(hidden_states, split_idx=split_idx, temp=temp)
             hidden_states, present = layer(hidden_states, position_embeddings, past_key_value, use_cache, attention_mask)
             presents.append(present)
+
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
-        if self.use_dde: aux_loss = aux_loss + (self.config.dde_diversity_weight * dde_div_loss) + (self.config.dde_sparsity_weight * dde_sparsity_loss)
+
+        if self.use_dde:
+            aux_loss += (self.config.dde_sparsity_weight * dde_sparsity_loss) +\
+                        (self.config.dde_diversity_weight * dde_div_loss)
+
         return hidden_states, presents, aux_loss
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
+
     def __init__(self, config: MiniMindConfig = None):
         self.config = config or MiniMindConfig()
         super().__init__(self.config)
         self.model = MiniMindModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.model.embed_tokens.weight = self.lm_head.weight
+
     def freeze_backbone(self):
-        for name, param in self.named_parameters(): param.requires_grad = ('dde_module' in name)
+        for name, param in self.named_parameters():
+            param.requires_grad = ('dde_module' in name)
+
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
         logits = self.lm_head(hidden_states[:, -logits_to_keep:, :]) if logits_to_keep > 0 else self.lm_head(hidden_states)
         loss = None
+
         if labels is not None:
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
+
         return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
+
     @torch.inference_mode()
     def generate(self, inputs=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, do_sample=True, repetition_penalty=1.0, **kwargs):
         input_ids = kwargs.pop("input_ids", inputs)
         finished = torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
-        if streamer: streamer.put(input_ids.cpu())
+        if streamer:
+            streamer.put(input_ids.cpu())
+        
         for _ in range(max_new_tokens):
             outputs = self.forward(input_ids, use_cache=use_cache, **kwargs)
             logits = outputs.logits[:, -1, :] / temperature
             if repetition_penalty != 1.0:
                 for i in range(input_ids.shape[0]): logits[i, torch.unique(input_ids[i])] /= repetition_penalty
-            if top_k > 0: logits[logits < torch.topk(logits, top_k)[0][..., -1, None]] = -float('inf')
+
+            if top_k > 0:
+                logits[logits < torch.topk(logits, top_k)[0][..., -1, None]] = -float('inf')
+
             if top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(logits, descending=True)
                 mask = (torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1) > top_p); mask[..., 1:], mask[..., 0] = mask[..., :-1].clone(), 0
                 logits[mask.scatter(1, sorted_indices, mask)] = -float('inf')
+
             next_token = torch.multinomial(torch.softmax(logits, dim=-1), 1) if do_sample else torch.argmax(logits, dim=-1, keepdim=True)
-            if eos_token_id is not None: next_token = torch.where(finished.unsqueeze(-1), next_token.new_full((next_token.shape[0], 1), eos_token_id), next_token)
+            if eos_token_id is not None:
+                next_token = torch.where(finished.unsqueeze(-1), next_token.new_full((next_token.shape[0], 1), eos_token_id), next_token)
             input_ids = torch.cat([input_ids, next_token], dim=-1)
-            if streamer: streamer.put(next_token.cpu())
+            
+            if streamer:
+                streamer.put(next_token.cpu())
             if eos_token_id is not None:
                 finished |= next_token.squeeze(-1).eq(eos_token_id)
-                if finished.all(): break
-        if streamer: streamer.end()
+                if finished.all():
+                    break
+        if streamer:
+            streamer.end()
+        
         return input_ids

@@ -69,23 +69,46 @@ class DDEDataset(Dataset):
 
     def __getitem__(self, index):
         sample = self.samples[index]
-        # dialogue contains [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]
         messages = sample['dialogue']
         
-        prompt = self.tokenizer.apply_chat_template(
+        # We assume the last turn (User Question + Assistant Answer) is the Query.
+        # Everything before that is the Context (Fact Injection).
+        context_messages = messages[:-2]
+        
+        if len(context_messages) == 0:
+            # No context provided, split_idx is at the beginning
+            split_idx = 0
+        else:
+            # Calculate split_idx by tokenizing the context first
+            try:
+                context_prompt = self.tokenizer.apply_chat_template(
+                    context_messages,
+                    tokenize=False,
+                    add_generation_prompt=False
+                )
+                context_tokens = self.tokenizer(context_prompt, add_special_tokens=False).input_ids
+                split_idx = len(context_tokens)
+            except Exception:
+                split_idx = 0
+        
+        # Full prompt for standard training
+        full_prompt = self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=False
         )
         
-        tokens = self.tokenizer(prompt, add_special_tokens=False, max_length=self.max_length, truncation=True).input_ids
+        tokens = self.tokenizer(full_prompt, add_special_tokens=False, max_length=self.max_length, truncation=True).input_ids
+        
+        # Ensure split_idx is within bounds
+        split_idx = min(split_idx, len(tokens) - 1)
         
         input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         labels = input_ids.clone()
         labels[input_ids == self.tokenizer.pad_token_id] = -100
         
-        return input_ids, labels
+        return input_ids, labels, split_idx
 
 
 class SFTDataset(Dataset):
