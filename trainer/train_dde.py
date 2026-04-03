@@ -124,7 +124,10 @@ if __name__ == "__main__":
     # DDE 專屬參數
     parser.add_argument('--dde_layer', default=4, type=int, help="DDE 插入層數")
     parser.add_argument('--dde_temp_start', default=2.0, type=float, help="溫度退火起始值")
-    parser.add_argument('--dde_temp_end', default=0.5, type=float, help="溫度退火結束值")
+    parser.add_argument('--dde_temp_end', default=0.2, type=float, help="溫度退火結束值")
+    parser.add_argument('--dde_ema_decay', default=0.5, type=float, help="記憶更新 EMA 衰減率")
+    parser.add_argument('--dde_diversity_weight', default=0.02, type=float, help="多樣性損失權重")
+    parser.add_argument('--dde_sparsity_weight', default=0.01, type=float, help="稀疏性損失權重")
     
     parser.add_argument("--max_seq_len", type=int, default=512, help="训练的最大截断长度")
     parser.add_argument("--data_path", type=str, default="../dataset/dde-v1.jsonl", help="記憶訓練數據路徑")
@@ -149,7 +152,10 @@ if __name__ == "__main__":
         use_moe=bool(args.use_moe), 
         use_engram=bool(args.use_engram),
         use_dde=True,
-        dde_layer=args.dde_layer
+        dde_layer=args.dde_layer,
+        dde_ema_decay=args.dde_ema_decay,
+        dde_diversity_weight=args.dde_diversity_weight,
+        dde_sparsity_weight=args.dde_sparsity_weight
     )
     
     # 3. 混合精度

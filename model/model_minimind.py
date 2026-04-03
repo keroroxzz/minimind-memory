@@ -59,8 +59,9 @@ class MiniMindConfig(PretrainedConfig):
         self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)
         self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 256)
         self.dde_key_dim: int = kwargs.get("dde_key_dim", 128)
-        self.dde_diversity_weight: float = kwargs.get("dde_diversity_weight", 0.05)
+        self.dde_diversity_weight: float = kwargs.get("dde_diversity_weight", 0.02)
         self.dde_sparsity_weight: float = kwargs.get("dde_sparsity_weight", 0.01)
+        self.dde_ema_decay: float = kwargs.get("dde_ema_decay", 0.5)
 
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -74,9 +75,10 @@ class DDEModule(nn.Module):
         self.num_fine = config.dde_num_fine
         self.mem_dim = config.dde_memory_dim
         self.dim = config.hidden_size
+        self.ema_decay = config.dde_ema_decay
         
-        # [可學習初始記憶] 作為計算圖的起點，確保梯度可微
-        self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.01)
+        # [增強初始信號] 提高縮放比例 (0.01 -> 0.1) 確保讀取向量有足夠量級
+        self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.1)
         
         # [小模型 A] Packer (寫入壓縮) 與 Unpacker (讀取解壓縮)
         self.packer = nn.Sequential(
@@ -94,8 +96,9 @@ class DDEModule(nn.Module):
             nn.Linear(self.dim, self.num_coarse + self.num_fine + 2)
         )
         
-        nn.init.constant_(self.indexer[-1].bias[-2:], -1.0)
-        self.ema_decay = 0.9
+        # [門控初始優化] 將寫入與讀取門控初始設為 0.0 (Sigmoid 後約 0.5)，而非 -1.0
+        # 確保訓練初期模型敢於寫入與讀取
+        nn.init.constant_(self.indexer[-1].bias[-2:], 0.0)
 
     def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0):
         b, seq_len, _ = h.shape
@@ -131,9 +134,9 @@ class DDEModule(nn.Module):
         chunk_weights = update_strength.sum(dim=1).unsqueeze(-1) + 1e-10
         normalized_updates = chunk_updates / chunk_weights
         
-        update_mask = (chunk_weights > 0.01).float()
-        new_memory = current_memory * (1 - update_mask * (1 - self.ema_decay)) + \
-                     normalized_updates * update_mask * (1 - self.ema_decay)
+        update_mask = (chunk_weights > 0.001).float()
+        new_memory = current_memory * (1 - update_mask * self.ema_decay) + \
+                     normalized_updates * update_mask * self.ema_decay
 
         # 階段 2: Query (純讀取)
         q_indexer_out = self.indexer(h_query)
@@ -146,8 +149,16 @@ class DDEModule(nn.Module):
         h_query_mem = self.unpacker(read_vec) * q_read_gate
         
         h_out = torch.cat([h_context, h_query + h_query_mem], dim=1)
+        
+        # [解除熵之陷阱] 修正 Diversity Loss：我們希望最大化熵，即最小化 p log p。
+        # 為了防止模型只拿負分獎勵，我們計算其與均勻分佈的距離。
         avg_prob = ctx_address.mean(dim=(0, 1))
-        div_loss = torch.sum(avg_prob * torch.log(avg_prob + 1e-10))
+        uniform_log_p = math.log(1.0 / self.num_slots)
+        # 目標：讓 avg_prob 接近 uniform，損失越小。
+        div_loss = torch.sum(avg_prob * (torch.log(avg_prob + 1e-10) - uniform_log_p))
+        sparsity_loss = ctx_write_gate.mean()
+        
+        return h_out, div_loss, sparsity_loss
         sparsity_loss = ctx_write_gate.mean()
         
         return h_out, div_loss, sparsity_loss
