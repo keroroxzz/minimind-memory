@@ -17,6 +17,7 @@ def init_model(args):
             num_hidden_layers=args.num_hidden_layers,
             use_moe=bool(args.use_moe),
             use_engram=bool(args.use_engram),
+            use_dde=bool(args.use_dde),
             inference_rope_scaling=args.inference_rope_scaling
         ))
         ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
@@ -47,6 +48,11 @@ def main():
     parser.add_argument('--historys', default=0, type=int, help="携带历史对话轮数（需为偶数，0表示不携带历史）")
     parser.add_argument('--show_speed', default=1, type=int, help="显示decode速度（tokens/s）")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
+    
+    # DDE 專屬參數
+    parser.add_argument('--use_dde', default=0, type=int, help="是否啟用Dynamic Descrit Engram (DDE)?")
+    parser.add_argument('--dde_layer', default=4, type=int, help="DDE 插入層數")
+
     args = parser.parse_args()
     
     prompts = [

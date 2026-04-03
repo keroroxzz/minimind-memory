@@ -65,7 +65,7 @@ def get_model_paths(save_dir, weight, lm_config):
                   lm_config.hidden_size,
                   'moe' if lm_config.use_moe else '',
                   'engram' if lm_config.use_engram else '',
-                  'dde' if getattr(lm_config, 'use_dde', False) else '']
+                  'dde' if lm_config.use_dde else '']
     model_name = "_".join([str(x) for x in model_name if x != ''])
 
     ckp_path = os.path.join(save_dir, f'{model_name}.pth')
