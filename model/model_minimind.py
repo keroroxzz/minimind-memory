@@ -76,8 +76,7 @@ class DDEModule(nn.Module):
         self.num_fine = config.dde_num_fine
         self.mem_dim = config.dde_memory_dim
         self.dim = config.hidden_size
-        self.ema_decay = config.dde_ema_decay
-        self.top_k = 8 # [稀疏化核心]
+        self.top_k = 8 
         
         # [穩定初始化] 
         self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.02)
@@ -100,26 +99,26 @@ class DDEModule(nn.Module):
             nn.SiLU(),
             nn.Linear(self.dim, self.dim // 2),
             nn.SiLU(),
-            nn.Linear(self.dim // 2, self.num_coarse + self.num_fine + 2)
+            # 最後一層輸出：Coarse(16) + Fine(16) + Write(1) + Read(1) + Erase(1) + Add(1)
+            nn.Linear(self.dim // 2, self.num_coarse + self.num_fine + 4)
         )
         
-        # [積極寫入，冷靜讀取] 
-        nn.init.constant_(self.indexer[-1].bias[-2], 1.0)  # Write Gate: 鼓勵初期寫入
-        nn.init.constant_(self.indexer[-1].bias[-1], -3.0) # Read Gate: 避免衝擊主幹
+        # [v1.8 門控鎖]
+        with torch.no_grad():
+            nn.init.constant_(self.indexer[-1].bias[-4], 1.0)  # Write Gate: 1.0 (積極)
+            nn.init.constant_(self.indexer[-1].bias[-3], -3.0) # Read Gate: -3.0 (冷靜)
+            nn.init.constant_(self.indexer[-1].bias[-2], -1.0) # Erase Gate: -1.0 (初始保留舊記憶)
+            nn.init.constant_(self.indexer[-1].bias[-1], 0.0)  # Add Gate: 0.0 (平衡寫入)
 
     def get_sparse_address(self, indexer_out, temp, b, seq_len):
-        # [高精度定址] 僅在 Softmax 與外積處轉為 float32
         safe_temp = max(temp, 0.05)
         indexer_out_fp32 = indexer_out.float()
         coarse = F.softmax(indexer_out_fp32[..., :self.num_coarse] / safe_temp, dim=-1)
         fine = F.softmax(indexer_out_fp32[..., self.num_coarse : self.num_coarse + self.num_fine] / safe_temp, dim=-1)
-        
         prob_matrix = (coarse.unsqueeze(-1) * fine.unsqueeze(-2)).view(b, seq_len, self.num_slots)
-        
         top_probs, top_indices = torch.topk(prob_matrix, k=self.top_k, dim=-1)
         sparse_address = torch.zeros_like(prob_matrix).scatter_(-1, top_indices, top_probs)
         sparse_address = sparse_address / (sparse_address.sum(dim=-1, keepdim=True) + 1e-10)
-        
         return sparse_address.to(indexer_out.dtype), prob_matrix.to(indexer_out.dtype)
 
     def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0, past_memory: torch.Tensor = None):
@@ -130,12 +129,11 @@ class DDEModule(nn.Module):
         # 模式判定：如果有傳入 past_memory，則進入純讀取(鎖定)模式
         if past_memory is not None:
             if split_idx is not None and 0 < split_idx < seq_len:
-                # 確保 Context 不被鎖定記憶污染
                 h_context = h[:, :split_idx, :]
                 h_query = h[:, split_idx:, :]
                 q_indexer_out = self.indexer(h_query)
                 q_address, _ = self.get_sparse_address(q_indexer_out, temp, b, seq_len - split_idx)
-                q_read_gate = torch.sigmoid(q_indexer_out[..., -1 : ])
+                q_read_gate = torch.sigmoid(q_indexer_out[..., -3 : -2]) # Read Gate 是倒數第 3 個
                 read_vec = torch.bmm(q_address, past_memory)
                 mem_out = self.unpacker(read_vec) * q_read_gate * self.output_scale.to(dtype)
                 mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
@@ -144,50 +142,60 @@ class DDEModule(nn.Module):
             else:
                 indexer_out = self.indexer(h)
                 q_address, _ = self.get_sparse_address(indexer_out, temp, b, seq_len)
-                q_read_gate = torch.sigmoid(indexer_out[..., -1 : ])
+                q_read_gate = torch.sigmoid(indexer_out[..., -3 : -2])
                 read_vec = torch.bmm(q_address, past_memory)
                 mem_out = self.unpacker(read_vec) * q_read_gate * self.output_scale.to(dtype)
                 mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
                 return h + mem_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), past_memory
 
-        # 初始狀態
         current_memory = self.memory_init.unsqueeze(0).expand(b, -1, -1).to(dtype)
 
         if split_idx is None or split_idx <= 0 or split_idx >= seq_len:
-            # 推論模式或無 Context 模式
             indexer_out = self.indexer(h)
             address, _ = self.get_sparse_address(indexer_out, temp, b, seq_len)
-            read_gate = torch.sigmoid(indexer_out[..., -1 : ])
+            read_gate = torch.sigmoid(indexer_out[..., -3 : -2])
             read_vec = torch.matmul(address, current_memory)
             mem_out = self.unpacker(read_vec) * read_gate * self.output_scale.to(dtype)
-            mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
             return h + mem_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), current_memory
 
         # [Prefill / Training 模式]
         h_context = h[:, :split_idx, :]
         h_query = h[:, split_idx:, :]
 
-        # 階段 1: Context (寫入並產生 new_memory)
         ctx_indexer_out = self.indexer(h_context)
         ctx_address, ctx_prob_full = self.get_sparse_address(ctx_indexer_out, temp, b, split_idx)
-        ctx_write_gate = torch.sigmoid(ctx_indexer_out[..., -2 : -1])
+        
+        # 獲取 v1.8 門控群
+        # -4:Write, -3:Read, -2:Erase, -1:Add
+        ctx_gates = torch.sigmoid(ctx_indexer_out[..., -4:])
+        ctx_write_gate = ctx_gates[..., 0:1]
+        ctx_erase_gate = ctx_gates[..., 2:3]
+        ctx_add_gate = ctx_gates[..., 3:4]
+        
         ctx_packed = self.packer(h_context)
 
-        # [FP32 防溢位] BMM 累加容易在 FP16 溢出導致 NaN
-        update_strength = (ctx_write_gate * ctx_address).float()
+        # [v1.8 Gated Update] 重構記憶更新邏輯
+        # 我們將 ctx_address (B, L, S) 視為對 Slot 的操作權重
+        update_strength = (ctx_write_gate * ctx_address).float() # (B, L, S)
         ctx_packed_fp32 = ctx_packed.float()
-        chunk_updates = torch.bmm(update_strength.transpose(1, 2), ctx_packed_fp32)
-        chunk_weights = update_strength.sum(dim=1).unsqueeze(-1) + 1e-10
-        normalized_updates = chunk_updates / chunk_weights
         
-        update_mask = (chunk_weights > 0.001).float().to(dtype)
-        new_memory = current_memory * (1 - update_mask * self.ema_decay) + \
-                     normalized_updates.to(dtype) * update_mask * self.ema_decay
+        # 計算每個 Slot 應該擦除多少 (B, S, 1)
+        # 這裡採用加權平均擦除率
+        erase_per_slot = torch.bmm(update_strength.transpose(1, 2), ctx_erase_gate.float()) # (B, S, 1)
+        erase_per_slot = torch.clamp(erase_per_slot, 0, 1)
+        
+        # 計算每個 Slot 應該增加多少 (B, S, D)
+        add_signal = ctx_add_gate.float() * ctx_packed_fp32 # (B, L, D)
+        add_per_slot = torch.bmm(update_strength.transpose(1, 2), add_signal) # (B, S, D)
+        
+        # 執行門控更新
+        new_memory = current_memory.float() * (1.0 - erase_per_slot) + add_per_slot
+        new_memory = new_memory.to(dtype)
 
         # 階段 2: Query (讀取)
         q_indexer_out = self.indexer(h_query)
         q_address, _ = self.get_sparse_address(q_indexer_out, temp, b, seq_len - split_idx)
-        q_read_gate = torch.sigmoid(q_indexer_out[..., -1 : ])
+        q_read_gate = torch.sigmoid(q_indexer_out[..., -3 : -2]) # 讀取門
         
         read_vec = torch.bmm(q_address, new_memory)
         h_query_mem = self.unpacker(read_vec) * q_read_gate * self.output_scale.to(dtype)

@@ -90,6 +90,9 @@ def generate_dde_secure(model, tokenizer, prompt, split_idx, args):
     inputs = tokenizer(full_prompt, return_tensors="pt", add_special_tokens=False).to(args.device)
     input_ids = inputs["input_ids"]
     
+    # [優化 3] 物理封鎖列表 (例如 <think> token id 為 25)
+    forbidden_tokens = [25] 
+    
     with torch.no_grad():
         # Phase 1: Prefill (產生記憶)
         outputs = model(input_ids=input_ids, split_idx=split_idx, dde_temp=args.dde_temp)
@@ -102,8 +105,12 @@ def generate_dde_secure(model, tokenizer, prompt, split_idx, args):
             out = model(generated_ids, past_memory=memory_state, dde_temp=args.dde_temp)
             logits = out.logits
             
-            # [優化 2] 溫度降溫與重複懲罰
+            # [優化 2] 溫度降溫
             next_token_logits = logits[:, -1, :] / args.temperature
+            
+            # 暴力封印幻覺 Token
+            for bad_id in forbidden_tokens:
+                next_token_logits[:, bad_id] = float('-inf')
             
             # Repetition Penalty
             if args.repetition_penalty != 1.0:
