@@ -83,30 +83,42 @@ def compute_bleu(prediction, ground_truth):
     bp = math.exp(min(0, 1 - len(gt_tokens) / len(pred_tokens)))
     return bp * math.exp(score)
 
-# --- 核心推理邏輯：雙階段 DDE 生成 ---
+# --- 核心推理邏輯：雙階段 DDE 生成 (優化版) ---
 def generate_dde_secure(model, tokenizer, prompt, split_idx, args):
-    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(args.device)
+    # [優化 1] 墊入 Assistant 前綴，確保不發生格式幻覺
+    full_prompt = prompt + "<|im_start|>assistant\n"
+    inputs = tokenizer(full_prompt, return_tensors="pt", add_special_tokens=False).to(args.device)
     input_ids = inputs["input_ids"]
     
     with torch.no_grad():
         # Phase 1: Prefill (產生記憶)
-        # 呼叫 MiniMindForCausalLM 的 forward (底層的 MiniMindModel 會回傳 dde_memory)
         outputs = model(input_ids=input_ids, split_idx=split_idx, dde_temp=args.dde_temp)
         memory_state = outputs.dde_memory
         
         # Phase 2: Decode (鎖定記憶，逐字生成)
         generated_ids = input_ids
         for _ in range(args.max_new_tokens):
-            # 傳入 past_memory，模型會自動進入鎖定模式
+            # 傳入 past_memory，模型進入鎖定模式
             out = model(generated_ids, past_memory=memory_state, dde_temp=args.dde_temp)
             logits = out.logits
             
-            # 數值檢查 (Sanity Check)
-            if torch.isnan(logits).any() or torch.isinf(logits).any():
-                print("⚠️ [WARNING] NaN or Inf detected in Logits! Inference collapsed.")
+            # [優化 2] 溫度降溫與重複懲罰
+            next_token_logits = logits[:, -1, :] / args.temperature
+            
+            # Repetition Penalty
+            if args.repetition_penalty != 1.0:
+                for i in range(generated_ids.shape[0]):
+                    for token_id in torch.unique(generated_ids[i]):
+                        if next_token_logits[i, token_id] > 0:
+                            next_token_logits[i, token_id] /= args.repetition_penalty
+                        else:
+                            next_token_logits[i, token_id] *= args.repetition_penalty
+            
+            if torch.isnan(next_token_logits).any():
+                print("⚠️ [WARNING] NaN detected! Inference collapsed.")
                 break
                 
-            next_token_id = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(-1)
+            next_token_id = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
             
             if next_token_id.item() == tokenizer.eos_token_id:
                 break
@@ -116,7 +128,7 @@ def generate_dde_secure(model, tokenizer, prompt, split_idx, args):
     return generated_ids
 
 def evaluate_dde(model, tokenizer, args):
-    print(f"🚀 Starting DDE-v1.7 Secure Evaluation on {args.data_path}...")
+    print(f"🚀 Starting DDE-v1.7 Secure Evaluation (Optimized) on {args.data_path}...")
     with open(args.data_path, 'r', encoding='utf-8') as f:
         all_samples = json.load(f)
     
@@ -136,21 +148,23 @@ def evaluate_dde(model, tokenizer, args):
         context_tokens = tokenizer(context_prompt, add_special_tokens=False).input_ids
         split_idx = len(context_tokens)
         
-        full_msgs = context_messages + query_messages
-        prompt = format_msgs(full_msgs) + f"<|im_start|>assistant\n"
+        # 只生成到最後一輪 User 為止，不加 assistant (由 generate_dde_secure 加)
+        prompt = format_msgs(context_messages + query_messages)
         
-        # 使用雙階段生成
         output_ids = generate_dde_secure(model, tokenizer, prompt, split_idx, args)
         
-        # [關鍵修正] 清理輸出中的 <think> 與 assistant 標籤
-        response = tokenizer.decode(output_ids[0][len(tokenizer(prompt, add_special_tokens=False).input_ids):], skip_special_tokens=True).strip()
+        # 切除 Prompt 部分，只留生成結果
+        prompt_len = len(tokenizer(prompt + "<|im_start|>assistant\n", add_special_tokens=False).input_ids)
+        response = tokenizer.decode(output_ids[0][prompt_len:], skip_special_tokens=True).strip()
+        
+        # 清理雜質
         response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
         response = response.replace('assistant\n', '').strip()
         
         f1 = compute_f1(response, gt_answer)
         bleu = compute_bleu(response, gt_answer)
         
-        # [科學判定] 只要模型包含 GT 事實或 F1 分數夠高 (代表核心語意對了)，即視為 PASS
+        # PASS 判定
         is_correct = False
         if response:
             is_correct = (gt_answer.lower() in response.lower()) or (response.lower() in gt_answer.lower()) or (f1 > 0.5)
@@ -185,8 +199,9 @@ def main():
     parser.add_argument('--use_engram', default=0, type=int)
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true')
     parser.add_argument('--max_new_tokens', default=64, type=int)
-    parser.add_argument('--temperature', default=0.7, type=float)
-    parser.add_argument('--top_p', default=0.9, type=float)
+    parser.add_argument('--temperature', default=0.3, type=float) # 預設降溫
+    parser.add_argument('--top_p', default=0.85, type=float)
+    parser.add_argument('--repetition_penalty', default=1.15, type=float) # 打擊跳針
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str)
     parser.add_argument('--use_dde', default=1, type=int)
     parser.add_argument('--dde_layer', default=4, type=int)
