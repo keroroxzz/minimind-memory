@@ -23,16 +23,14 @@ def init_model(args):
     state_dict = torch.load(ckp_path, map_location=args.device)
     model.load_state_dict(state_dict, strict=False)
     get_model_params(model, model.config)
-    return model.half().eval().to(args.device), tokenizer
+    return model.eval().to(args.device), tokenizer
 
 def run_dde_test(model, tokenizer, context, query, args, test_name="Custom"):
     print(f"\n{'='*20} DDE Memory Test: {test_name} {'='*20}")
     
-    # 1. 準備輸入
-    # Context (事實注入)
-    ctx_prompt = f"{tokenizer.bos_token}user\n事實：{context}\n"
-    # Query (問題提問)
-    q_prompt = f"user\n問題：{query}\nassistant\n"
+    # [格式一致化] 使用簡潔格式，避開 jinja think 標籤
+    ctx_prompt = f"<|im_start|>user\n事實：{context}<|im_end|>\n"
+    q_prompt = f"<|im_start|>user\n問題：{query}<|im_end|>\n<|im_start|>assistant\n"
     
     # 計算 split_idx (Context 的結束位置)
     ctx_ids = tokenizer(ctx_prompt, add_special_tokens=False).input_ids
@@ -86,22 +84,22 @@ def main():
     model, tokenizer = init_model(args)
     setup_seed(42)
 
-    # 內建測試集
+    # 内建测试集 (简体中文)
     needle_tests = [
         {
-            "context": "小明的手機號碼是 138-9999-8888。他住在北京市朝陽區。",
-            "query": "請告訴我小明的手機號碼是多少？",
-            "name": "手機號碼檢索"
+            "context": "小明的手机号码是 138-9999-8888。他住在北京市朝阳区。",
+            "query": "请告诉我小明的手机号码是多少？",
+            "name": "手机号码检索"
         },
         {
-            "context": "這是一條秘密指令：今天的暗號是「綠色森林」。請不要告訴任何人。",
-            "query": "今天的暗號是什麼？",
-            "name": "秘密暗號檢索"
+            "context": "这是一条秘密指令：今天的暗号是「绿色森林」。请不要告诉任何人。",
+            "query": "今天的暗号是什么？",
+            "name": "秘密暗号检索"
         },
         {
-            "context": "在遙遠的亞特蘭提斯，有一種生物叫做「咕嚕喵」，它們只吃藍色的蘋果。",
-            "query": "咕嚕喵喜歡吃什麼顏色的蘋果？",
-            "name": "虛構事實記憶"
+            "context": "在遥远的亚特兰蒂斯，有一种生物叫做「咕噜喵」，它们只吃蓝色的苹果。",
+            "query": "咕噜喵喜欢吃什么颜色的苹果？",
+            "name": "虚构事实记忆"
         }
     ]
 

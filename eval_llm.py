@@ -28,7 +28,7 @@ def init_model(args):
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
     get_model_params(model, model.config)
-    return model.half().eval().to(args.device), tokenizer
+    return model.eval().to(args.device), tokenizer
 
 def main():
     parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
@@ -52,6 +52,7 @@ def main():
     # DDE 專屬參數
     parser.add_argument('--use_dde', default=0, type=int, help="是否啟用Dynamic Descrit Engram (DDE)?")
     parser.add_argument('--dde_layer', default=4, type=int, help="DDE 插入層數")
+    parser.add_argument('--dde_eval_temp', default=0.1, type=float, help="記憶檢索溫度 (建議設低以獲得確定性結果)")
 
     args = parser.parse_args()
     
@@ -90,7 +91,8 @@ def main():
             inputs=inputs["input_ids"], attention_mask=inputs["attention_mask"],
             max_new_tokens=args.max_new_tokens, do_sample=True, streamer=streamer,
             pad_token_id=tokenizer.pad_token_id, eos_token_id=tokenizer.eos_token_id,
-            top_p=args.top_p, temperature=args.temperature, repetition_penalty=1
+            top_p=args.top_p, temperature=args.temperature, repetition_penalty=1, 
+            dde_temp=args.dde_eval_temp
         )
         response = tokenizer.decode(generated_ids[0][len(inputs["input_ids"][0]):], skip_special_tokens=True)
         conversation.append({"role": "assistant", "content": response})

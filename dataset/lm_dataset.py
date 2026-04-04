@@ -71,33 +71,26 @@ class DDEDataset(Dataset):
         sample = self.samples[index]
         messages = sample['dialogue']
         
-        # We assume the last turn (User Question + Assistant Answer) is the Query.
-        # Everything before that is the Context (Fact Injection).
+        # [簡潔格式優化] 手動建構對話字串，避開 jinja 範本中的 think 標籤
+        def format_msgs(msgs):
+            prompt = ""
+            for msg in msgs:
+                role = msg['role']
+                content = msg['content']
+                prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+            return prompt
+
         context_messages = messages[:-2]
+        query_messages = messages[-2:] # User Question + Assistant Answer
         
         if len(context_messages) == 0:
-            # No context provided, split_idx is at the beginning
             split_idx = 0
         else:
-            # Calculate split_idx by tokenizing the context first
-            try:
-                context_prompt = self.tokenizer.apply_chat_template(
-                    context_messages,
-                    tokenize=False,
-                    add_generation_prompt=False
-                )
-                context_tokens = self.tokenizer(context_prompt, add_special_tokens=False).input_ids
-                split_idx = len(context_tokens)
-            except Exception:
-                split_idx = 0
+            context_prompt = format_msgs(context_messages)
+            context_tokens = self.tokenizer(context_prompt, add_special_tokens=False).input_ids
+            split_idx = len(context_tokens)
         
-        # Full prompt for standard training
-        full_prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False
-        )
-        
+        full_prompt = format_msgs(messages)
         tokens = self.tokenizer(full_prompt, add_special_tokens=False, max_length=self.max_length, truncation=True).input_ids
         
         # Ensure split_idx is within bounds

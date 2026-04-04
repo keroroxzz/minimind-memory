@@ -106,27 +106,32 @@ class DDEModule(nn.Module):
         b, seq_len, _ = h.shape
         device = h.device
         
-        # 初始記憶狀態
-        current_memory = self.memory_init.unsqueeze(0).expand(b, -1, -1).clone()
+        # [數值防護] 全程使用 float32 處理記憶核心運算
+        h_float = h.float()
+        current_memory = self.memory_init.unsqueeze(0).expand(b, -1, -1).float()
 
         if split_idx is None or split_idx <= 0 or split_idx >= seq_len:
             # 推論模式
-            indexer_out = self.indexer(h)
-            coarse = F.softmax(indexer_out[..., :self.num_coarse] / max(temp, 0.05), dim=-1)
-            fine = F.softmax(indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / max(temp, 0.05), dim=-1)
+            indexer_out = self.indexer(h_float)
+            safe_temp = max(temp, 0.05)
+            coarse = F.softmax(indexer_out[..., :self.num_coarse] / safe_temp, dim=-1)
+            fine = F.softmax(indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / safe_temp, dim=-1)
             read_gate = torch.sigmoid(indexer_out[..., -1 : ])
             address = (coarse.unsqueeze(-1) * fine.unsqueeze(-2)).view(b, seq_len, self.num_slots)
             read_vec = torch.matmul(address, current_memory)
-            # 加上 output_scale
-            return h + self.unpacker(read_vec) * read_gate * self.output_scale, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+            
+            # 截斷輸出防止溢出
+            mem_out = self.unpacker(read_vec) * read_gate * self.output_scale.float()
+            mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
+            
+            return (h_float + mem_out).to(h.dtype), torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
 
         # 1. 物理切開
-        h_context = h[:, :split_idx, :]
-        h_query = h[:, split_idx:, :]
+        h_context = h_float[:, :split_idx, :]
+        h_query = h_float[:, split_idx:, :]
 
         # 階段 1: Context (純寫入)
         ctx_indexer_out = self.indexer(h_context)
-        # 限制 temp 下限防止溢出
         safe_temp = max(temp, 0.05)
         ctx_coarse = F.softmax(ctx_indexer_out[..., :self.num_coarse] / safe_temp, dim=-1)
         ctx_fine = F.softmax(ctx_indexer_out[..., self.num_coarse : self.num_coarse + self.num_fine] / safe_temp, dim=-1)
@@ -139,7 +144,7 @@ class DDEModule(nn.Module):
         chunk_weights = update_strength.sum(dim=1).unsqueeze(-1) + 1e-10
         normalized_updates = chunk_updates / chunk_weights
         
-        update_mask = (chunk_weights > 0.001).to(h.dtype)
+        update_mask = (chunk_weights > 0.001).float()
         new_memory = current_memory * (1 - update_mask * self.ema_decay) + \
                      normalized_updates * update_mask * self.ema_decay
 
@@ -151,18 +156,18 @@ class DDEModule(nn.Module):
         q_address = (q_coarse.unsqueeze(-1) * q_fine.unsqueeze(-2)).view(b, seq_len - split_idx, self.num_slots)
         
         read_vec = torch.bmm(q_address, new_memory)
-        # 加上 output_scale 確保信號穩定
-        h_query_mem = self.unpacker(read_vec) * q_read_gate * self.output_scale
+        
+        # 截斷輸出防止溢出
+        h_query_mem = self.unpacker(read_vec) * q_read_gate * self.output_scale.float()
+        h_query_mem = torch.clamp(h_query_mem, min=-10.0, max=10.0)
         
         h_out = torch.cat([h_context, h_query + h_query_mem], dim=1)
+        h_out = h_out.to(h.dtype) # 轉回原始精度
         
         # [解除熵之陷阱] 修正 Diversity Loss
         avg_prob = ctx_address.mean(dim=(0, 1))
         uniform_log_p = math.log(1.0 / self.num_slots)
         div_loss = torch.sum(avg_prob * (torch.log(avg_prob + 1e-10) - uniform_log_p))
-        sparsity_loss = ctx_write_gate.mean()
-        
-        return h_out, div_loss, sparsity_loss
         sparsity_loss = ctx_write_gate.mean()
         
         return h_out, div_loss, sparsity_loss
