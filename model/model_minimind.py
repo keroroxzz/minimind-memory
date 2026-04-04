@@ -80,26 +80,32 @@ class DDEModule(nn.Module):
         
         # [穩定初始化] 
         self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.02)
-        self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
         
-        # [無損化設計] Packer 與 Unpacker 簡化為單層 Linear
+        # [強效輸出] 初始量級設為 1.0，讓記憶信號更具存在感
+        self.output_scale = nn.Parameter(torch.ones(1) * 1.0)
+        
+        # [無損化設計] 
         self.packer = nn.Linear(self.dim, self.mem_dim, bias=False)
         self.unpacker = nn.Linear(self.mem_dim, self.dim, bias=False)
         
-        # [恆等初始化] 確保訓練初期記憶內容無損透傳
         with torch.no_grad():
             nn.init.eye_(self.packer.weight)
             nn.init.eye_(self.unpacker.weight)
         
-        # [小模型 B] Indexer (層次化定址)
+        # [深化 Indexer] 增加層數與 LayerNorm，提升對微弱語義的捕捉能力
         self.indexer = nn.Sequential(
             nn.Linear(self.dim, self.dim),
+            nn.LayerNorm(self.dim),
             nn.SiLU(),
-            nn.Linear(self.dim, self.num_coarse + self.num_fine + 2)
+            nn.Linear(self.dim, self.dim // 2),
+            nn.SiLU(),
+            nn.Linear(self.dim // 2, self.num_coarse + self.num_fine + 2)
         )
         
-        # [門控初始優化] 初始設為 0.0 (Sigmoid 後 0.5)
-        nn.init.constant_(self.indexer[-1].bias[-2:], 0.0)
+        # [積極門控] 寫入門控初始偏置設為 1.0 (Sigmoid 後約 0.73)，強迫模型初期大量寫入
+        # 讀取門控初始設為 0.0 (0.5)
+        nn.init.constant_(self.indexer[-1].bias[-2], 1.0) # Write Gate
+        nn.init.constant_(self.indexer[-1].bias[-1], 0.0) # Read Gate
 
     def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0):
         b, seq_len, _ = h.shape
