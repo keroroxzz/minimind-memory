@@ -57,7 +57,8 @@ class MiniMindConfig(PretrainedConfig):
         self.dde_num_slots: int = kwargs.get("dde_num_slots", 1024)
         self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)
         self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)
-        self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 256)
+        # [無損化優化] 記憶維度直接對齊隱藏層維度
+        self.dde_memory_dim: int = kwargs.get("dde_memory_dim", 768)
         self.dde_key_dim: int = kwargs.get("dde_key_dim", 128)
         self.dde_diversity_weight: float = kwargs.get("dde_diversity_weight", 0.02)
         self.dde_sparsity_weight: float = kwargs.get("dde_sparsity_weight", 0.01)
@@ -77,20 +78,18 @@ class DDEModule(nn.Module):
         self.dim = config.hidden_size
         self.ema_decay = config.dde_ema_decay
         
-        # [穩定初始化] 採用 0.02 縮放，既保證信號強度又防止 FP16 溢出
+        # [穩定初始化] 
         self.memory_init = nn.Parameter(torch.randn(self.num_slots, self.mem_dim) * 0.02)
-        
-        # [信號縮放器] 初始設為 0.1，讓 DDE 內容緩慢融入主幹殘差流
         self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
         
-        # [小模型 A] Packer (寫入壓縮) 與 Unpacker (讀取解壓縮)
-        self.packer = nn.Sequential(
-            nn.Linear(self.dim, self.dim // 2),
-            nn.SiLU(),
-            nn.Linear(self.dim // 2, self.mem_dim),
-            nn.LayerNorm(self.mem_dim)
-        )
-        self.unpacker = nn.Linear(self.mem_dim, self.dim)
+        # [無損化設計] Packer 與 Unpacker 簡化為單層 Linear
+        self.packer = nn.Linear(self.dim, self.mem_dim, bias=False)
+        self.unpacker = nn.Linear(self.mem_dim, self.dim, bias=False)
+        
+        # [恆等初始化] 確保訓練初期記憶內容無損透傳
+        with torch.no_grad():
+            nn.init.eye_(self.packer.weight)
+            nn.init.eye_(self.unpacker.weight)
         
         # [小模型 B] Indexer (層次化定址)
         self.indexer = nn.Sequential(

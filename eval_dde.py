@@ -25,12 +25,30 @@ def init_model(args):
     get_model_params(model, model.config)
     return model.eval().to(args.device), tokenizer
 
+def format_msgs(msgs):
+    prompt = ""
+    for msg in msgs:
+        role = msg['role']
+        content = msg['content']
+        prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+    return prompt
+
 def run_dde_test(model, tokenizer, context, query, args, test_name="Custom"):
     print(f"\n{'='*20} DDE Memory Test: {test_name} {'='*20}")
     
-    # [格式一致化] 使用簡潔格式，避開 jinja think 標籤
-    ctx_prompt = f"<|im_start|>user\n事實：{context}<|im_end|>\n"
-    q_prompt = f"<|im_start|>user\n問題：{query}<|im_end|>\n<|im_start|>assistant\n"
+    # [情境預熱] 模擬真實對話，讓 DDE 有足夠的寫入窗口
+    dialogue = [
+        {"role": "user", "content": "你好，请记住我接下来要说的一些重要信息。"},
+        {"role": "assistant", "content": "好的，我会认真记住您提供的所有事实。请说。"},
+        {"role": "user", "content": f"事实：{context}"}
+    ]
+    
+    ctx_prompt = format_msgs(dialogue)
+    # Query 包含問題
+    q_msgs = [
+        {"role": "user", "content": f"问题：{query}"}
+    ]
+    q_prompt = format_msgs(q_msgs) + "<|im_start|>assistant\n"
     
     # 計算 split_idx (Context 的結束位置)
     ctx_ids = tokenizer(ctx_prompt, add_special_tokens=False).input_ids
@@ -40,26 +58,22 @@ def run_dde_test(model, tokenizer, context, query, args, test_name="Custom"):
     inputs = tokenizer(full_prompt, return_tensors="pt").to(args.device)
     
     print(f"Context Length: {split_idx} tokens")
-    print(f"Total Length: {inputs.input_ids.shape[1]} tokens")
     print(f"Memory Path: Force Active (The Wall of Sighs is ON)")
     print(f"💬: {query}")
     print("🧠: ", end='', flush=True)
 
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     
-    # 2. 生成 (注意：為了確保嘆息之牆生效，DDE 評估建議關閉 KV Cache 或確保 Mask 正確傳遞)
-    # 在這裡我們關閉 use_cache 以進行最嚴格的物理隔離測試
     with torch.no_grad():
         generated_ids = model.generate(
             inputs=inputs["input_ids"],
             max_new_tokens=args.max_new_tokens,
-            do_sample=True,
-            temperature=args.temperature,
-            top_p=args.top_p,
-            split_idx=torch.tensor([split_idx], device=args.device), # 傳入關鍵的切分點
-            dde_temp=args.dde_eval_temp, # 使用較低的評估溫度
-            use_cache=False,  # 強制重新計算以套用 Chunked Mask
-            streamer=streamer
+            do_sample=False, # [確定性優化] 關閉隨機性，直接看最強記憶信號
+            split_idx=torch.tensor([split_idx], device=args.device),
+            dde_temp=args.dde_eval_temp,
+            use_cache=False,
+            streamer=streamer,
+            eos_token_id=tokenizer.eos_token_id
         )
     print("\n" + "="*60)
 
