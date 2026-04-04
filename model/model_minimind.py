@@ -103,8 +103,9 @@ class DDEModule(nn.Module):
             nn.Linear(self.dim // 2, self.num_coarse + self.num_fine + 2)
         )
         
-        nn.init.constant_(self.indexer[-1].bias[-2], 1.0) # Write Gate
-        nn.init.constant_(self.indexer[-1].bias[-1], 0.0) # Read Gate
+        # [積極寫入，冷靜讀取] 
+        nn.init.constant_(self.indexer[-1].bias[-2], 1.0)  # Write Gate: 鼓勵初期寫入
+        nn.init.constant_(self.indexer[-1].bias[-1], -3.0) # Read Gate: 避免衝擊主幹
 
     def get_sparse_address(self, indexer_out, temp, b, seq_len):
         # [高精度定址] 僅在 Softmax 與外積處轉為 float32
@@ -121,45 +122,69 @@ class DDEModule(nn.Module):
         
         return sparse_address.to(indexer_out.dtype), prob_matrix.to(indexer_out.dtype)
 
-    def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0):
+    def forward(self, h: torch.Tensor, split_idx: int = None, temp: float = 1.0, past_memory: torch.Tensor = None):
         b, seq_len, _ = h.shape
         device = h.device
         dtype = h.dtype
         
+        # 模式判定：如果有傳入 past_memory，則進入純讀取(鎖定)模式
+        if past_memory is not None:
+            if split_idx is not None and 0 < split_idx < seq_len:
+                # 確保 Context 不被鎖定記憶污染
+                h_context = h[:, :split_idx, :]
+                h_query = h[:, split_idx:, :]
+                q_indexer_out = self.indexer(h_query)
+                q_address, _ = self.get_sparse_address(q_indexer_out, temp, b, seq_len - split_idx)
+                q_read_gate = torch.sigmoid(q_indexer_out[..., -1 : ])
+                read_vec = torch.bmm(q_address, past_memory)
+                mem_out = self.unpacker(read_vec) * q_read_gate * self.output_scale.to(dtype)
+                mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
+                h_out = torch.cat([h_context, h_query + mem_out], dim=1)
+                return h_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), past_memory
+            else:
+                indexer_out = self.indexer(h)
+                q_address, _ = self.get_sparse_address(indexer_out, temp, b, seq_len)
+                q_read_gate = torch.sigmoid(indexer_out[..., -1 : ])
+                read_vec = torch.bmm(q_address, past_memory)
+                mem_out = self.unpacker(read_vec) * q_read_gate * self.output_scale.to(dtype)
+                mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
+                return h + mem_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), past_memory
+
+        # 初始狀態
         current_memory = self.memory_init.unsqueeze(0).expand(b, -1, -1).to(dtype)
 
         if split_idx is None or split_idx <= 0 or split_idx >= seq_len:
-            # 推論模式
+            # 推論模式或無 Context 模式
             indexer_out = self.indexer(h)
             address, _ = self.get_sparse_address(indexer_out, temp, b, seq_len)
             read_gate = torch.sigmoid(indexer_out[..., -1 : ])
-            
             read_vec = torch.matmul(address, current_memory)
             mem_out = self.unpacker(read_vec) * read_gate * self.output_scale.to(dtype)
             mem_out = torch.clamp(mem_out, min=-10.0, max=10.0)
-            
-            return h + mem_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+            return h + mem_out, torch.tensor(0.0, device=device), torch.tensor(0.0, device=device), current_memory
 
-        # 1. 物理切開
+        # [Prefill / Training 模式]
         h_context = h[:, :split_idx, :]
         h_query = h[:, split_idx:, :]
 
-        # 階段 1: Context (純寫入)
+        # 階段 1: Context (寫入並產生 new_memory)
         ctx_indexer_out = self.indexer(h_context)
         ctx_address, ctx_prob_full = self.get_sparse_address(ctx_indexer_out, temp, b, split_idx)
         ctx_write_gate = torch.sigmoid(ctx_indexer_out[..., -2 : -1])
         ctx_packed = self.packer(h_context)
 
-        update_strength = ctx_write_gate * ctx_address
-        chunk_updates = torch.bmm(update_strength.transpose(1, 2), ctx_packed)
+        # [FP32 防溢位] BMM 累加容易在 FP16 溢出導致 NaN
+        update_strength = (ctx_write_gate * ctx_address).float()
+        ctx_packed_fp32 = ctx_packed.float()
+        chunk_updates = torch.bmm(update_strength.transpose(1, 2), ctx_packed_fp32)
         chunk_weights = update_strength.sum(dim=1).unsqueeze(-1) + 1e-10
         normalized_updates = chunk_updates / chunk_weights
         
         update_mask = (chunk_weights > 0.001).float().to(dtype)
         new_memory = current_memory * (1 - update_mask * self.ema_decay) + \
-                     normalized_updates * update_mask * self.ema_decay
+                     normalized_updates.to(dtype) * update_mask * self.ema_decay
 
-        # 階段 2: Query (純讀取)
+        # 階段 2: Query (讀取)
         q_indexer_out = self.indexer(h_query)
         q_address, _ = self.get_sparse_address(q_indexer_out, temp, b, seq_len - split_idx)
         q_read_gate = torch.sigmoid(q_indexer_out[..., -1 : ])
@@ -176,7 +201,7 @@ class DDEModule(nn.Module):
         div_loss = torch.sum(avg_prob * (torch.log(avg_prob + 1e-10) - uniform_log_p))
         sparsity_loss = ctx_write_gate.mean()
         
-        return h_out, div_loss, sparsity_loss
+        return h_out, div_loss, sparsity_loss, new_memory
 
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -384,19 +409,25 @@ class MiniMindModel(nn.Module):
         
         split_idx = kwargs.get("split_idx", None)
         if split_idx is not None and isinstance(split_idx, torch.Tensor):
-            split_idx = split_idx[0].item() # Assume batch consistent split for simplicity
+            split_idx = split_idx[0].item() 
             
         if self.use_dde and split_idx is not None:
             attention_mask = self.create_chunked_mask(seq_length, split_idx, input_ids.device)
 
         presents, dde_div_loss, dde_sparsity_loss = [], 0.0, 0.0
+        current_dde_memory = kwargs.get("past_memory", None)
+
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
             if self.use_engram and i in self.engram_layers:
                 hidden_states = hidden_states + self.engram_module(input_ids, hidden_states)
             
             if self.use_dde and i == self.dde_layer:
                 temp = kwargs.get("dde_temp", 1.0)
-                hidden_states, dde_div_loss, dde_sparsity_loss = self.dde_module(hidden_states, split_idx=split_idx, temp=temp)
+                # [接口修正] 接收 4 個回傳值：h, div, sparse, memory
+                hidden_states, dde_div_loss, dde_sparsity_loss, current_dde_memory = self.dde_module(
+                    hidden_states, split_idx=split_idx, temp=temp, past_memory=current_dde_memory
+                )
+            
             hidden_states, present = layer(hidden_states, position_embeddings, past_key_value, use_cache, attention_mask)
             presents.append(present)
 
@@ -407,7 +438,8 @@ class MiniMindModel(nn.Module):
             aux_loss += (self.config.dde_sparsity_weight * dde_sparsity_loss) +\
                         (self.config.dde_diversity_weight * dde_div_loss)
 
-        return hidden_states, presents, aux_loss
+        # 回傳時包含當前的 DDE 記憶狀態
+        return hidden_states, presents, aux_loss, current_dde_memory
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
@@ -424,7 +456,8 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
             param.requires_grad = ('dde_module' in name)
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
-        hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
+        # [接口修正] 接收 model 回傳的 dde_memory
+        hidden_states, past_key_values, aux_loss, dde_memory = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
         logits = self.lm_head(hidden_states[:, -logits_to_keep:, :]) if logits_to_keep > 0 else self.lm_head(hidden_states)
         loss = None
 
@@ -432,7 +465,16 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
 
-        return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
+        # 將 dde_memory 封裝進輸出對象中
+        output = MoeCausalLMOutputWithPast(
+            loss=loss, 
+            aux_loss=aux_loss, 
+            logits=logits, 
+            past_key_values=past_key_values, 
+            hidden_states=hidden_states
+        )
+        output.dde_memory = dde_memory # 動態掛載記憶狀態
+        return output
 
     @torch.inference_mode()
     def generate(self, inputs=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, do_sample=True, repetition_penalty=1.0, **kwargs):
