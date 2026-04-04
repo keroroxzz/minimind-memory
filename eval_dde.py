@@ -5,6 +5,7 @@ import warnings
 import json
 import torch
 import math
+import re
 from collections import Counter
 from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
@@ -42,10 +43,17 @@ def format_msgs(msgs):
         prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
     return prompt
 
-# --- 標準指標計算工具 ---
+# --- 強化的指標計算工具 (支援中英文) ---
+def tokenize(text):
+    # 如果包含中文，則按字元切分；否則按空格切分
+    if re.search(r'[\u4e00-\u9fff]', text):
+        return list(text.lower().replace(" ", ""))
+    return text.lower().split()
+
 def compute_f1(prediction, ground_truth):
-    prediction_tokens = prediction.lower().split()
-    ground_truth_tokens = ground_truth.lower().split()
+    prediction_tokens = tokenize(prediction)
+    ground_truth_tokens = tokenize(ground_truth)
+    if not prediction_tokens or not ground_truth_tokens: return 0.0
     common = Counter(prediction_tokens) & Counter(ground_truth_tokens)
     num_same = sum(common.values())
     if num_same == 0: return 0.0
@@ -58,8 +66,8 @@ def compute_bleu(prediction, ground_truth):
     def ngrams(tokens, n):
         return [tuple(tokens[i:i+n]) for i in range(len(tokens)-n+1)]
     
-    pred_tokens = prediction.lower().split()
-    gt_tokens = ground_truth.lower().split()
+    pred_tokens = tokenize(prediction)
+    gt_tokens = tokenize(ground_truth)
     if not pred_tokens or not gt_tokens: return 0.0
     
     weights = [0.25, 0.25, 0.25, 0.25]
@@ -74,13 +82,9 @@ def compute_bleu(prediction, ground_truth):
         p_ns.append(sum(common.values()) / len(p_ngrams))
     
     if p_ns[0] == 0: return 0.0
-    
-    # 幾何平均
     score = 0
     for w, p in zip(weights, p_ns):
         if p > 0: score += w * math.log(p)
-    
-    # 長度懲罰 (Brevity Penalty)
     bp = math.exp(min(0, 1 - len(gt_tokens) / len(pred_tokens)))
     return bp * math.exp(score)
 # ----------------------
@@ -114,11 +118,14 @@ def evaluate_dde(model, tokenizer, args):
         
         inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(args.device)
         
+        # [關鍵修正] DDE 推理必須關閉 KV Cache (use_cache=False)
+        # 確保每一輪生成都能重新看到 Context 以重建記憶狀態
         output_ids = model.generate(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
             max_new_tokens=args.max_new_tokens,
             do_sample=False, 
+            use_cache=False, 
             split_idx=split_idx,
             dde_temp=args.dde_temp,
             eos_token_id=tokenizer.eos_token_id,
@@ -130,7 +137,11 @@ def evaluate_dde(model, tokenizer, args):
         # 指標計算
         f1 = compute_f1(response, gt_answer)
         bleu = compute_bleu(response, gt_answer)
-        is_correct = gt_answer.lower() in response.lower() or response.lower() in gt_answer.lower()
+        
+        # 修正 Accuracy 判定：空字串不算 PASS
+        is_correct = False
+        if response:
+            is_correct = gt_answer.lower() in response.lower() or response.lower() in gt_answer.lower()
         
         metrics["f1"].append(f1)
         metrics["bleu"].append(bleu)
@@ -138,9 +149,8 @@ def evaluate_dde(model, tokenizer, args):
         
         print(f"[{i+1}/{total}] [{field}/{scenario}] | F1: {f1:.2f} | BLEU: {bleu:.2f} | {'PASS' if is_correct else 'FAIL'}")
         if not is_correct:
-            print(f"  Query: {query_messages[0]['content'][:50]}...")
             print(f"  GT: {gt_answer[:50]}...")
-            print(f"  Model: {response[:50]}...")
+            print(f"  Model: {response[:50] if response else '(EMPTY)'}")
         
     avg_f1 = sum(metrics["f1"]) / total
     avg_bleu = sum(metrics["bleu"]) / total
@@ -177,6 +187,7 @@ def chat_mode(model, tokenizer, args):
         generated_ids = model.generate(
             input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"],
             max_new_tokens=args.max_new_tokens, do_sample=True, streamer=streamer,
+            use_cache=False, # 聊天模式也建議關閉 cache 以確保記憶正確
             pad_token_id=tokenizer.pad_token_id, eos_token_id=tokenizer.eos_token_id,
             top_p=args.top_p, temperature=args.temperature,
             split_idx=split_idx, dde_temp=args.dde_temp
