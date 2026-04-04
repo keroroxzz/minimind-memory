@@ -54,9 +54,6 @@ class MiniMindConfig(PretrainedConfig):
         # --- MiniMind DDE-v1 新增參數 ---
         self.use_dde: bool = kwargs.get("use_dde", False)
         self.dde_layer: int = kwargs.get("dde_layer", 4)
-        self.dde_num_slots: int = kwargs.get("dde_num_slots", 1024)
-        self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)
-        self.dde_num_fine: int = kwargs.get("dde_num_fine", 64)
         self.dde_num_slots: int = kwargs.get("dde_num_slots", 256)
         self.dde_num_coarse: int = kwargs.get("dde_num_coarse", 16)
         self.dde_num_fine: int = kwargs.get("dde_num_fine", 16)
