@@ -3,99 +3,128 @@ import argparse
 import random
 import warnings
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, TextStreamer
+from transformers import AutoTokenizer, TextStreamer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
-from model.model_lora import *
 from trainer.trainer_utils import setup_seed, get_model_params, get_model_paths
+
 warnings.filterwarnings('ignore')
 
 def init_model(args):
     tokenizer = AutoTokenizer.from_pretrained(args.load_from)
-    if 'model' in args.load_from:
-        model = MiniMindForCausalLM(MiniMindConfig(
-            hidden_size=args.hidden_size,
-            num_hidden_layers=args.num_hidden_layers,
-            use_moe=bool(args.use_moe),
-            use_engram=bool(args.use_engram),
-            use_dde=bool(args.use_dde),
-            inference_rope_scaling=args.inference_rope_scaling
-        ))
-        ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
-        model.load_state_dict(torch.load(ckp_path, map_location=args.device), strict=False)
-        if args.lora_weight != 'None':
-            apply_lora(model)
-            load_lora(model, f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth')
-    else:
-        model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
+    model = MiniMindForCausalLM(MiniMindConfig(
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        use_moe=bool(args.use_moe),
+        use_engram=bool(args.use_engram),
+        use_dde=True,  # 評估模式強制開啟 DDE
+        dde_layer=args.dde_layer
+    ))
+    ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
+    state_dict = torch.load(ckp_path, map_location=args.device)
+    model.load_state_dict(state_dict, strict=False)
     get_model_params(model, model.config)
     return model.half().eval().to(args.device), tokenizer
 
-def main():
-    parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
-    parser.add_argument('--load_from', default='model', type=str, help="模型加载路径（model=原生torch权重，其他路径=transformers格式）")
-    parser.add_argument('--save_dir', default='out', type=str, help="模型权重目录")
-    parser.add_argument('--weight', default='full_sft', type=str, help="权重名称前缀（pretrain, full_sft, rlhf, reason, ppo_actor, grpo, spo）")
-    parser.add_argument('--lora_weight', default='None', type=str, help="LoRA权重名称（None表示不使用，可选：lora_identity, lora_medical）")
-    parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
-    parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--use_moe', default=1, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
-    parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
-    parser.add_argument('--max_new_tokens', default=8192, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
-    parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
-    parser.add_argument('--top_p', default=0.95, type=float, help="nucleus采样阈值（0-1）")
-    parser.add_argument('--open_thinking', default=0, type=int, help="是否开启自适应思考（0=否，1=是）")
-    parser.add_argument('--historys', default=0, type=int, help="携带历史对话轮数（需为偶数，0表示不携带历史）")
-    parser.add_argument('--show_speed', default=1, type=int, help="显示decode速度（tokens/s）")
-    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
+def run_dde_test(model, tokenizer, context, query, args, test_name="Custom"):
+    print(f"\n{'='*20} DDE Memory Test: {test_name} {'='*20}")
     
-    # DDE 專屬參數
-    parser.add_argument('--use_dde', default=1, type=int, help="是否啟用Dynamic Descrit Engram (DDE)?")
-    parser.add_argument('--dde_layer', default=4, type=int, help="DDE 插入層數")
+    # 1. 準備輸入
+    # Context (事實注入)
+    ctx_prompt = f"{tokenizer.bos_token}user\n事實：{context}\n"
+    # Query (問題提問)
+    q_prompt = f"user\n問題：{query}\nassistant\n"
+    
+    # 計算 split_idx (Context 的結束位置)
+    ctx_ids = tokenizer(ctx_prompt, add_special_tokens=False).input_ids
+    split_idx = len(ctx_ids)
+    
+    full_prompt = ctx_prompt + q_prompt
+    inputs = tokenizer(full_prompt, return_tensors="pt").to(args.device)
+    
+    print(f"Context Length: {split_idx} tokens")
+    print(f"Total Length: {inputs.input_ids.shape[1]} tokens")
+    print(f"Memory Path: Force Active (The Wall of Sighs is ON)")
+    print(f"💬: {query}")
+    print("🧠: ", end='', flush=True)
 
-    args = parser.parse_args()
-    
-    prompts = [
-        '你有什么特长？',
-        '为什么天空是蓝色的',
-        '请用Python写一个计算斐波那契数列的函数',
-        '解释一下"光合作用"的基本过程',
-        '如果明天下雨，我应该如何出门',
-        '比较一下猫和狗作为宠物的优缺点',
-        '解释什么是机器学习',
-        '推荐一些中国的美食'
-    ]
-    
-    conversation = []
-    model, tokenizer = init_model(args)
-    input_mode = int(input('[0] 自动测试\n[1] 手动输入\n'))
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     
-    prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')
-    for prompt in prompt_iter:
-        setup_seed(random.randint(0, 31415926))
-        if input_mode == 0: print(f'💬: {prompt}')
-        conversation = conversation[-args.historys:] if args.historys else []
-        conversation.append({"role": "user", "content": prompt})
-        if 'pretrain' in args.weight:
-            inputs = tokenizer.bos_token + prompt
-        else:
-            inputs = tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True, open_thinking=bool(args.open_thinking))
-        
-        inputs = tokenizer(inputs, return_tensors="pt", truncation=True).to(args.device)
-
-        print('🧠: ', end='')
-        st = time.time()
+    # 2. 生成 (注意：為了確保嘆息之牆生效，DDE 評估建議關閉 KV Cache 或確保 Mask 正確傳遞)
+    # 在這裡我們關閉 use_cache 以進行最嚴格的物理隔離測試
+    with torch.no_grad():
         generated_ids = model.generate(
-            inputs=inputs["input_ids"], attention_mask=inputs["attention_mask"],
-            max_new_tokens=args.max_new_tokens, do_sample=True, streamer=streamer,
-            pad_token_id=tokenizer.pad_token_id, eos_token_id=tokenizer.eos_token_id,
-            top_p=args.top_p, temperature=args.temperature, repetition_penalty=1
+            inputs=inputs["input_ids"],
+            max_new_tokens=args.max_new_tokens,
+            do_sample=True,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            split_idx=torch.tensor([split_idx], device=args.device), # 傳入關鍵的切分點
+            dde_temp=args.dde_eval_temp, # 使用較低的評估溫度
+            use_cache=False,  # 強制重新計算以套用 Chunked Mask
+            streamer=streamer
         )
-        response = tokenizer.decode(generated_ids[0][len(inputs["input_ids"][0]):], skip_special_tokens=True)
-        conversation.append({"role": "assistant", "content": response})
-        gen_tokens = len(generated_ids[0]) - len(inputs["input_ids"][0])
-        print(f'\n[Speed]: {gen_tokens / (time.time() - st):.2f} tokens/s\n\n') if args.show_speed else print('\n\n')
+    print("\n" + "="*60)
+
+def main():
+    parser = argparse.ArgumentParser(description="MiniMind DDE 記憶模組專屬評估工具")
+    parser.add_argument('--load_from', default='model', type=str)
+    parser.add_argument('--save_dir', default='out', type=str)
+    parser.add_argument('--weight', default='dde_v1', type=str, help="DDE 權重名稱")
+    parser.add_argument('--hidden_size', default=768, type=int)
+    parser.add_argument('--num_hidden_layers', default=8, type=int)
+    parser.add_argument('--use_moe', default=0, type=int)
+    parser.add_argument('--use_engram', default=0, type=int)
+    parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str)
+    
+    parser.add_argument('--dde_layer', default=4, type=int)
+    parser.add_argument('--dde_eval_temp', default=0.1, type=float, help="記憶檢索溫度 (建議設低以獲得確定性結果)")
+    parser.add_argument('--temperature', default=0.7, type=float)
+    parser.add_argument('--top_p', default=0.9, type=float)
+    parser.add_argument('--max_new_tokens', default=128, type=int)
+
+    args = parser.parse_args()
+    model, tokenizer = init_model(args)
+    setup_seed(42)
+
+    # 內建測試集
+    needle_tests = [
+        {
+            "context": "小明的手機號碼是 138-9999-8888。他住在北京市朝陽區。",
+            "query": "請告訴我小明的手機號碼是多少？",
+            "name": "手機號碼檢索"
+        },
+        {
+            "context": "這是一條秘密指令：今天的暗號是「綠色森林」。請不要告訴任何人。",
+            "query": "今天的暗號是什麼？",
+            "name": "秘密暗號檢索"
+        },
+        {
+            "context": "在遙遠的亞特蘭提斯，有一種生物叫做「咕嚕喵」，它們只吃藍色的蘋果。",
+            "query": "咕嚕喵喜歡吃什麼顏色的蘋果？",
+            "name": "虛構事實記憶"
+        }
+    ]
+
+    print("\nMiniMind DDE-v1 記憶能力專屬評測啟動...")
+    print("模式：強制物理隔離模式。Query 區塊完全無法直接 Attention 到 Context 區塊。")
+    print("模型必須且僅能通過 DDE 記憶模塊傳遞事實。")
+
+    while True:
+        print("\n請選擇測試模式：")
+        print("[0] 自動運行內建針尖測試 (Needle Tests)")
+        print("[1] 手動輸入自定義測試")
+        print("[q] 退出")
+        choice = input("選擇: ")
+
+        if choice == '0':
+            for test in needle_tests:
+                run_dde_test(model, tokenizer, test['context'], test['query'], args, test['name'])
+        elif choice == '1':
+            ctx = input("請輸入 Context (要記憶的事實): ")
+            qry = input("請輸入 Query (針對事實的提問): ")
+            run_dde_test(model, tokenizer, ctx, qry, args, "手動測試")
+        elif choice == 'q':
+            break
 
 if __name__ == "__main__":
     main()
