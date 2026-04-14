@@ -70,3 +70,34 @@ python eval_llm.py --weight ./minimind-3/model.safetensors --load_from ./minimin
 - **統一 Cache 格式**：修正了跨層架構下 `past_key_values` 的存儲邏輯，確保與標準 `transformers` 的 `generate` 函式完全相容。
 - **增量解碼支援**：重構了 `Attention.forward`，使其在 `seq_len=1` 的生成模式下能正確處理時間維度與空間（層）維度的 KV 拼接。
 - **Dtype 匹配**：解決了混合精度訓練時，手動生成的遮罩矩陣與 Query 張量 Dtype 不匹配的問題。
+
+---
+
+## 6. 快速訓練指南 (Quick Start Training)
+
+為了在下次能更快速地啟動或延續 Dense Attention 的訓練，請參考以下指令：
+
+### 6.1 從預訓練權重開始推理訓練 (Reasoning SFT)
+若要利用已有的 768 維度預訓練權重開啟 Dense Attention 訓練，請使用 `train_reasoning.py`：
+```bash
+python trainer/train_reasoning.py \
+    --from_weight pretrain_768 \
+    --save_weight reason_v1 \
+    --use_dense_attention 1 \
+    --batch_size 8 \
+    --use_wandb
+```
+*註：`train_reasoning.py` 預設已開啟 `use_dense_attention=1`。*
+
+### 6.2 延續之前的推理訓練 (Resume)
+若訓練中斷，可以透過 `--from_resume 1` 自動從 `checkpoints/` 目錄加載最後一次的優化器狀態與權重：
+```bash
+python trainer/train_reasoning.py --from_resume 1 --use_wandb
+```
+
+### 6.3 關鍵參數提示
+- **`--from_weight`**: 可以指向 `out/` 或 `checkpoints/` 下的 `.pth` 文件路徑，或是權重前綴名（如 `pretrain_768`）。
+- **`--max_seq_len`**: Reasoning 建議設為 `512` 或更高，以容納完整的推理鏈（Chain of Thought）。
+- **資料預處理**: `ReasoningDataset` 在啟動時會進行硬性長度過濾，這可能需要幾分鐘時間，請耐心等待 `✅ 資料集準備完畢` 的提示。
+- **硬體建議**: Dense Attention 會增加記憶體開銷，若遇到 OOM，請適度降低 `batch_size` 或增加 `accumulation_steps`。
+

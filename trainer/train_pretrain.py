@@ -97,6 +97,9 @@ if __name__ == "__main__":
     parser.add_argument('--max_seq_len', default=340, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument('--use_moe', default=1, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
+    parser.add_argument('--use_dense_attention', default=0, type=int, choices=[0, 1], help="是否使用Dense Attention架构（0=否，1=是）")
+    parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention架构（0=否，1=是）")
+    parser.add_argument("--tokenizer_path", type=str, default="./model", help="Tokenizer 目录")
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
@@ -112,7 +115,14 @@ if __name__ == "__main__":
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe), use_engram=bool(args.use_engram))
+    lm_config = MiniMindConfig(
+        hidden_size=args.hidden_size,
+        num_hidden_layers=args.num_hidden_layers,
+        use_moe=bool(args.use_moe),
+        use_engram=bool(args.use_engram),
+        use_dense_attention=bool(args.use_dense_attention),
+        use_latent_attention=bool(args.use_latent_attention)
+    )
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
@@ -130,7 +140,7 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
     # ========== 5. 定义模型、数据、优化器 ==========
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, args.from_weight, tokenizer_path=args.tokenizer_path, device=args.device)
     train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
