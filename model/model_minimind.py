@@ -51,6 +51,12 @@ class MiniMindConfig(PretrainedConfig):
         self.engram_table_size: int = kwargs.get("engram_table_size", 131072)   # Hash table 大小 (128K)
         self.engram_layers: List[int] = kwargs.get("engram_layers", [2,]) # 作用層數
 
+        # --- Dense & Latent Attention 新增參數 ---
+        self.use_dense_attention: bool = kwargs.get("use_dense_attention", False)
+        self.use_latent_attention: bool = kwargs.get("use_latent_attention", False)
+        self.kv_lora_rank: int = kwargs.get("kv_lora_rank", 128)
+        self.qk_rope_dim: int = kwargs.get("qk_rope_dim", 64)
+
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
@@ -155,43 +161,143 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 class Attention(nn.Module):
     def __init__(self, config: MiniMindConfig):
         super().__init__()
+        self.config = config
         self.num_key_value_heads = config.num_attention_heads if config.num_key_value_heads is None else config.num_key_value_heads
         self.n_local_heads = config.num_attention_heads
         self.n_local_kv_heads = self.num_key_value_heads
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = config.head_dim
-        self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
-        self.q_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
-        self.k_norm = RMSNorm(self.head_dim, eps=config.rms_norm_eps)
+        
+        self.use_dense_attention = config.use_dense_attention
+        self.use_latent_attention = config.use_latent_attention
+
+        if self.use_latent_attention:
+            self.kv_lora_rank = config.kv_lora_rank
+            self.qk_rope_dim = config.qk_rope_dim
+            self.latent_head_dim = self.kv_lora_rank // self.n_local_heads
+            
+            # Latent 模式：Q 投影至 latent 維度 + rope 維度
+            self.wq = nn.Linear(config.hidden_size, self.kv_lora_rank + self.n_local_heads * self.qk_rope_dim, bias=False)
+            # Latent 模式：KV 直接壓縮至 latent 空間 + 單一 rope 維度
+            self.kv_a_proj = nn.Linear(config.hidden_size, self.kv_lora_rank + self.qk_rope_dim, bias=False)
+            self.o_proj = nn.Linear(self.kv_lora_rank, config.hidden_size, bias=False)
+        else:
+            self.q_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False)
+            self.k_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
+            self.v_proj = nn.Linear(config.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
+            self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
+            
+        self.q_norm = RMSNorm(self.head_dim if not self.use_latent_attention else self.latent_head_dim, eps=config.rms_norm_eps)
+        self.k_norm = RMSNorm(self.head_dim if not self.use_latent_attention else self.latent_head_dim, eps=config.rms_norm_eps)
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.dropout = config.dropout
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and config.flash_attn
 
-    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
+    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None):
         bsz, seq_len, _ = x.shape
-        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
-        xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
-        xq, xk = self.q_norm(xq), self.k_norm(xk)
-        cos, sin = position_embeddings
-        xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)
-        if past_key_value is not None:
-            xk = torch.cat([past_key_value[0], xk], dim=1)
-            xv = torch.cat([past_key_value[1], xv], dim=1)
-        past_kv = (xk, xv) if use_cache else None
-        xq, xk, xv = (xq.transpose(1, 2), repeat_kv(xk, self.n_rep).transpose(1, 2), repeat_kv(xv, self.n_rep).transpose(1, 2))
-        if self.flash and (seq_len > 1) and (past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
-            output = F.scaled_dot_product_attention(xq, xk, xv, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
+
+        if self.use_latent_attention:
+            # === Latent Attention 邏輯 ===
+            q_out = self.wq(x)
+            q_content, q_rope = torch.split(q_out, [self.kv_lora_rank, self.n_local_heads * self.qk_rope_dim], dim=-1)
+            q_content = q_content.view(bsz, seq_len, self.n_local_heads, self.latent_head_dim)
+            q_rope = q_rope.view(bsz, seq_len, self.n_local_heads, self.qk_rope_dim)
+
+            kv_out = self.kv_a_proj(x)
+            k_content, k_rope = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_dim], dim=-1)
+            # K 的 content 與 V 共享
+            k_content = k_content.view(bsz, seq_len, 1, self.kv_lora_rank).expand(-1, -1, self.n_local_heads, -1)
+            k_content = k_content.reshape(bsz, seq_len, self.n_local_heads, self.latent_head_dim)
+            v_content = k_content.clone() 
+            k_rope = k_rope.view(bsz, seq_len, 1, self.qk_rope_dim).expand(-1, -1, self.n_local_heads, -1)
+
+            cos, sin = position_embeddings
+            q_rope, k_rope = apply_rotary_pos_emb(q_rope, k_rope, cos, sin)
+            
+            # Temporal KV拼接 (B, S, H, D)
+            xk_cur = torch.cat([k_content, k_rope], dim=-1)
+            xv_cur = v_content
+            
+            if past_key_value is not None:
+                xk = torch.cat([past_key_value[0], xk_cur], dim=1)
+                xv = torch.cat([past_key_value[1], xv_cur], dim=1)
+            else:
+                xk, xv = xk_cur, xv_cur
+            
+            past_kv = (xk, xv) if use_cache else None
+            
+            # 準備用於 Attention 的 xq, xk, xv (B, H, S, D)
+            xq = torch.cat([q_content, q_rope], dim=-1).transpose(1, 2)
+            xk_for_attn = xk.transpose(1, 2)
+            xv_for_attn = xv.transpose(1, 2)
         else:
-            scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
-            scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
-            if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
+            # === 標準 MHA/GQA 邏輯 ===
+            xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+            xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
+            xk = xk.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
+            xv = xv.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
+            xq, xk = self.q_norm(xq), self.k_norm(xk)
+            cos, sin = position_embeddings
+            xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)
+            
+            if past_key_value is not None:
+                xk = torch.cat([past_key_value[0], xk], dim=1)
+                xv = torch.cat([past_key_value[1], xv], dim=1)
+            past_kv = (xk, xv) if use_cache else None
+            
+            xq = xq.transpose(1, 2)
+            xk_for_attn = repeat_kv(xk, self.n_rep).transpose(1, 2)
+            xv_for_attn = repeat_kv(xv, self.n_rep).transpose(1, 2)
+
+        # === Dense Attention (T x D) 核心邏輯 ===
+        if self.use_dense_attention and global_kv_pool is not None:
+            # 將當前層「已經拼接好過去時間」的 KV 放入 Pool (形狀均為 B, H, S_total, D)
+            global_kv_pool['k'].append(xk_for_attn)
+            global_kv_pool['v'].append(xv_for_attn)
+
+            keys_total = torch.cat(global_kv_pool['k'], dim=2)
+            values_total = torch.cat(global_kv_pool['v'], dim=2)
+            
+            current_layer_depth = len(global_kv_pool['k'])
+            total_seq_len = xk_for_attn.shape[2]
+            
+            if attention_mask is not None:
+                if attention_mask.dim() == 2:
+                    am = attention_mask.unsqueeze(1).unsqueeze(2)
+                else:
+                    am = attention_mask
+                extended_mask = am.repeat(1, 1, 1, current_layer_depth)
+            else:
+                extended_mask = torch.ones((bsz, 1, seq_len, total_seq_len * current_layer_depth), device=xq.device, dtype=torch.bool)
+
+            if total_seq_len > 1:
+                # 每個 Query token t 只能看到時間點 t' <= t 的所有層
+                # 單層的 Causal Mask: (seq_len, total_seq_len)
+                # 如果正在生成 (seq_len=1)，則 query 0 可以看到 key 0...total_seq_len-1，這是對的
+                if seq_len > 1:
+                    causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool))
+                    causal_mask = causal_mask.repeat(1, current_layer_depth)
+                    extended_mask = extended_mask.to(torch.bool) & causal_mask.unsqueeze(0).unsqueeze(0)
+
+            output = F.scaled_dot_product_attention(
+                xq, keys_total, values_total, 
+                attn_mask=extended_mask.to(xq.dtype) if extended_mask.dtype != torch.bool else extended_mask, 
+                is_causal=False 
+            )
+        else:
+            # 標準單層 Attention (或 Dense 被禁用)
+            if self.flash and (seq_len > 1) and (past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
+                output = F.scaled_dot_product_attention(xq, xk_for_attn, xv_for_attn, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
+            else:
+                curr_head_dim = xq.shape[-1]
+                scores = (xq @ xk_for_attn.transpose(-2, -1)) / math.sqrt(curr_head_dim)
+                if xk_for_attn.shape[2] > 1 and seq_len > 1:
+                    scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
+                if attention_mask is not None: 
+                    scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+                output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv_for_attn
+
         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)
         output = self.resid_dropout(self.o_proj(output))
         return output, past_kv
@@ -246,15 +352,15 @@ class MiniMindBlock(nn.Module):
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
 
-    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
+    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None):
         residual = hidden_states
-        hidden_states, present_key_value = self.self_attn(
+        hidden_states, updated_kv = self.self_attn(
             self.input_layernorm(hidden_states), position_embeddings,
-            past_key_value, use_cache, attention_mask
+            past_key_value, use_cache, attention_mask, global_kv_pool
         )
         hidden_states += residual
         hidden_states = hidden_states + self.mlp(self.post_attention_layernorm(hidden_states))
-        return hidden_states, present_key_value
+        return hidden_states, updated_kv
 
 class MiniMindModel(nn.Module):
     def __init__(self, config: MiniMindConfig):
@@ -265,7 +371,8 @@ class MiniMindModel(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
         self.layers = nn.ModuleList([MiniMindBlock(l, config) for l in range(self.num_hidden_layers)])
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        freqs_cos, freqs_sin = precompute_freqs_cis(dim=config.head_dim, end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
+        freqs_cos, freqs_sin = precompute_freqs_cis(dim=config.head_dim if not config.use_latent_attention else config.qk_rope_dim, 
+                                                    end=config.max_position_embeddings, rope_base=config.rope_theta, rope_scaling=config.rope_scaling)
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
 
@@ -282,22 +389,25 @@ class MiniMindModel(nn.Module):
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
+        
+        global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
             # --- 注入 Engram 知識 ---
-            # 如果目前層數在設定的 engram_layers 中，則加上 Engram 特徵
             if self.use_engram and i in self.engram_layers:
                 engram_h = self.engram_module(input_ids, hidden_states)
-                hidden_states = hidden_states + engram_h  # 將 Engram 特徵直接加到 Residual Stream 中
+                hidden_states = hidden_states + engram_h
 
             hidden_states, present = layer(
                 hidden_states,
                 position_embeddings,
                 past_key_value=past_key_value,
                 use_cache=use_cache,
-                attention_mask=attention_mask
+                attention_mask=attention_mask,
+                global_kv_pool=global_kv_pool
             )
             presents.append(present)
+                
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
         return hidden_states, presents, aux_loss

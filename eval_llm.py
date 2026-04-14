@@ -1,3 +1,4 @@
+import os
 import time
 import argparse
 import random
@@ -17,10 +18,25 @@ def init_model(args):
             num_hidden_layers=args.num_hidden_layers,
             use_moe=bool(args.use_moe),
             use_engram=bool(args.use_engram),
+            use_dense_attention=bool(args.use_dense_attention),
+            use_latent_attention=bool(args.use_latent_attention),
             inference_rope_scaling=args.inference_rope_scaling
         ))
-        ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
-        model.load_state_dict(torch.load(ckp_path, map_location=args.device), strict=False)
+        
+        if os.path.exists(args.weight):
+            ckp_path = args.weight
+        else:
+            ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
+            
+        # 支援 .safetensors 格式
+        if ckp_path.endswith('.safetensors'):
+            from safetensors.torch import load_file
+            state_dict = load_file(ckp_path, device=args.device)
+        else:
+            state_dict = torch.load(ckp_path, map_location=args.device, weights_only=False)
+            
+        model.load_state_dict(state_dict, strict=False)
+        
         if args.lora_weight != 'None':
             apply_lora(model)
             load_lora(model, f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth')
@@ -39,6 +55,8 @@ def main():
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=1, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
+    parser.add_argument('--use_dense_attention', default=0, type=int, choices=[0, 1], help="是否使用Dense Attention架构（0=否，1=是）")
+    parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention架构（0=否，1=是）")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
     parser.add_argument('--max_new_tokens', default=8192, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
     parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
