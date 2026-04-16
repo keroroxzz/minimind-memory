@@ -1,3 +1,4 @@
+from numpy.strings import index
 import torch
 from torch.utils.data import Dataset
 from datasets import load_dataset
@@ -9,90 +10,119 @@ class ReasoningDataset(Dataset):
         self.max_length = max_length
         self.data = []
         
-        print("📥 載入並處理 Reasoning 資料集 (過濾長度 > {})...".format(max_length))
+        print(f"📥 載入並處理【簡體中文】推理資料集 (過濾長度 > {max_length})...")
         
-        # 載入並處理資料集
-        self._load_and_process("yuhuanstudio/gsm8k_zhtw", split, max_samples, self._process_gsm8k)
-        self._load_and_process("meta-math/MetaMathQA", split, max_samples, self._process_metamath)
-        self._load_and_process("ucinlp/drop", split, max_samples, self._process_drop)
-        self._load_and_process("lucasmccabe/logiqa", split, max_samples, self._process_logiqa)
-        self._load_and_process("voidful/ReClor", split, max_samples, self._process_reclor)
+        # 1. 載入 BelleGroup 數學應用題 (簡體中文 CoT)
+        self._load_and_process(
+            "BelleGroup/school_math_0.25M", 
+            split, max_samples, self._process_belle_math
+        )
+        
+        # 2. 載入 Math23K 中文數學題
+        self._load_and_process(
+            "shibing624/math23k", 
+            split, max_samples, self._process_math23k
+        )
 
-        print(f"✅ 資料集準備完畢，有效樣本數: {len(self.data)}")
+        print(f"✅ 簡中資料集準備完畢，有效樣本數: {len(self.data)}")
         random.shuffle(self.data)
 
     def _load_and_process(self, repo, split, limit, process_func):
         try:
             print(f"處理 {repo}...")
-            # 注意: 部分資料集可能沒有 "train" 切分或需要特定參數，這裡使用默認邏輯
             ds = load_dataset(repo, split=split)
             process_func(ds, limit)
         except Exception as e:
             print(f"⚠️ {repo} 失敗: {e}")
 
     def _add_valid_sample(self, prompt, response):
-        """過濾掉編碼後超過 max_length 的樣本以保證邏輯完整性"""
+        """長度硬過濾，確保邏輯鏈完整"""
         if not prompt or not response: return
-        
-        text = f"User: {prompt.strip()}\n\nAssistant: {response.strip()}"
-        encoded_len = len(self.tokenizer.encode(text, add_special_tokens=True))
-        
-        # 保留空間給 shift target (+1)
+
+        prompt = prompt.strip()
+        response = response.strip()
+
+        inputs_prompt = self.tokenizer.bos_token + prompt
+        inputs_prompt = self.tokenizer(inputs_prompt, add_special_tokens=False, return_tensors="pt", truncation=True)
+        input_prompt_ids = inputs_prompt["input_ids"]
+
+        response_prompt = response + self.tokenizer.eos_token
+        response_prompt = self.tokenizer(response_prompt, add_special_tokens=False, return_tensors="pt", truncation=True)
+        response_prompt_ids = response_prompt["input_ids"]
+
+        encoded_len = len(input_prompt_ids[0]) + len(response_prompt_ids[0])
+
         if encoded_len <= self.max_length + 1:
-            self.data.append({"prompt": prompt.strip(), "response": response.strip()})
+            self.data.append({"prompt": prompt.strip(), "response": response.strip(), "prompt_len": len(input_prompt_ids[0])})
 
-    # === 解析函數 ===
-    def _process_gsm8k(self, ds, limit):
+    # === 解析函數 (簡體中文資料集專用) ===
+    
+    def _process_belle_math(self, ds, limit):
         for i, item in enumerate(ds):
             if limit and i >= limit: break
-            self._add_valid_sample(item['question'], item['answer'])
+            prompt = item['instruction']
+            if item.get('input'):
+                prompt += "\n" + item['input']
+            self._add_valid_sample(prompt, item['output'])
 
-    def _process_metamath(self, ds, limit):
+    def _process_math23k(self, ds, limit):
         for i, item in enumerate(ds):
             if limit and i >= limit: break
-            self._add_valid_sample(item['query'], item['response'])
-
-    def _process_drop(self, ds, limit):
-        for i, item in enumerate(ds):
-            if limit and i >= limit: break
-            ans = item.get('answers_spans', {}).get('spans', [])
-            if ans:
-                self._add_valid_sample(f"Passage:\n{item['passage']}\n\nQ: {item['question']}", ans[0])
-
-    def _process_logiqa(self, ds, limit):
-        for i, item in enumerate(ds):
-            if limit and i >= limit: break
-            opts = "\n".join([f"{chr(65+j)}. {opt}" for j, opt in enumerate(item['options'])])
-            ans_idx = item['label']
-            if isinstance(ans_idx, int) and 0 <= ans_idx < len(item['options']):
-                ans_text = f"{chr(65+ans_idx)}. {item['options'][ans_idx]}"
-                self._add_valid_sample(f"Context:\n{item['context']}\n\nQ: {item['question']}\n{opts}", ans_text)
-
-    def _process_reclor(self, ds, limit):
-        for i, item in enumerate(ds):
-            if limit and i >= limit: break
-            opts = "\n".join([f"{chr(65+j)}. {opt}" for j, opt in enumerate(item['answers'])])
-            ans_idx = item['label']
-            if isinstance(ans_idx, int) and 0 <= ans_idx < len(item['answers']):
-                ans_text = f"{chr(65+ans_idx)}. {item['answers'][ans_idx]}"
-                self._add_valid_sample(f"Context:\n{item['context']}\n\nQ: {item['question']}\n{opts}", ans_text)
+            prompt = f"请解答以下数学问题：\n{item['original_text']}"
+            response = f"思考过程：\n根据题意，我们可以列出计算式：{item['equation']}\n因此，最终答案是：{item['ans']}"
+            self._add_valid_sample(prompt, response)
 
     def __len__(self): return len(self.data)
 
     def __getitem__(self, idx):
+        sample = self.data[idx]
+
+        inputs_prompt = self.tokenizer.bos_token + sample['prompt']
+        input_prompt_ids = self.tokenizer(inputs_prompt, add_special_tokens=False, return_tensors="pt", truncation=True).input_ids
+
+        response_prompt = sample['response'] + self.tokenizer.eos_token
+        response_prompt_ids = self.tokenizer(response_prompt, add_special_tokens=False, return_tensors="pt", truncation=True).input_ids
+
+        tokens = torch.cat([input_prompt_ids[0], response_prompt_ids[0]]).tolist()
+        input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
+        input_ids = torch.tensor(input_ids, dtype=torch.long)
+        labels = input_ids.clone()
+        labels[:len(input_prompt_ids[0])] = -100
+
+        return input_ids, labels
+
+    def __getitem_chat__(self, idx):
         item = self.data[idx]
-        text = f"User: {item['prompt']}\n\nAssistant: {item['response']}"
+        messages = [
+            {"role": "user", "content": item['prompt']},
+            {"role": "assistant", "content": item['response']}
+        ]
         
-        encoded = self.tokenizer(text, truncation=True, max_length=self.max_length + 1, padding="max_length", return_tensors="pt")
-        input_ids = encoded["input_ids"].squeeze(0)
+        # 使用 apply_chat_template 獲取完整 ID
+        input_ids = self.tokenizer.apply_chat_template(
+            messages, 
+            tokenize=True, 
+            add_generation_prompt=False, 
+            truncation=True, 
+            max_length=self.max_length + 1, 
+            padding="max_length"
+        )
+        input_ids = torch.tensor(input_ids)
         
         x = input_ids[:-1]
         y = input_ids[1:].clone()
         
-        # 忽略 User Prompt 的 Loss (-100)
-        prompt_text = f"User: {item['prompt']}\n\nAssistant:"
-        prompt_encoded = self.tokenizer(prompt_text, add_special_tokens=False)
-        prompt_len = len(prompt_encoded["input_ids"])
+        # 忽略 User Prompt 的 Loss
+        # 我們需要找出 Assistant 回覆開始的位置
+        user_messages = [{"role": "user", "content": item['prompt']}]
+        user_prompt_ids = self.tokenizer.apply_chat_template(
+            user_messages, 
+            tokenize=True, 
+            add_generation_prompt=True
+        )
+        prompt_len = len(user_prompt_ids)
+        
+        # 將 prompt 部分的 label 設為 -100
         y[:prompt_len-1] = -100
         
         pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0

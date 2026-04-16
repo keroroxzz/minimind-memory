@@ -133,7 +133,6 @@ if __name__ == "__main__":
         use_dense_attention=bool(args.use_dense_attention),
         use_latent_attention=bool(args.use_latent_attention)
     )
-    
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 混合精度與環境 ==========
@@ -147,7 +146,13 @@ if __name__ == "__main__":
         import wandb
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         resume = 'must' if wandb_id else None
-        wandb.init(project=args.wandb_project, id=wandb_id, resume=resume)
+        wandb_run_name = f"MiniMind-Reasoning-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
+        wandb.init(
+            project=args.wandb_project,
+            name=wandb_run_name,
+            id=wandb_id,
+            resume=resume,
+            config=lm_config.__dict__)
     
     # ========== 5. 模型與資料載入 ==========
     # 初始化模型（會自動處理 from_weight）

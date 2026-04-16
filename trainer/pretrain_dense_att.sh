@@ -4,7 +4,11 @@ python train_pretrain.py \
   --use_dense_attention 1 \
   --use_moe 0 \
   --use_engram 0 \
-  --batch_size 32 \
-  --accumulation_steps 8 \
+  --epochs 2 \
+  --max_seq_len 512 \
+  --batch_size 16 \
+  --accumulation_steps 16 \
+  --from_weight "../out/pretrain_768.pth" \
   --use_wandb \
-  --save_weight pretrain_dense_test
+  --save_weight pretrain_dense_test \
+  --from_resume 1
