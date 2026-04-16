@@ -18,10 +18,16 @@ class ReasoningDataset(Dataset):
             split, max_samples, self._process_belle_math
         )
         
-        # 2. 載入 Math23K 中文數學題
+        # 2. 載入 MATH
         self._load_and_process(
-            "shibing624/math23k", 
-            split, max_samples, self._process_math23k
+            "HuggingFaceH4/MATH", 
+            split, max_samples, self._process_MATH
+        )
+
+        # 2. 載入 繁中 中文數學題
+        self._load_and_process(
+            "twinkle-ai/tw-math-reasoning-2k", 
+            split, max_samples, self._process_MATH
         )
 
         print(f"✅ 簡中資料集準備完畢，有效樣本數: {len(self.data)}")
@@ -52,7 +58,7 @@ class ReasoningDataset(Dataset):
 
         encoded_len = len(input_prompt_ids[0]) + len(response_prompt_ids[0])
 
-        if encoded_len <= self.max_length + 1:
+        if encoded_len <= self.max_length + 10:
             self.data.append({"prompt": prompt.strip(), "response": response.strip(), "prompt_len": len(input_prompt_ids[0])})
 
     # === 解析函數 (簡體中文資料集專用) ===
@@ -65,11 +71,11 @@ class ReasoningDataset(Dataset):
                 prompt += "\n" + item['input']
             self._add_valid_sample(prompt, item['output'])
 
-    def _process_math23k(self, ds, limit):
+    def _process_MATH(self, ds, limit):
         for i, item in enumerate(ds):
             if limit and i >= limit: break
-            prompt = f"请解答以下数学问题：\n{item['original_text']}"
-            response = f"思考过程：\n根据题意，我们可以列出计算式：{item['equation']}\n因此，最终答案是：{item['ans']}"
+            prompt = f"{item['problem']}"
+            response = f"\n{item['solution']}"
             self._add_valid_sample(prompt, response)
 
     def __len__(self): return len(self.data)
@@ -83,8 +89,11 @@ class ReasoningDataset(Dataset):
         response_prompt = sample['response'] + self.tokenizer.eos_token
         response_prompt_ids = self.tokenizer(response_prompt, add_special_tokens=False, return_tensors="pt", truncation=True).input_ids
 
-        tokens = torch.cat([input_prompt_ids[0], response_prompt_ids[0]]).tolist()
-        input_ids = tokens + [self.tokenizer.pad_token_id] * (self.max_length - len(tokens))
+        input_ids = torch.cat([input_prompt_ids[0], response_prompt_ids[0]]).tolist()
+        if len(input_ids) > self.max_length:
+            input_ids = input_ids[:self.max_length]
+        else:
+            input_ids = input_ids + [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         labels = input_ids.clone()
         labels[:len(input_prompt_ids[0])] = -100
