@@ -47,9 +47,13 @@ class MiniMindConfig(PretrainedConfig):
 
         # --- DeepSeek Engram 新增參數 ---
         self.use_engram: bool = kwargs.get("use_engram", True)
-        self.engram_n: int = kwargs.get("engram_n", 2)                 # 使用 2-gram (Bigram)
-        self.engram_table_size: int = kwargs.get("engram_table_size", 131072)   # Hash table 大小 (128K)
-        self.engram_layers: List[int] = kwargs.get("engram_layers", [2,]) # 作用層數
+        self.engram_offload_cpu: bool = kwargs.get("engram_offload_cpu", True) # 是否將 Embedding 表放在 CPU
+        self.max_ngram_size: int = kwargs.get("max_ngram_size", 3)
+        self.engram_vocab_size: int = kwargs.get("engram_vocab_size", 1024 * 1024) # Unified table size (e.g. 1M)
+        self.n_embed_per_ngram: int = kwargs.get("n_embed_per_ngram", 768)
+        self.n_head_per_ngram: int = kwargs.get("n_head_per_ngram", 8)
+        self.engram_layers: List[int] = kwargs.get("engram_layers", [2, 4, 6]) # 作用層數
+        self.engram_kernel_size: int = kwargs.get("engram_kernel_size", 4)
 
         # --- Dense & Latent Attention 新增參數 ---
         self.use_dense_attention: bool = kwargs.get("use_dense_attention", False)
@@ -61,58 +65,171 @@ class MiniMindConfig(PretrainedConfig):
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
-class EngramModule(nn.Module):
+class MultiHeadEmbedding(nn.Module):
+    def __init__(self, list_of_N: List[int], D: int):
+        super().__init__()
+        self.num_heads = len(list_of_N)
+        self.embedding_dim = D
+        offsets = [0]
+        for n in list_of_N[:-1]:
+            offsets.append(offsets[-1] + n)
+        self.register_buffer("offsets", torch.tensor(offsets, dtype=torch.long), persistent=False)
+        total_N = sum(list_of_N)
+        self.embedding = nn.Embedding(num_embeddings=total_N, embedding_dim=D)
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        # input_ids: [..., num_heads]
+        # Ensure offsets are on same device as input_ids
+        shifted_input_ids = input_ids + self.offsets.to(input_ids.device)
+        output = self.embedding(shifted_input_ids)
+        return output
+
+class ShortConv(nn.Module):
+    def __init__(self, hidden_size: int, kernel_size: int = 4, dilation: int = 1):
+        super().__init__()
+        self.conv = nn.Conv1d(
+            in_channels=hidden_size,
+            out_channels=hidden_size,
+            kernel_size=kernel_size,
+            groups=hidden_size,
+            bias=False,
+            padding=(kernel_size - 1) * dilation,
+            dilation=dilation,
+        )
+        self.act_fn = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: [B, L, D]
+        T = x.shape[1]
+        x_bct = x.transpose(1, 2)
+        y_bct = self.conv(x_bct)
+        y_bct = y_bct[..., :T]
+        y = self.act_fn(y_bct).transpose(1, 2)
+        return y
+
+def is_prime(n):
+    if n < 2: return False
+    for i in range(2, int(math.sqrt(n)) + 1):
+        if n % i == 0: return False
+    return True
+
+def find_next_prime(start, seen_primes):
+    candidate = start + 1
+    while True:
+        if is_prime(candidate) and candidate not in seen_primes:
+            return candidate
+        candidate += 1
+
+class EngramManager(nn.Module):
     def __init__(self, config: MiniMindConfig):
         super().__init__()
-        self.n = config.engram_n
-        self.table_size = config.engram_table_size
-        self.dim = config.hidden_size
-        
-        # Engram 的 Embedding 表
-        self.engram_emb = nn.Embedding(self.table_size, self.dim)
-        
-        # Gating 機制：用來決定要將多少 Engram 知識混入主網路
-        self.gate = nn.Linear(self.dim, self.dim, bias=False)
-        
-        # 簡單的質數用於 Hash 碰撞打散
-        self.prime = 31 
+        self.max_ngram_size = config.max_ngram_size
+        self.n_head_per_ngram = config.n_head_per_ngram
+        self.hidden_size = config.hidden_size
+        self.n_embed_per_ngram = config.n_embed_per_ngram
+        self.layer_ids = config.engram_layers
+        self.offload_cpu = config.engram_offload_cpu
+        self.total_heads = (self.max_ngram_size - 1) * self.n_head_per_ngram
 
-    def forward(self, input_ids: torch.Tensor, hidden_states: torch.Tensor) -> torch.Tensor:
-        """
-        input_ids: [batch_size, seq_len]
-        hidden_states: [batch_size, seq_len, dim]
-        """
-        b, seq_len = input_ids.shape
-        device = input_ids.device
+        # 1. 為每個 head 生成質數模數 (Unified Table)
+        self.head_vocab_sizes = []
+        seen_primes = set()
+        curr_start = config.engram_vocab_size // self.total_heads
+        for _ in range(self.total_heads):
+            p = find_next_prime(curr_start, seen_primes)
+            seen_primes.add(p)
+            self.head_vocab_sizes.append(p)
+            curr_start = p
 
-        # 1. 構建 N-gram Hash ID (支援平行的 Tensor 運算)
-        if self.n == 2:
-            # Bigram 實作：將序列向右平移一格，補 0
-            shifted_ids = torch.cat([
-                torch.zeros((b, 1), dtype=input_ids.dtype, device=device), 
-                input_ids[:, :-1]
-            ], dim=1)
-            # Hash 函數: (ID_prev * Prime + ID_curr) % Table_Size
-            hash_ids = (shifted_ids * self.prime + input_ids) % self.table_size
+        # 2. Embedding 表 (可以在 CPU 或 GPU)
+        self.embedding_table = MultiHeadEmbedding(self.head_vocab_sizes, D=self.n_embed_per_ngram // self.n_head_per_ngram)
+        if self.offload_cpu:
+            self.embedding_table = self.embedding_table.cpu()
+
+        # 3. GPU 上的計算組件 (Gating, Conv, Norm)
+        self.register_buffer("multipliers", torch.tensor([31, 10007, 424243], dtype=torch.long))
+        
+        # 為了支援多層，每層可以有自己的 gating 參數，或者共用。這裡每層獨立，效能更好。
+        self.fusions = nn.ModuleDict({
+            str(layer_id): nn.ModuleDict({
+                "value_proj": nn.Linear((self.max_ngram_size - 1) * self.n_embed_per_ngram, self.hidden_size, bias=False),
+                "key_proj": nn.Linear((self.max_ngram_size - 1) * self.n_embed_per_ngram, self.hidden_size, bias=False),
+                "short_conv": ShortConv(self.hidden_size, kernel_size=config.engram_kernel_size, dilation=self.max_ngram_size),
+                "norm1": RMSNorm(self.hidden_size),
+                "norm2": RMSNorm(self.hidden_size)
+            }) for layer_id in self.layer_ids
+        })
+
+    def _apply(self, fn):
+        super()._apply(fn)
+        if self.offload_cpu:
+            self.embedding_table.cpu()
+        return self
+
+    def get_hashes(self, full_input_ids: torch.Tensor, L_curr: int):
+        B, L_full = full_input_ids.shape
+        device = full_input_ids.device
+        
+        all_hashes = []
+        shifts = []
+        for k in range(self.max_ngram_size):
+            if k == 0:
+                shifts.append(full_input_ids)
+            else:
+                s = torch.cat([torch.zeros((B, k), dtype=torch.long, device=device), full_input_ids[:, :-k]], dim=1)
+                shifts.append(s)
+
+        h_idx = 0
+        for n in range(2, self.max_ngram_size + 1):
+            mix = (shifts[0] * self.multipliers[0])
+            for k in range(1, n):
+                mix = mix ^ (shifts[k] * self.multipliers[k])
+            
+            for _ in range(self.n_head_per_ngram):
+                all_hashes.append(mix % self.head_vocab_sizes[h_idx])
+                h_idx += 1
+        
+        # [B, L_full, num_total_heads]
+        hash_ids = torch.stack(all_hashes, dim=-1)
+        # 只取目前需要的 token 部分
+        return hash_ids[:, -L_curr:, :]
+
+    def stage1_gather(self, full_input_ids: torch.Tensor, L_curr: int):
+        # 1. 計算哈希 (GPU)
+        hash_ids = self.get_hashes(full_input_ids, L_curr)
+        
+        # 2. 查表 (如果 offload，則需要將 hash_ids 轉到 CPU)
+        if self.offload_cpu:
+            cpu_hash_ids = hash_ids.cpu()
+            # 獲取嵌入 (CPU)
+            embeddings = self.embedding_table(cpu_hash_ids)
+            # 傳回 GPU
+            embeddings = embeddings.to(full_input_ids.device)
         else:
-            # 通用 N-gram 實作
-            hash_ids = input_ids.clone()
-            for i in range(1, self.n):
-                shifted = torch.cat([
-                    torch.zeros((b, i), dtype=input_ids.dtype, device=device), 
-                    input_ids[:, :-i]
-                ], dim=1)
-                hash_ids = (hash_ids * self.prime + shifted) % self.table_size
+            embeddings = self.embedding_table(hash_ids)
+            
+        # 展平嵌入 [B, L, total_heads * head_dim]
+        embeddings = embeddings.flatten(start_dim=-2)
+        return embeddings
 
-        # 2. 查表取得 Engram 特徵
-        # engram_features shape: [batch_size, seq_len, dim]
-        engram_features = self.engram_emb(hash_ids)
+    def stage2_fusion(self, layer_id: int, hidden_states: torch.Tensor, engram_features: torch.Tensor):
+        f = self.fusions[str(layer_id)]
+        
+        # Cross-Attention Gating
+        key = f["norm1"](f["key_proj"](engram_features))
+        query = f["norm2"](hidden_states)
+        
+        gate = (key * query).sum(dim=-1, keepdim=True) / math.sqrt(self.hidden_size)
+        gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()
+        gate = torch.sigmoid(gate)
 
-        # 3. Gating 機制 (Information Fusion)
-        # 依據當前的 hidden_states 來決定每個維度要吸收多少 Engram 資訊
-        gate_weights = torch.sigmoid(self.gate(hidden_states))
+        value = gate * f["value_proj"](engram_features)
+        output = value + f["short_conv"](value)
+        return output
 
-        return engram_features * gate_weights
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
+#                                     MiniMind Model
+# 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Model
@@ -380,7 +497,7 @@ class MiniMindModel(nn.Module):
         self.use_engram = getattr(config, 'use_engram', False)
         if self.use_engram:
             self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
-            self.engram_module = EngramModule(config)
+            self.engram_system = EngramManager(config)
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
         batch_size, seq_length = input_ids.shape
@@ -389,14 +506,19 @@ class MiniMindModel(nn.Module):
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
-        
+
+        # Stage 1: Gather Engram Knowledge (Deterministic Query)
+        engram_vram_features = None
+        if self.use_engram:
+            full_input_ids = kwargs.get('full_input_ids', input_ids)
+            engram_vram_features = self.engram_system.stage1_gather(full_input_ids, seq_length)
+
         global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
-            # --- 注入 Engram 知識 ---
+            # Stage 2: Fusion Engram Knowledge into corresponding blocks
             if self.use_engram and i in self.engram_layers:
-                engram_h = self.engram_module(input_ids, hidden_states)
-                hidden_states = hidden_states + engram_h
+                hidden_states = hidden_states + self.engram_system.stage2_fusion(i, hidden_states, engram_vram_features)
 
             hidden_states, present = layer(
                 hidden_states,
@@ -407,6 +529,7 @@ class MiniMindModel(nn.Module):
                 global_kv_pool=global_kv_pool
             )
             presents.append(present)
+
                 
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
@@ -422,6 +545,7 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         self.model.embed_tokens.weight = self.lm_head.weight
     
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
+        if 'full_input_ids' not in kwargs: kwargs['full_input_ids'] = input_ids
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
@@ -441,7 +565,7 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         if streamer: streamer.put(input_ids.cpu())
         for _ in range(max_new_tokens):
             past_len = past_key_values[0][0].shape[1] if past_key_values else 0
-            outputs = self.forward(input_ids[:, past_len:], attention_mask, past_key_values, use_cache=use_cache, **kwargs)
+            outputs = self.forward(input_ids[:, past_len:], attention_mask, past_key_values, use_cache=use_cache, full_input_ids=input_ids, **kwargs)
             attention_mask = torch.cat([attention_mask, attention_mask.new_ones(attention_mask.shape[0], 1)], -1) if attention_mask is not None else None
             logits = outputs.logits[:, -1, :] / temperature
             if repetition_penalty != 1.0:
