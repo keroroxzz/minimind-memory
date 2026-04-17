@@ -407,10 +407,10 @@ class Attention(nn.Module):
 
             if total_seq_len > 1:
                 # 每個 Query token t 只能看到時間點 t' <= t 的所有層
-                # 單層的 Causal Mask: (seq_len, total_seq_len)
-                # 如果正在生成 (seq_len=1)，則 query 0 可以看到 key 0...total_seq_len-1，這是對的
+                # 如果有 mems 或 past_key_value，需要加上偏移量
                 if seq_len > 1:
-                    causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool))
+                    diag_offset = total_seq_len - seq_len
+                    causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool), diagonal=diag_offset)
                     causal_mask = causal_mask.repeat(1, current_layer_depth)
                     extended_mask = extended_mask.to(torch.bool) & causal_mask.unsqueeze(0).unsqueeze(0)
 
@@ -421,7 +421,8 @@ class Attention(nn.Module):
             )
         else:
             # 標準單層 Attention (或 Dense 被禁用)
-            if self.flash and (seq_len > 1) and (past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
+            # 注意：如果使用 mems，Flash Attention 的 is_causal=True 會失效（因為 Q/K 長度不對等且有位移）
+            if self.flash and (seq_len > 1) and (past_key_value is None) and (mems is None) and (attention_mask is None or torch.all(attention_mask == 1)):
                 output = F.scaled_dot_product_attention(xq, xk_for_attn, xv_for_attn, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
             else:
                 curr_head_dim = xq.shape[-1]
@@ -549,6 +550,12 @@ class MiniMindModel(nn.Module):
             k_cos, k_sin = q_cos, q_sin
             
         position_embeddings = (q_cos, q_sin, k_cos, k_sin)
+
+        # Stage 1: Gather Engram Knowledge (Deterministic Query)
+        engram_vram_features = None
+        if self.use_engram:
+            full_input_ids = kwargs.get('full_input_ids', input_ids)
+            engram_vram_features = self.engram_system.stage1_gather(full_input_ids, seq_length)
             
         global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []

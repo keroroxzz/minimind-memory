@@ -1,21 +1,23 @@
 # Changelog
 
-## [2026-04-17] - Hyper-Scaled Engram V2 Upgrade
+## [2026-04-17] - Hyper-Scaled Engram V2 & Recurrence (Transformer-XL) Integration
 
 ### Added
-- **Engram V2 Architecture**: Completely redesigned the Engram system from a single-layer module to a production-grade Two-Stage Manager.
-- **Stage 1: Deterministic Gather**: Implemented pre-prefetching logic that queries the Engram table before the Transformer loop.
-- **Stage 2: Layer Fusion**: Implemented in-loop fusion with Cross-Attention Gating and Short Convolution.
-- **CPU Offloading**: Added support for keeping the massive Engram Embedding table on CPU RAM (`engram_offload_cpu`), enabling hyper-scaled memory (millions of entries) without GPU VRAM exhaustion.
-- **Unified Hashing**: Integrated XOR-based n-gram mixing (Bigrams and Trigrams) with multi-head prime-modulus hashing.
-- **Incremental Inference Support**: Fixed the "lost context" bug during generation; the model now maintains n-gram context even with KV-caching.
-- **Unit Testing**: Added `test/test_engram_v2.py` for verifying hashing, offloading, and equivalence.
+- **Segment-Level Recurrence (Transformer-XL)**: Implemented stateful training via `mems` propagation between segments.
+  - Added `detach()` mechanism to stop-gradient between segments for VRAM efficiency.
+  - Supports dynamic sequence length and memory length configuration (`mem_len`).
+- **Engram V2 Architecture**: Completely redesigned the Engram system into a Two-Stage Manager (Gather & Fusion).
+  - **CPU Offloading**: Support for RAM-resident embedding tables, enabling hyper-scaled knowledge capacity.
+- **Unified Output Class**: Introduced `MiniMindLMOutputWithPast` to support `next_mems` and custom metadata in model outputs.
+- **Cross-Feature Synergy**: Verified and stabilized the concurrent usage of Recurrence, Dense Attention, and Engram V2.
 
 ### Fixed
-- Fixed an issue where `model.generate()` would lose n-gram context after the first token.
-- Resolved `IndentationError` and `TypeError` in `model_minimind.py` related to the new module integration.
-- Fixed device mismatch errors when `offload_cpu` was enabled.
+- **Dense Attention Causal Mask**: Fixed information leakage by correctly applying `diagonal` offset in multi-layer attention.
+- **Dynamic RoPE Alignment**: Fixed dimension mismatch in `apply_rotary_pos_emb` by calculating separate RoPE offsets for Q and K during Recurrence.
+- **Batch Size Robustness**: Fixed training crashes on incomplete final batches by implementing automatic `mems` reset on batch size mismatch.
+- **Flash Attention Incompatibility**: Implemented automatic fallback from Flash Attention when using Recurrence to ensure correct masking.
+- **Context Loss in Inference**: Resolved the bug where `model.generate()` would lose n-gram context during KV-caching.
 
 ### Changed
-- Refactored `MiniMindModel.forward` and `MiniMindForCausalLM` to pass full sequence history down to the Engram system.
-- Updated `MiniMindConfig` with new parameters: `max_ngram_size`, `engram_vocab_size` (unified), `engram_offload_cpu`, and `n_head_per_ngram`.
+- Refactored `MiniMindModel.forward` and `MiniMindForCausalLM` to support stateful `mems` propagation.
+- Updated `train_pretrain.py` and `train_reasoning.py` to support recurrence training CLI arguments.
