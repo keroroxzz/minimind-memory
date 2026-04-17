@@ -6,6 +6,10 @@ from transformers.modeling_outputs import MoeCausalLMOutputWithPast
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+@dataclass
+class MiniMindLMOutputWithPast(MoeCausalLMOutputWithPast):
+    next_mems: Optional[List[torch.Tensor]] = None
+
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Config
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -54,6 +58,10 @@ class MiniMindConfig(PretrainedConfig):
         self.n_head_per_ngram: int = kwargs.get("n_head_per_ngram", 8)
         self.engram_layers: List[int] = kwargs.get("engram_layers", [2, 4, 6]) # 作用層數
         self.engram_kernel_size: int = kwargs.get("engram_kernel_size", 4)
+
+        # --- Recurrence (Transformer-XL) 新增參數 ---
+        self.use_recurrence: bool = kwargs.get("use_recurrence", False)
+        self.mem_len: int = kwargs.get("mem_len", 512) # 記憶長度
 
         # --- Dense & Latent Attention 新增參數 ---
         self.use_dense_attention: bool = kwargs.get("use_dense_attention", False)
@@ -264,10 +272,10 @@ def precompute_freqs_cis(dim: int, end: int = int(32 * 1024), rope_base: float =
     freqs_sin = torch.cat([torch.sin(freqs), torch.sin(freqs)], dim=-1) * attn_factor
     return freqs_cos, freqs_sin
 
-def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
+def apply_rotary_pos_emb(q, k, q_cos, q_sin, k_cos, k_sin, unsqueeze_dim=1):
     def rotate_half(x): return torch.cat((-x[..., x.shape[-1] // 2:], x[..., : x.shape[-1] // 2]), dim=-1)
-    q_embed = ((q * cos.unsqueeze(unsqueeze_dim)) + (rotate_half(q) * sin.unsqueeze(unsqueeze_dim))).to(q.dtype)
-    k_embed = ((k * cos.unsqueeze(unsqueeze_dim)) + (rotate_half(k) * sin.unsqueeze(unsqueeze_dim))).to(k.dtype)
+    q_embed = ((q * q_cos.unsqueeze(unsqueeze_dim)) + (rotate_half(q) * q_sin.unsqueeze(unsqueeze_dim))).to(q.dtype)
+    k_embed = ((k * k_cos.unsqueeze(unsqueeze_dim)) + (rotate_half(k) * k_sin.unsqueeze(unsqueeze_dim))).to(k.dtype)
     return q_embed, k_embed
 
 def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
@@ -311,26 +319,31 @@ class Attention(nn.Module):
         self.dropout = config.dropout
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and config.flash_attn
 
-    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None):
+    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None):
         bsz, seq_len, _ = x.shape
+        q_cos, q_sin, k_cos, k_sin = position_embeddings
 
         if self.use_latent_attention:
             # === Latent Attention 邏輯 ===
+            if mems is not None:
+                c = torch.cat([mems.detach(), x], dim=1)
+            else:
+                c = x
+
             q_out = self.wq(x)
             q_content, q_rope = torch.split(q_out, [self.kv_lora_rank, self.n_local_heads * self.qk_rope_dim], dim=-1)
             q_content = q_content.view(bsz, seq_len, self.n_local_heads, self.latent_head_dim)
             q_rope = q_rope.view(bsz, seq_len, self.n_local_heads, self.qk_rope_dim)
 
-            kv_out = self.kv_a_proj(x)
+            kv_out = self.kv_a_proj(c)
             k_content, k_rope = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_dim], dim=-1)
             # K 的 content 與 V 共享
-            k_content = k_content.view(bsz, seq_len, 1, self.kv_lora_rank).expand(-1, -1, self.n_local_heads, -1)
-            k_content = k_content.reshape(bsz, seq_len, self.n_local_heads, self.latent_head_dim)
+            k_content = k_content.view(bsz, c.shape[1], 1, self.kv_lora_rank).expand(-1, -1, self.n_local_heads, -1)
+            k_content = k_content.reshape(bsz, c.shape[1], self.n_local_heads, self.latent_head_dim)
             v_content = k_content.clone() 
-            k_rope = k_rope.view(bsz, seq_len, 1, self.qk_rope_dim).expand(-1, -1, self.n_local_heads, -1)
+            k_rope = k_rope.view(bsz, c.shape[1], 1, self.qk_rope_dim).expand(-1, -1, self.n_local_heads, -1)
 
-            cos, sin = position_embeddings
-            q_rope, k_rope = apply_rotary_pos_emb(q_rope, k_rope, cos, sin)
+            q_rope, k_rope = apply_rotary_pos_emb(q_rope, k_rope, q_cos, q_sin, k_cos, k_sin)
             
             # Temporal KV拼接 (B, S, H, D)
             xk_cur = torch.cat([k_content, k_rope], dim=-1)
@@ -350,13 +363,17 @@ class Attention(nn.Module):
             xv_for_attn = xv.transpose(1, 2)
         else:
             # === 標準 MHA/GQA 邏輯 ===
-            xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+            if mems is not None:
+                c = torch.cat([mems.detach(), x], dim=1)
+            else:
+                c = x
+
+            xq, xk, xv = self.q_proj(x), self.k_proj(c), self.v_proj(c)
             xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-            xk = xk.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
-            xv = xv.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
+            xk = xk.view(bsz, c.shape[1], self.n_local_kv_heads, self.head_dim)
+            xv = xv.view(bsz, c.shape[1], self.n_local_kv_heads, self.head_dim)
             xq, xk = self.q_norm(xq), self.k_norm(xk)
-            cos, sin = position_embeddings
-            xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)
+            xq, xk = apply_rotary_pos_emb(xq, xk, q_cos, q_sin, k_cos, k_sin)
             
             if past_key_value is not None:
                 xk = torch.cat([past_key_value[0], xk], dim=1)
@@ -469,11 +486,11 @@ class MiniMindBlock(nn.Module):
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
 
-    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None):
+    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None):
         residual = hidden_states
         hidden_states, updated_kv = self.self_attn(
             self.input_layernorm(hidden_states), position_embeddings,
-            past_key_value, use_cache, attention_mask, global_kv_pool
+            past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems
         )
         hidden_states += residual
         hidden_states = hidden_states + self.mlp(self.post_attention_layernorm(hidden_states))
@@ -499,41 +516,76 @@ class MiniMindModel(nn.Module):
             self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
             self.engram_system = EngramManager(config)
 
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, **kwargs):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, mems=None, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
         past_key_values = past_key_values or [None] * len(self.layers)
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
-        position_embeddings = (self.freqs_cos[start_pos:start_pos + seq_length], self.freqs_sin[start_pos:start_pos + seq_length])
+        
+        # 確保 mems 的 batch_size 與目前輸入一致 (處理最後一個不完整 batch 的情況)
+        if mems is not None:
+            if mems[0].shape[0] != batch_size:
+                # 如果不一致，捨棄 mems (重置)
+                mems = None
 
-        # Stage 1: Gather Engram Knowledge (Deterministic Query)
-        engram_vram_features = None
-        if self.use_engram:
-            full_input_ids = kwargs.get('full_input_ids', input_ids)
-            engram_vram_features = self.engram_system.stage1_gather(full_input_ids, seq_length)
-
+        # --- RoPE 處理 ---
+        # Q 的位置編碼
+        q_cos = self.freqs_cos[start_pos:start_pos + seq_length]
+        q_sin = self.freqs_sin[start_pos:start_pos + seq_length]
+        
+        # K 的位置編碼 (如果使用 mems，需要涵蓋 mems 的歷史位置)
+        if mems is not None:
+            mem_len = mems[0].shape[1]
+            k_start = start_pos - mem_len
+            k_cos = self.freqs_cos[max(0, k_start) : start_pos + seq_length]
+            k_sin = self.freqs_sin[max(0, k_start) : start_pos + seq_length]
+            
+            if k_start < 0:
+                pad_len = abs(k_start)
+                k_cos = torch.cat([self.freqs_cos[:1].repeat(pad_len, 1), k_cos], dim=0)
+                k_sin = torch.cat([self.freqs_sin[:1].repeat(pad_len, 1), k_sin], dim=0)
+        else:
+            k_cos, k_sin = q_cos, q_sin
+            
+        position_embeddings = (q_cos, q_sin, k_cos, k_sin)
+            
         global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []
+        next_mems = [] if self.config.use_recurrence else None
+        
         for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
             # Stage 2: Fusion Engram Knowledge into corresponding blocks
             if self.use_engram and i in self.engram_layers:
                 hidden_states = hidden_states + self.engram_system.stage2_fusion(i, hidden_states, engram_vram_features)
 
+            layer_mems = mems[i] if mems is not None else None
+            
             hidden_states, present = layer(
                 hidden_states,
                 position_embeddings,
                 past_key_value=past_key_value,
                 use_cache=use_cache,
                 attention_mask=attention_mask,
-                global_kv_pool=global_kv_pool
+                global_kv_pool=global_kv_pool,
+                mems=layer_mems
             )
             presents.append(present)
-
+            
+            if self.config.use_recurrence:
+                # 這裡儲存當前 segment 的 hidden_states 作為下一個 segment 的 mems
+                # 如果有 mems，拼接並截斷至 mem_len
+                if layer_mems is not None:
+                    cat_mem = torch.cat([layer_mems, hidden_states], dim=1)
+                else:
+                    cat_mem = hidden_states
                 
+                # 保持長度為 mem_len
+                next_mems.append(cat_mem[:, -self.config.mem_len:].detach())
+
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
-        return hidden_states, presents, aux_loss
+        return hidden_states, presents, aux_loss, next_mems
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = MiniMindConfig
@@ -544,30 +596,32 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.model.embed_tokens.weight = self.lm_head.weight
     
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, **kwargs):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, mems=None, **kwargs):
         if 'full_input_ids' not in kwargs: kwargs['full_input_ids'] = input_ids
-        hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
+        hidden_states, past_key_values, aux_loss, next_mems = self.model(input_ids, attention_mask, past_key_values, use_cache, mems=mems, **kwargs)
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
         loss = None
         if labels is not None:
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
-        return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
+        return MiniMindLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states, next_mems=next_mems)
     
     # https://github.com/jingyaogong/minimind/discussions/611
     @torch.inference_mode()
-    def generate(self, inputs=None, attention_mask=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, num_return_sequences=1, do_sample=True, repetition_penalty=1.0, **kwargs):
+    def generate(self, inputs=None, attention_mask=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, num_return_sequences=1, do_sample=True, repetition_penalty=1.0, mems=None, **kwargs):
         input_ids = kwargs.pop("input_ids", inputs).repeat(num_return_sequences, 1)
         attention_mask = attention_mask.repeat(num_return_sequences, 1) if attention_mask is not None else None
         past_key_values = kwargs.pop("past_key_values", None)
+        curr_mems = mems
         finished = torch.zeros(input_ids.shape[0], dtype=torch.bool, device=input_ids.device)
         if streamer: streamer.put(input_ids.cpu())
         for _ in range(max_new_tokens):
             past_len = past_key_values[0][0].shape[1] if past_key_values else 0
-            outputs = self.forward(input_ids[:, past_len:], attention_mask, past_key_values, use_cache=use_cache, full_input_ids=input_ids, **kwargs)
+            outputs = self.forward(input_ids[:, past_len:], attention_mask, past_key_values, use_cache=use_cache, full_input_ids=input_ids, mems=curr_mems, **kwargs)
             attention_mask = torch.cat([attention_mask, attention_mask.new_ones(attention_mask.shape[0], 1)], -1) if attention_mask is not None else None
             logits = outputs.logits[:, -1, :] / temperature
+            curr_mems = outputs.next_mems
             if repetition_penalty != 1.0:
                 for i in range(input_ids.shape[0]): logits[i, torch.unique(input_ids[i])] /= repetition_penalty
             if top_k > 0: 

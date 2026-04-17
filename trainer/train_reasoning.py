@@ -23,6 +23,9 @@ warnings.filterwarnings('ignore')
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
+    # 初始化遞迴記憶體
+    mems = None
+    
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
@@ -34,9 +37,14 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             param_group['lr'] = lr
 
         with autocast_ctx:
-            res = model(input_ids, labels=labels)
+            # 傳遞 mems 到模型
+            res = model(input_ids, labels=labels, mems=mems)
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
+            
+            # 更新 mems 並 detach (Segment-Level Recurrence)
+            if lm_config.use_recurrence:
+                mems = res.next_mems # next_mems 已經在模型內部 detach() 過了
 
         scaler.scale(loss).backward()
 
@@ -105,6 +113,8 @@ if __name__ == "__main__":
     parser.add_argument('--use_engram', default=0, type=int, choices=[0, 1], help="是否使用Engram")
     parser.add_argument('--use_dense_attention', default=1, type=int, choices=[0, 1], help="是否使用Dense Attention")
     parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention")
+    parser.add_argument('--use_recurrence', default=0, type=int, choices=[0, 1], help="是否使用遞迴機制（0=否，1=是）")
+    parser.add_argument('--mem_len', default=512, type=int, help="遞迴記憶長度")
     
     # 模型與資料載入控制
     parser.add_argument("--tokenizer_path", type=str, default="./model", help="Tokenizer 目錄")
@@ -131,7 +141,9 @@ if __name__ == "__main__":
         use_moe=bool(args.use_moe), 
         use_engram=bool(args.use_engram),
         use_dense_attention=bool(args.use_dense_attention),
-        use_latent_attention=bool(args.use_latent_attention)
+        use_latent_attention=bool(args.use_latent_attention),
+        use_recurrence=bool(args.use_recurrence),
+        mem_len=args.mem_len
     )
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
