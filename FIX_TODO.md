@@ -28,16 +28,23 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   The `seq_len>1` path is correct (verified diff `0.0`), so this is generation-only — it hits
   every batched/left-padded rollout (`rollout_engine.py`, `train_grpo.py`, `train_ppo.py`,
   `scripts/serve_openai_api.py`).
-  **Fixed** (`9e0…`, see git log): the mask is now built as a single-layer *bool* keep-mask and
+  **Fixed** (`7b22b7b`): the mask is now built as a single-layer *bool* keep-mask and
   only then tiled across the layer dimension, so SDPA can never reinterpret it as a bias.
   Covered by `test/test_bugfix_regressions.py::TestDenseAttention`.
 
-- [ ] **C3 — Engram breaks its own batch↔incremental invariant in stage 2** — `:240`
+- [x] **C3 — Engram breaks its own batch↔incremental invariant in stage 2** — `:240`
   `ShortConv` is causal but **stateless**. With `kernel_size=4, dilation=max_ngram_size=3` it has a
   10-token receptive field; at `seq_len=1` it convolves against zero padding.
   Probe: stage-1 features identical, **stage-2 max abs diff `2.99e-01`**.
   This is exactly the invariant `readme_engram.md` ("Inference Consistency") claims to hold.
   `test/test_engram_v2.py` only covers stage 1, so it passes.
+  **Fixed**: `ShortConv` now runs *before* gating, so its input is a pure function of the token
+  history; `stage1_gather` takes an `n_context` argument and pre-fetches
+  `conv_context = (kernel_size-1)*max_ngram_size` extra history rows so the convolution window is
+  identical in both paths. Covered by `test/test_bugfix_regressions.py::TestEngram`.
+  **Note:** this reorders gate/conv (`gate * (v + conv(v))` instead of `g*v + conv(g*v)`), which
+  changes numerics for existing engram checkpoints — they were already inconsistent at inference,
+  so a re-train is needed either way.
 
 - [ ] **C4 — `use_recurrence` + KV cache double-counts memory** — `:371-386`
   `c = cat(mems, x)` recomputes K/V for mem positions already present in `past_key_value`.

@@ -143,6 +143,9 @@ class EngramManager(nn.Module):
         self.layer_ids = config.engram_layers
         self.offload_cpu = config.engram_offload_cpu
         self.total_heads = (self.max_ngram_size - 1) * self.n_head_per_ngram
+        # ShortConv 是 causal 但「無狀態」的：增量解碼時 seq_len=1，卷積只會看到 zero-padding。
+        # 因此 stage1 必須多撈這麼多個歷史位置，卷積窗口才會跟全序列前向完全一致。
+        self.conv_context = (config.engram_kernel_size - 1) * self.max_ngram_size
 
         # 1. 為每個 head 生成質數模數 (Unified Table)
         self.head_vocab_sizes = []
@@ -207,10 +210,13 @@ class EngramManager(nn.Module):
         # 只取目前需要的 token 部分
         return hash_ids[:, -L_curr:, :]
 
-    def stage1_gather(self, full_input_ids: torch.Tensor, L_curr: int):
+    def stage1_gather(self, full_input_ids: torch.Tensor, L_curr: int, n_context: int = 0):
+        # n_context: 額外往前多撈幾個位置，供 stage2 的 ShortConv 使用 (增量解碼時必要)。
+        # 序列開頭不足時自動夾住，此時卷積的 zero-padding 行為與全序列前向一致。
+        L_take = min(L_curr + n_context, full_input_ids.shape[1])
         # 1. 計算哈希 (GPU)
-        hash_ids = self.get_hashes(full_input_ids, L_curr)
-        
+        hash_ids = self.get_hashes(full_input_ids, L_take)
+
         # 2. 查表 (如果 offload，則需要將 hash_ids 轉到 CPU)
         if self.offload_cpu:
             cpu_hash_ids = hash_ids.cpu()
@@ -227,18 +233,24 @@ class EngramManager(nn.Module):
 
     def stage2_fusion(self, layer_id: int, hidden_states: torch.Tensor, engram_features: torch.Tensor):
         f = self.fusions[str(layer_id)]
-        
-        # Cross-Attention Gating
-        key = f["norm1"](f["key_proj"](engram_features))
+        n_keep = hidden_states.shape[1]
+
+        # 先做 ShortConv 平滑，再做 gating。
+        # 順序很重要：卷積的輸入必須是「純粹的 token 函數」，才能靠 stage1 多撈的歷史位置
+        # 補齊窗口，讓增量解碼與全序列前向得到位元等價的結果 (readme_engram.md 的核心不變量)。
+        value = f["value_proj"](engram_features)
+        value = value + f["short_conv"](value)
+        value = value[:, -n_keep:]
+
+        # Cross-Attention Gating (只需要目前這段 token)
+        key = f["norm1"](f["key_proj"](engram_features[:, -n_keep:]))
         query = f["norm2"](hidden_states)
-        
+
         gate = (key * query).sum(dim=-1, keepdim=True) / math.sqrt(self.hidden_size)
         gate = gate.abs().clamp_min(1e-6).sqrt() * gate.sign()
         gate = torch.sigmoid(gate)
 
-        value = gate * f["value_proj"](engram_features)
-        output = value + f["short_conv"](value)
-        return output
+        return gate * value
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                                     MiniMind Model
@@ -599,7 +611,8 @@ class MiniMindModel(nn.Module):
         engram_vram_features = None
         if self.use_engram:
             full_input_ids = kwargs.get('full_input_ids', input_ids)
-            engram_vram_features = self.engram_system.stage1_gather(full_input_ids, seq_length)
+            engram_vram_features = self.engram_system.stage1_gather(
+                full_input_ids, seq_length, n_context=self.engram_system.conv_context)
             
         global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []

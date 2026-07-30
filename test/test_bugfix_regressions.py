@@ -95,5 +95,50 @@ class TestDenseAttention(unittest.TestCase):
             self.assertEqual(dt, torch.bool, f"SDPA 收到 {dt} mask，會被當成 additive bias")
 
 
+class TestEngram(unittest.TestCase):
+    def _engram_model(self, **kw):
+        cfg = dict(hidden_size=64, num_hidden_layers=2, num_attention_heads=4,
+                   engram_layers=[0], engram_vocab_size=4000, n_head_per_ngram=2,
+                   n_embed_per_ngram=8, engram_offload_cpu=False, vocab_size=100)
+        cfg.update(kw)
+        torch.manual_seed(0)
+        return MiniMindForCausalLM(MiniMindConfig(**cfg)).eval()
+
+    def test_c3_stage2_batch_matches_incremental(self):
+        """C3: stage2 (含 ShortConv) 的增量結果必須等於全序列前向的同一位置。"""
+        m = self._engram_model()
+        eng = m.model.engram_system
+        ids = torch.tensor([[11, 22, 33, 44, 55, 66, 77, 88, 99, 12, 34, 56]])
+        hidden = torch.randn(1, ids.shape[1], 64)
+        t = ids.shape[1] - 1
+
+        with torch.no_grad():
+            feats_full = eng.stage1_gather(ids, ids.shape[1], n_context=eng.conv_context)
+            out_full = eng.stage2_fusion(0, hidden, feats_full)
+
+            feats_inc = eng.stage1_gather(ids, 1, n_context=eng.conv_context)
+            out_inc = eng.stage2_fusion(0, hidden[:, t:t + 1], feats_inc)
+
+        self.assertLess((out_full[:, t:t + 1] - out_inc).abs().max().item(), 1e-5,
+                        "ShortColl 增量與全序列不一致 (卷積看到 zero-padding)")
+
+    def test_c3_conv_context_is_full_receptive_field(self):
+        """C3: 撈取的歷史長度必須覆蓋 ShortConv 的完整感受野。"""
+        m = self._engram_model(engram_kernel_size=4, max_ngram_size=3)
+        eng = m.model.engram_system
+        self.assertEqual(eng.conv_context, (4 - 1) * 3)
+
+    def test_c3_end_to_end_generation_matches_teacher_forcing(self):
+        """C3: 整個模型層級 — 有 engram 時，cache 解碼要對得上一次算完的結果。"""
+        m = self._engram_model()
+        ids = torch.randint(0, 100, (1, 12))
+        with torch.no_grad():
+            full = m(ids).logits[:, -1]
+            pre = m(ids[:, :11], use_cache=True)
+            inc = m(ids[:, 11:], past_key_values=pre.past_key_values,
+                    use_cache=True, full_input_ids=ids).logits[:, -1]
+        self.assertLess((full - inc).abs().max().item(), 1e-4)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
