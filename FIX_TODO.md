@@ -11,7 +11,7 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ## Critical
 
-- [ ] **C1 — `use_latent_attention=1` crashes on every forward** — `:346-347`
+- [x] **C1 — `use_latent_attention=1` crashes on every forward** — `:346-347`
   `expand(..., n_local_heads, kv_lora_rank)` then `.reshape(..., n_local_heads, latent_head_dim)`
   is a numel mismatch (`B*L*H*rank` vs `B*L*rank`).
   → `RuntimeError: shape '[1,8,8,16]' is invalid for input of size 8192`.
@@ -19,6 +19,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   Sub-issues: `q_norm`/`k_norm` built with `latent_head_dim` but never applied (`:320-321`);
   `v_content = k_content.clone()` makes V bit-identical to K's content half (`:348`);
   `kv_lora_rank % n_local_heads != 0` silently truncates.
+  **Fixed**: the `expand`+`reshape` pair is replaced by a straight per-head `view` of
+  `kv_lora_rank` (matching how Q already splits its content), which is the layout `o_proj`'s
+  `kv_lora_rank` input dim always implied. `q_norm`/`k_norm` are now applied; V keeps the
+  un-normed latent; the shared RoPE broadcast across heads is retained (MLA design);
+  an indivisible `kv_lora_rank` now raises. Covered by
+  `test/test_bugfix_regressions.py::TestLatentAttention`, including latent+dense composition
+  and prefill/decode equivalence.
 
 - [x] **C2 — Dense attention ignores the padding mask during decode** — `:404-424`
   At `seq_len==1` the `& causal_mask` bool conversion at `:420` never runs, so `extended_mask`

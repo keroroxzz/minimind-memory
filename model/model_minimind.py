@@ -330,8 +330,13 @@ class Attention(nn.Module):
         if self.use_latent_attention:
             self.kv_lora_rank = config.kv_lora_rank
             self.qk_rope_dim = config.qk_rope_dim
+            if self.kv_lora_rank % self.n_local_heads != 0:
+                raise ValueError(
+                    f"kv_lora_rank ({self.kv_lora_rank}) 必須能被 num_attention_heads "
+                    f"({self.n_local_heads}) 整除，否則 latent content 無法平均切給各 head")
             self.latent_head_dim = self.kv_lora_rank // self.n_local_heads
-            
+
+
             # Latent 模式：Q 投影至 latent 維度 + rope 維度
             self.wq = nn.Linear(config.hidden_size, self.kv_lora_rank + self.n_local_heads * self.qk_rope_dim, bias=False)
             # Latent 模式：KV 直接壓縮至 latent 空間 + 單一 rope 維度
@@ -368,14 +373,16 @@ class Attention(nn.Module):
 
             kv_out = self.kv_a_proj(c)
             k_content, k_rope = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_dim], dim=-1)
-            # K 的 content 與 V 共享
-            k_content = k_content.view(bsz, c.shape[1], 1, self.kv_lora_rank).expand(-1, -1, self.n_local_heads, -1)
-            k_content = k_content.reshape(bsz, c.shape[1], self.n_local_heads, self.latent_head_dim)
-            v_content = k_content.clone() 
+            # content 沿 head 維度切分 (與 Q 的切法一致)，K 與 V 共享同一份 latent
+            k_content = k_content.view(bsz, c.shape[1], self.n_local_heads, self.latent_head_dim)
+            v_content = k_content  # V 用未經 k_norm 的原始 latent
+            # rope 維度所有 head 共享 (MLA 設計：只有一小部分維度做旋轉位置編碼)
             k_rope = k_rope.view(bsz, c.shape[1], 1, self.qk_rope_dim).expand(-1, -1, self.n_local_heads, -1)
 
+            q_content, k_content = self.q_norm(q_content), self.k_norm(k_content)
             q_rope, k_rope = apply_rotary_pos_emb(q_rope, k_rope, q_cos, q_sin, k_cos, k_sin)
-            
+
+
             # Temporal KV拼接 (B, S, H, D)
             xk_cur = torch.cat([k_content, k_rope], dim=-1)
             xv_cur = v_content

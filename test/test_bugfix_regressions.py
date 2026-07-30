@@ -165,5 +165,50 @@ class TestEngram(unittest.TestCase):
             self._engram_model(max_ngram_size=1)
 
 
+class TestLatentAttention(unittest.TestCase):
+    def test_c1_forward_does_not_crash(self):
+        """C1: use_latent_attention=1 之前每次 forward 都 RuntimeError。"""
+        m = build(use_latent_attention=True, kv_lora_rank=128, qk_rope_dim=64)
+        with torch.no_grad():
+            out = m(torch.randint(0, 100, (2, 8)))
+        self.assertEqual(out.logits.shape, (2, 8, 100))
+
+    def test_c1_prefill_matches_incremental_decode(self):
+        """C1: latent 路徑的 KV cache 必須正確。"""
+        m = build(use_latent_attention=True, kv_lora_rank=128, qk_rope_dim=64)
+        ids = torch.randint(0, 100, (1, 10))
+        with torch.no_grad():
+            full = m(ids).logits[:, -1]
+            pre = m(ids[:, :9], use_cache=True)
+            inc = m(ids[:, 9:], past_key_values=pre.past_key_values, use_cache=True).logits[:, -1]
+        self.assertLess((full - inc).abs().max().item(), 1e-4)
+
+    def test_c1_qk_norm_is_applied(self):
+        """C1: q_norm/k_norm 是用 latent_head_dim 建的，必須真的被用到。"""
+        m = build(use_latent_attention=True, kv_lora_rank=128, qk_rope_dim=64)
+        attn = m.model.layers[0].self_attn
+        with torch.no_grad():
+            attn.q_norm.weight.fill_(1.0)
+            base = m(torch.randint(0, 100, (1, 8))).logits.clone()
+            attn.q_norm.weight.fill_(4.0)
+            scaled = m(torch.randint(0, 100, (1, 8))).logits
+        self.assertGreater((base - scaled).abs().max().item(), 1e-4,
+                           "改動 q_norm 權重沒有影響輸出，代表它沒有被套用")
+
+    def test_c1_composes_with_dense_attention(self):
+        """C1: latent 的存在理由就是抵銷 dense 的 KV 膨脹，兩者必須能組合。"""
+        m = build(use_latent_attention=True, use_dense_attention=True,
+                  kv_lora_rank=128, qk_rope_dim=64)
+        with torch.no_grad():
+            out = m(torch.randint(0, 100, (1, 8)))
+        self.assertEqual(out.logits.shape, (1, 8, 100))
+
+    def test_c1_rejects_indivisible_rank(self):
+        """C1: kv_lora_rank 不能整除 head 數時應該直接報錯，而非默默截斷。"""
+        with self.assertRaises(ValueError):
+            build(use_latent_attention=True, kv_lora_rank=100, qk_rope_dim=64,
+                  num_attention_heads=8)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
