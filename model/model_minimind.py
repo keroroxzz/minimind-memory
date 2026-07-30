@@ -401,28 +401,33 @@ class Attention(nn.Module):
             current_layer_depth = len(global_kv_pool['k'])
             total_seq_len = xk_for_attn.shape[2]
             
+            # 先針對「單層」建構 bool keep-mask (True = 可見)，最後才沿著層維度平鋪。
+            # 注意：SDPA 會把 float mask 當成 additive bias，因此這裡一律使用 bool，
+            # 否則 0/1 的 padding mask 會變成「不遮罩 + 加 1 偏置」(完全相反的語意)。
             if attention_mask is not None:
-                if attention_mask.dim() == 2:
-                    am = attention_mask.unsqueeze(1).unsqueeze(2)
-                else:
-                    am = attention_mask
-                extended_mask = am.repeat(1, 1, 1, current_layer_depth)
+                am = attention_mask.unsqueeze(1).unsqueeze(2) if attention_mask.dim() == 2 else attention_mask
+                am = am.to(torch.bool)
+                if am.shape[-1] != total_seq_len:
+                    # mems / cache 讓 K 比 attention_mask 長；左側補 True (歷史一律可見)
+                    am = F.pad(am, (total_seq_len - am.shape[-1], 0), value=True)
+                keep_mask = am.expand(bsz, 1, seq_len, total_seq_len)
             else:
-                extended_mask = torch.ones((bsz, 1, seq_len, total_seq_len * current_layer_depth), device=xq.device, dtype=torch.bool)
+                keep_mask = torch.ones((bsz, 1, seq_len, total_seq_len), device=xq.device, dtype=torch.bool)
 
-            if total_seq_len > 1:
-                # 每個 Query token t 只能看到時間點 t' <= t 的所有層
-                # 如果有 mems 或 past_key_value，需要加上偏移量
-                if seq_len > 1:
-                    diag_offset = total_seq_len - seq_len
-                    causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool), diagonal=diag_offset)
-                    causal_mask = causal_mask.repeat(1, current_layer_depth)
-                    extended_mask = extended_mask.to(torch.bool) & causal_mask.unsqueeze(0).unsqueeze(0)
+            # 每個 Query token t 只能看到時間點 t' <= t 的所有層
+            # 如果有 mems 或 past_key_value，需要加上偏移量
+            if seq_len > 1:
+                diag_offset = total_seq_len - seq_len
+                causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool), diagonal=diag_offset)
+                keep_mask = keep_mask & causal_mask
+
+            # 沿著「層」維度平鋪，對齊 keys_total 的 [layer0(T), layer1(T), ...] 佈局
+            extended_mask = keep_mask.repeat(1, 1, 1, current_layer_depth)
 
             output = F.scaled_dot_product_attention(
-                xq, keys_total, values_total, 
-                attn_mask=extended_mask.to(xq.dtype) if extended_mask.dtype != torch.bool else extended_mask, 
-                is_causal=False 
+                xq, keys_total, values_total,
+                attn_mask=extended_mask,
+                is_causal=False
             )
         else:
             # 標準單層 Attention (或 Dense 被禁用)

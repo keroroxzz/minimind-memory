@@ -20,7 +20,7 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   `v_content = k_content.clone()` makes V bit-identical to K's content half (`:348`);
   `kv_lora_rank % n_local_heads != 0` silently truncates.
 
-- [ ] **C2 — Dense attention ignores the padding mask during decode** — `:404-424`
+- [x] **C2 — Dense attention ignores the padding mask during decode** — `:404-424`
   At `seq_len==1` the `& causal_mask` bool conversion at `:420` never runs, so `extended_mask`
   stays float 0/1 and `.to(xq.dtype)` hands SDPA a tensor it treats as an **additive bias**:
   padded positions get `+0.0` (fully attended), real positions get `+1.0`.
@@ -28,6 +28,9 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   The `seq_len>1` path is correct (verified diff `0.0`), so this is generation-only — it hits
   every batched/left-padded rollout (`rollout_engine.py`, `train_grpo.py`, `train_ppo.py`,
   `scripts/serve_openai_api.py`).
+  **Fixed** (`9e0…`, see git log): the mask is now built as a single-layer *bool* keep-mask and
+  only then tiled across the layer dimension, so SDPA can never reinterpret it as a bias.
+  Covered by `test/test_bugfix_regressions.py::TestDenseAttention`.
 
 - [ ] **C3 — Engram breaks its own batch↔incremental invariant in stage 2** — `:240`
   `ShortConv` is causal but **stateless**. With `kernel_size=4, dilation=max_ngram_size=3` it has a
@@ -98,8 +101,9 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ## Medium / performance
 
-- [ ] **M1 — Dense mask assumes `attention_mask.shape[-1] == total_seq_len`** *(inspection)* — `:409`
+- [x] **M1 — Dense mask assumes `attention_mask.shape[-1] == total_seq_len`** *(inspection)* — `:409`
   `am.repeat(1,1,1,depth)` misaligns whenever mems are active.
+  **Fixed** alongside C2: the mask is left-padded with `True` to `total_seq_len` before tiling.
 
 - [ ] **M2 — Dense pool stores post-`repeat_kv` K/V** — `:395-396`
   Holds `n_rep`× more than needed; erases GQA's cache savings.
