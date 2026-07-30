@@ -69,6 +69,11 @@ class MiniMindConfig(PretrainedConfig):
         self.kv_lora_rank: int = kwargs.get("kv_lora_rank", 128)
         self.qk_rope_dim: int = kwargs.get("qk_rope_dim", 64)
 
+        # --- Looped Transformer 新增參數 ---
+        self.use_looped_transformer: bool = kwargs.get("use_looped_transformer", False)
+        self.num_loops: int = kwargs.get("num_loops", 1)
+        self.loop_lora_rank: int = kwargs.get("loop_lora_rank", 16)
+
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
@@ -479,6 +484,17 @@ class MOEFeedForward(nn.Module):
             self.aux_loss = scores.new_zeros(1).squeeze()
         return y.view(batch_size, seq_len, hidden_dim)
 
+class LoopLoRA(nn.Module):
+    def __init__(self, in_features, out_features, rank):
+        super().__init__()
+        self.A = nn.Linear(in_features, rank, bias=False)
+        self.B = nn.Linear(rank, out_features, bias=False)
+        self.A.weight.data.normal_(mean=0.0, std=0.02)
+        self.B.weight.data.zero_()
+
+    def forward(self, x):
+        return self.B(self.A(x))
+
 class MiniMindBlock(nn.Module):
     def __init__(self, layer_id: int, config: MiniMindConfig):
         super().__init__()
@@ -486,16 +502,37 @@ class MiniMindBlock(nn.Module):
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
+        
+        self.use_looped_transformer = getattr(config, 'use_looped_transformer', False)
+        self.num_loops = getattr(config, 'num_loops', 1)
+        if self.use_looped_transformer and self.num_loops > 1:
+            self.loop_lora_attn = nn.ModuleDict({
+                str(loop_idx): LoopLoRA(config.hidden_size, config.hidden_size, getattr(config, 'loop_lora_rank', 16))
+                for loop_idx in range(1, self.num_loops)
+            })
+            self.loop_lora_mlp = nn.ModuleDict({
+                str(loop_idx): LoopLoRA(config.hidden_size, config.hidden_size, getattr(config, 'loop_lora_rank', 16))
+                for loop_idx in range(1, self.num_loops)
+            })
 
-    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None):
+    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, loop_idx=0):
         residual = hidden_states
-        hidden_states, updated_kv = self.self_attn(
-            self.input_layernorm(hidden_states), position_embeddings,
+        normed_x = self.input_layernorm(hidden_states)
+        hidden_states_attn, updated_kv = self.self_attn(
+            normed_x, position_embeddings,
             past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems
         )
-        hidden_states += residual
-        hidden_states = hidden_states + self.mlp(self.post_attention_layernorm(hidden_states))
-        return hidden_states, updated_kv
+        if self.use_looped_transformer and loop_idx > 0:
+            hidden_states_attn = hidden_states_attn + self.loop_lora_attn[str(loop_idx)](normed_x)
+        hidden_states = residual + hidden_states_attn
+        
+        residual = hidden_states
+        normed_x = self.post_attention_layernorm(hidden_states)
+        hidden_states_mlp = self.mlp(normed_x)
+        if self.use_looped_transformer and loop_idx > 0:
+            hidden_states_mlp = hidden_states_mlp + self.loop_lora_mlp[str(loop_idx)](normed_x)
+        hidden_states = residual + hidden_states_mlp
+        return hidden_states, updated_kv, normed_x
 
 class MiniMindModel(nn.Module):
     def __init__(self, config: MiniMindConfig):
@@ -520,7 +557,9 @@ class MiniMindModel(nn.Module):
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, mems=None, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
-        past_key_values = past_key_values or [None] * len(self.layers)
+        num_loops = self.config.num_loops if getattr(self.config, 'use_looped_transformer', False) else 1
+        total_layers = len(self.layers) * num_loops
+        past_key_values = past_key_values or [None] * total_layers
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
         
@@ -561,34 +600,42 @@ class MiniMindModel(nn.Module):
         presents = []
         next_mems = [] if self.config.use_recurrence else None
         
-        for i, (layer, past_key_value) in enumerate(zip(self.layers, past_key_values)):
-            # Stage 2: Fusion Engram Knowledge into corresponding blocks
-            if self.use_engram and i in self.engram_layers:
-                hidden_states = hidden_states + self.engram_system.stage2_fusion(i, hidden_states, engram_vram_features)
+        num_loops = self.config.num_loops if getattr(self.config, 'use_looped_transformer', False) else 1
+        past_kv_idx = 0
 
-            layer_mems = mems[i] if mems is not None else None
-            
-            hidden_states, present = layer(
-                hidden_states,
-                position_embeddings,
-                past_key_value=past_key_value,
-                use_cache=use_cache,
-                attention_mask=attention_mask,
-                global_kv_pool=global_kv_pool,
-                mems=layer_mems
-            )
-            presents.append(present)
-            
-            if self.config.use_recurrence:
-                # 這裡儲存當前 segment 的 hidden_states 作為下一個 segment 的 mems
-                # 如果有 mems，拼接並截斷至 mem_len
-                if layer_mems is not None:
-                    cat_mem = torch.cat([layer_mems, hidden_states], dim=1)
-                else:
-                    cat_mem = hidden_states
+        for loop_idx in range(num_loops):
+            for i, layer in enumerate(self.layers):
+                past_key_value = past_key_values[past_kv_idx] if past_key_values is not None else None
+
+                # Stage 2: Fusion Engram Knowledge into corresponding blocks
+                if self.use_engram and i in self.engram_layers and loop_idx == 0:
+                    hidden_states = hidden_states + self.engram_system.stage2_fusion(i, hidden_states, engram_vram_features)
+
+                layer_mems = mems[past_kv_idx] if mems is not None else None
                 
-                # 保持長度為 mem_len
-                next_mems.append(cat_mem[:, -self.config.mem_len:].detach())
+                hidden_states, present, normed_x = layer(
+                    hidden_states,
+                    position_embeddings,
+                    past_key_value=past_key_value,
+                    use_cache=use_cache,
+                    attention_mask=attention_mask,
+                    global_kv_pool=global_kv_pool,
+                    mems=layer_mems,
+                    loop_idx=loop_idx
+                )
+                presents.append(present)
+                
+                if self.config.use_recurrence:
+                    # 這裡儲存經過 Norm 的狀態作為下一個 segment 的 mems (重要：為了數值穩定)
+                    if layer_mems is not None:
+                        cat_mem = torch.cat([layer_mems, normed_x], dim=1)
+                    else:
+                        cat_mem = normed_x
+                    
+                    # 保持長度為 mem_len
+                    next_mems.append(cat_mem[:, -self.config.mem_len:].detach())
+                    
+                past_kv_idx += 1
 
         hidden_states = self.norm(hidden_states)
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())

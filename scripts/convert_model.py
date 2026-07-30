@@ -126,7 +126,10 @@ def convert_json_to_jinja(json_file_path, output_path):
 
 
 if __name__ == '__main__':
-    lm_config = MiniMindConfig(hidden_size=768, num_hidden_layers=8, max_seq_len=8192, use_moe=False)
+    lm_config = MiniMindConfig(hidden_size=768, num_hidden_layers=8, max_seq_len=8192, use_moe=False,
+        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
+        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
+        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16)
     # convert torch to transformers
     torch_path = f"../out/full_sft_{lm_config.hidden_size}{'_moe' if lm_config.use_moe else ''}.pth"
     transformers_path = '../minimind-3'

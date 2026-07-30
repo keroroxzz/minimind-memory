@@ -20,8 +20,10 @@ def init_model(args):
             use_engram=bool(args.use_engram),
             use_dense_attention=bool(args.use_dense_attention),
             use_latent_attention=bool(args.use_latent_attention),
-            inference_rope_scaling=args.inference_rope_scaling
-        ))
+            inference_rope_scaling=args.inference_rope_scaling,
+        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
+        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
+        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16))
         
         if os.path.exists(args.weight):
             ckp_path = args.weight
@@ -54,6 +56,9 @@ def main():
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--use_looped_transformer', default=0, type=int, choices=[0, 1], help="是否使用Looped Transformer架构")
+    parser.add_argument('--num_loops', default=1, type=int, help="Transformer 循环次数")
+    parser.add_argument('--loop_lora_rank', default=16, type=int, help="Loop LoRA rank")
     parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
     parser.add_argument('--use_dense_attention', default=0, type=int, choices=[0, 1], help="是否使用Dense Attention架构（0=否，1=是）")
     parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention架构（0=否，1=是）")

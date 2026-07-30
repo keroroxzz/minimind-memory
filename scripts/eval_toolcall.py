@@ -57,7 +57,10 @@ TEST_CASES = [
 def init_model(args):
     tokenizer = AutoTokenizer.from_pretrained(args.load_from)
     if 'model' in args.load_from:
-        model = MiniMindForCausalLM(MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe)))
+        model = MiniMindForCausalLM(MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe),
+        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
+        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
+        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16))
         moe_suffix = '_moe' if args.use_moe else ''
         ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
         model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
@@ -208,6 +211,9 @@ def main():
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--use_looped_transformer', default=0, type=int, choices=[0, 1], help="是否使用Looped Transformer架构")
+    parser.add_argument('--num_loops', default=1, type=int, help="Transformer 循环次数")
+    parser.add_argument('--loop_lora_rank', default=16, type=int, help="Loop LoRA rank")
     parser.add_argument('--max_new_tokens', default=512, type=int, help="最大生成长度")
     parser.add_argument('--temperature', default=0.9, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
     parser.add_argument('--top_p', default=0.9, type=float, help="nucleus采样阈值（0-1）")

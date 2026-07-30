@@ -110,6 +110,9 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隱藏層數量")
     parser.add_argument('--max_seq_len', default=512, type=int, help="最大截斷長度")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE")
+    parser.add_argument('--use_looped_transformer', default=0, type=int, choices=[0, 1], help="是否使用Looped Transformer架构")
+    parser.add_argument('--num_loops', default=1, type=int, help="Transformer 循环次数")
+    parser.add_argument('--loop_lora_rank', default=16, type=int, help="Loop LoRA rank")
     parser.add_argument('--use_engram', default=0, type=int, choices=[0, 1], help="是否使用Engram")
     parser.add_argument('--use_dense_attention', default=1, type=int, choices=[0, 1], help="是否使用Dense Attention")
     parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention")
@@ -143,8 +146,10 @@ if __name__ == "__main__":
         use_dense_attention=bool(args.use_dense_attention),
         use_latent_attention=bool(args.use_latent_attention),
         use_recurrence=bool(args.use_recurrence),
-        mem_len=args.mem_len
-    )
+        mem_len=args.mem_len,
+        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
+        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
+        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16)
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 混合精度與環境 ==========

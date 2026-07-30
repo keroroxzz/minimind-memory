@@ -35,8 +35,10 @@ def init_model(args):
             num_hidden_layers=args.num_hidden_layers,
             max_seq_len=args.max_seq_len,
             use_moe=bool(args.use_moe),
-            inference_rope_scaling=args.inference_rope_scaling
-        ))
+            inference_rope_scaling=args.inference_rope_scaling,
+        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
+        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
+        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16))
         model.load_state_dict(torch.load(ckp, map_location=device), strict=True)
         if args.lora_weight != 'None':
             apply_lora(model)
@@ -237,6 +239,9 @@ if __name__ == "__main__":
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--max_seq_len', default=8192, type=int, help="最大序列长度")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
+    parser.add_argument('--use_looped_transformer', default=0, type=int, choices=[0, 1], help="是否使用Looped Transformer架构")
+    parser.add_argument('--num_loops', default=1, type=int, help="Transformer 循环次数")
+    parser.add_argument('--loop_lora_rank', default=16, type=int, help="Loop LoRA rank")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
     args = parser.parse_args()
