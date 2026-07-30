@@ -78,9 +78,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   `[8,16,24,32,40,48,56,64,72]`. Loop 2 layer 0 attends to loop 1's KV; memory is quadratic in
   `layers*num_loops`; violates the "layers 1..L" invariant in `readme_dense_attention.md` §1.1.
 
-- [ ] **H4 — `max_ngram_size > 3` throws** — `:163`, `:196-203`
+- [x] **H4 — `max_ngram_size > 3` throws** — `:163`, `:196-203`
   `multipliers` is a hardcoded 3-element buffer → `IndexError: index 3 is out of bounds`,
   despite the config advertising `max_ngram_size` as tunable.
+  **Fixed**: multipliers are generated to length `max_ngram_size` (first three values unchanged,
+  so `max_ngram_size=3` checkpoints are numerically identical); buffer is now `persistent=False`
+  since it is a deterministic constant; `max_ngram_size < 2` now raises instead of dividing by
+  zero via `total_heads == 0`. Overflow headroom verified up to `max_ngram_size=8`.
 
 - [ ] **H5 — Engram offload puts parameters on mixed devices** — `:176-180`
   After `.cuda()`, `{p.device for p in model.parameters()} == {'cpu', 'cuda:0'}`.

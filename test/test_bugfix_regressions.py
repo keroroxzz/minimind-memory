@@ -139,6 +139,31 @@ class TestEngram(unittest.TestCase):
                     use_cache=True, full_input_ids=ids).logits[:, -1]
         self.assertLess((full - inc).abs().max().item(), 1e-4)
 
+    def test_h4_max_ngram_size_above_three(self):
+        """H4: max_ngram_size 是可調參數，>3 不該 IndexError。"""
+        for n in (2, 4, 5, 8):
+            with self.subTest(max_ngram_size=n):
+                m = self._engram_model(max_ngram_size=n, engram_layers=[0])
+                with torch.no_grad():
+                    m(torch.randint(0, 100, (1, 8)))
+
+    def test_h4_multipliers_backward_compatible(self):
+        """H4: max_ngram_size=3 的乘數必須跟修正前完全一致。"""
+        eng = self._engram_model(max_ngram_size=3).model.engram_system
+        self.assertEqual(eng.multipliers.tolist(), [31, 10007, 424243])
+
+    def test_h4_hash_stays_in_int64_range(self):
+        """H4: 擴充的乘數不能讓 hash 溢位 int64。"""
+        eng = self._engram_model(max_ngram_size=8).model.engram_system
+        ids = torch.full((1, 16), 6399, dtype=torch.long)  # 最大 token id
+        h = eng.get_hashes(ids, 16)
+        self.assertTrue((h >= 0).all(), "hash 出現負值，代表 int64 溢位")
+
+    def test_h4_rejects_degenerate_ngram_size(self):
+        """H4: max_ngram_size<2 會讓 total_heads=0，應該直接報錯而非除以零。"""
+        with self.assertRaises(ValueError):
+            self._engram_model(max_ngram_size=1)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

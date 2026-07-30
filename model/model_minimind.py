@@ -134,8 +134,13 @@ def find_next_prime(start, seen_primes):
         candidate += 1
 
 class EngramManager(nn.Module):
+    # 前三個維持原值，確保 max_ngram_size=3 的既有權重數值完全不變
+    BASE_MULTIPLIERS = [31, 10007, 424243]
+
     def __init__(self, config: MiniMindConfig):
         super().__init__()
+        if config.max_ngram_size < 2:
+            raise ValueError(f"max_ngram_size 必須 >= 2 (收到 {config.max_ngram_size})")
         self.max_ngram_size = config.max_ngram_size
         self.n_head_per_ngram = config.n_head_per_ngram
         self.hidden_size = config.hidden_size
@@ -163,7 +168,16 @@ class EngramManager(nn.Module):
             self.embedding_table = self.embedding_table.cpu()
 
         # 3. GPU 上的計算組件 (Gating, Conv, Norm)
-        self.register_buffer("multipliers", torch.tensor([31, 10007, 424243], dtype=torch.long))
+        # 每個 n-gram 位置各需要一個乘數；不足時往上找質數補齊 (每次拉開一個量級以降低碰撞)。
+        # 這是可由 config 決定的確定性常數，故 persistent=False，不進 checkpoint。
+        multipliers, seen = list(self.BASE_MULTIPLIERS), set(self.BASE_MULTIPLIERS)
+        while len(multipliers) < self.max_ngram_size:
+            p = find_next_prime(multipliers[-1] * 7, seen)
+            seen.add(p)
+            multipliers.append(p)
+        self.register_buffer("multipliers",
+                             torch.tensor(multipliers[:self.max_ngram_size], dtype=torch.long),
+                             persistent=False)
         
         # 為了支援多層，每層可以有自己的 gating 參數，或者共用。這裡每層獨立，效能更好。
         self.fusions = nn.ModuleDict({
