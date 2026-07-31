@@ -361,7 +361,10 @@ class Attention(nn.Module):
 
         if self.use_latent_attention:
             # === Latent Attention 邏輯 ===
-            if mems is not None:
+            # mems 與 KV cache 描述的是同一段歷史。若兩者並存，mem 位置的 K/V 會被重新
+            # 計算並再次寫進 cache (實測：1 個 token 的解碼步驟讓 cache 從 6 長到 13)，
+            # 導致 start_pos 每步漂移 mem_len+1。有 cache 時一律以 cache 為準。
+            if mems is not None and past_key_value is None:
                 c = torch.cat([mems.detach(), x], dim=1)
             else:
                 c = x
@@ -401,7 +404,10 @@ class Attention(nn.Module):
             xv_for_attn = xv.transpose(1, 2)
         else:
             # === 標準 MHA/GQA 邏輯 ===
-            if mems is not None:
+            # mems 與 KV cache 描述的是同一段歷史。若兩者並存，mem 位置的 K/V 會被重新
+            # 計算並再次寫進 cache (實測：1 個 token 的解碼步驟讓 cache 從 6 長到 13)，
+            # 導致 start_pos 每步漂移 mem_len+1。有 cache 時一律以 cache 為準。
+            if mems is not None and past_key_value is None:
                 c = torch.cat([mems.detach(), x], dim=1)
             else:
                 c = x
@@ -616,24 +622,25 @@ class MiniMindModel(nn.Module):
                 mems = None
 
         # --- RoPE 處理 ---
-        # Q 的位置編碼
-        q_cos = self.freqs_cos[start_pos:start_pos + seq_length]
-        q_sin = self.freqs_sin[start_pos:start_pos + seq_length]
-        
-        # K 的位置編碼 (如果使用 mems，需要涵蓋 mems 的歷史位置)
-        if mems is not None:
+        # 只有在「沒有 KV cache」時才會真的使用 mems (見 Attention.forward 的說明)
+        using_mems = mems is not None and past_key_values[0] is None
+
+        if using_mems:
+            # mems 佔據當前 segment 之前的 mem_len 個位置。RoPE 是相對編碼，因此只要
+            # mems 與當前 token 的「距離」正確即可：把 K 從 start_pos 起算，
+            # Q 則往後平移 mem_len。
+            # (原本的寫法在 start_pos=0 時把整個 mem 區塊 clamp 到 position 0，
+            #  使全部 mem token 與第一個當前 token 共用同一個位置。)
             mem_len = mems[0].shape[1]
-            k_start = start_pos - mem_len
-            k_cos = self.freqs_cos[max(0, k_start) : start_pos + seq_length]
-            k_sin = self.freqs_sin[max(0, k_start) : start_pos + seq_length]
-            
-            if k_start < 0:
-                pad_len = abs(k_start)
-                k_cos = torch.cat([self.freqs_cos[:1].repeat(pad_len, 1), k_cos], dim=0)
-                k_sin = torch.cat([self.freqs_sin[:1].repeat(pad_len, 1), k_sin], dim=0)
+            k_cos = self.freqs_cos[start_pos: start_pos + mem_len + seq_length]
+            k_sin = self.freqs_sin[start_pos: start_pos + mem_len + seq_length]
+            q_cos = self.freqs_cos[start_pos + mem_len: start_pos + mem_len + seq_length]
+            q_sin = self.freqs_sin[start_pos + mem_len: start_pos + mem_len + seq_length]
         else:
+            q_cos = self.freqs_cos[start_pos:start_pos + seq_length]
+            q_sin = self.freqs_sin[start_pos:start_pos + seq_length]
             k_cos, k_sin = q_cos, q_sin
-            
+
         position_embeddings = (q_cos, q_sin, k_cos, k_sin)
 
         # Stage 1: Gather Engram Knowledge (Deterministic Query)
@@ -644,7 +651,8 @@ class MiniMindModel(nn.Module):
                 full_input_ids, seq_length, n_context=self.engram_system.conv_context)
             
         presents = []
-        next_mems = [] if self.config.use_recurrence else None
+        # 有 cache 時 mems 不會被使用，也就沒必要再累積下一段的 mems
+        next_mems = [] if (self.config.use_recurrence and past_key_values[0] is None) else None
 
         past_kv_idx = 0
 
@@ -659,8 +667,9 @@ class MiniMindModel(nn.Module):
                 if self.use_engram and i in self.engram_layers and loop_idx == 0:
                     hidden_states = hidden_states + self.engram_system.stage2_fusion(i, hidden_states, engram_vram_features)
 
-                layer_mems = mems[past_kv_idx] if mems is not None else None
-                
+                layer_mems = mems[past_kv_idx] if using_mems else None
+
+
                 hidden_states, present, attn_input = layer(
                     hidden_states,
                     position_embeddings,
@@ -673,7 +682,7 @@ class MiniMindModel(nn.Module):
                 )
                 presents.append(present)
                 
-                if self.config.use_recurrence:
+                if next_mems is not None:
                     # 儲存本層 attention 的輸入 (input_layernorm 之後) 作為下個 segment 的 mems
                     if layer_mems is not None:
                         cat_mem = torch.cat([layer_mems, attn_input], dim=1)

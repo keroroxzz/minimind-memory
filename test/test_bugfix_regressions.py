@@ -166,6 +166,78 @@ class TestEngram(unittest.TestCase):
 
 
 class TestRecurrence(unittest.TestCase):
+    def test_c4_cache_does_not_double_count_mems(self):
+        """C4: 有 KV cache 時不可重新編碼 mem 位置，否則 cache 每步暴漲。"""
+        m = build(use_recurrence=True, mem_len=8)
+        ids = torch.randint(0, 100, (1, 6))
+        with torch.no_grad():
+            first = m(ids, use_cache=True)
+            self.assertEqual(first.past_key_values[0][0].shape[1], 6)
+            second = m(ids[:, -1:], past_key_values=first.past_key_values,
+                       use_cache=True, mems=first.next_mems)
+        self.assertEqual(second.past_key_values[0][0].shape[1], 7,
+                         "cache 長度不是 +1，代表 mems 被重複編碼進 cache")
+
+    def test_c4_generate_works_with_recurrence(self):
+        """C4: use_recurrence=1 之前會讓 generate 的 start_pos 漂移而失效。"""
+        m = build(use_recurrence=True, mem_len=8)
+        out = m.generate(torch.randint(0, 100, (1, 6)), max_new_tokens=5,
+                         do_sample=False, eos_token_id=None)
+        self.assertEqual(out.shape, (1, 11))
+
+    def test_c5_mem_tokens_get_distinct_rope_positions(self):
+        """C5: mem token 不可全部塌到 position 0。"""
+        import model.model_minimind as mm
+        m = build(use_recurrence=True, mem_len=8)
+        seen = []
+        orig = mm.apply_rotary_pos_emb
+
+        def spy(q, k, q_cos, q_sin, k_cos, k_sin, unsqueeze_dim=1):
+            seen.append((q_cos.shape[0], k_cos.shape[0],
+                         torch.unique(k_cos, dim=0).shape[0]))
+            return orig(q, k, q_cos, q_sin, k_cos, k_sin, unsqueeze_dim)
+
+        mm.apply_rotary_pos_emb = spy
+        try:
+            ids = torch.randint(0, 100, (1, 6))
+            with torch.no_grad():
+                mems = m(ids).next_mems
+                seen.clear()
+                m(ids, mems=mems)
+        finally:
+            mm.apply_rotary_pos_emb = orig
+
+        for q_len, k_len, distinct in seen:
+            self.assertEqual((q_len, k_len), (6, 12))
+            self.assertEqual(distinct, 12, "K 的位置有重複，mem 區塊被 clamp 到同一個位置")
+
+    def test_c5_query_is_offset_past_the_mems(self):
+        """C5: Q 的位置必須接在 mems 之後 (mem_len ..)，K 則從 0 起算。"""
+        import model.model_minimind as mm
+        m = build(use_recurrence=True, mem_len=8)
+        freqs = m.model.freqs_cos
+        captured = {}
+        orig = mm.apply_rotary_pos_emb
+
+        def spy(q, k, q_cos, q_sin, k_cos, k_sin, unsqueeze_dim=1):
+            captured.setdefault('q_cos', q_cos)
+            captured.setdefault('k_cos', k_cos)
+            return orig(q, k, q_cos, q_sin, k_cos, k_sin, unsqueeze_dim)
+
+        mm.apply_rotary_pos_emb = spy
+        try:
+            ids = torch.randint(0, 100, (1, 6))
+            with torch.no_grad():
+                mems = m(ids).next_mems
+                captured.clear()
+                m(ids, mems=mems)
+        finally:
+            mm.apply_rotary_pos_emb = orig
+
+        mem_len = mems[0].shape[1]
+        torch.testing.assert_close(captured['k_cos'], freqs[:mem_len + 6])
+        torch.testing.assert_close(captured['q_cos'], freqs[mem_len:mem_len + 6])
+
     def test_h7_non_flash_mems_with_attention_mask(self):
         """H7: attention_mask 長度是 seq_len，但有 mems 時 scores 是 mem_len+seq_len。"""
         m = build(use_recurrence=True, mem_len=8, flash_attn=False)

@@ -53,17 +53,25 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   changes numerics for existing engram checkpoints — they were already inconsistent at inference,
   so a re-train is needed either way.
 
-- [ ] **C4 — `use_recurrence` + KV cache double-counts memory** — `:371-386`
+- [x] **C4 — `use_recurrence` + KV cache double-counts memory** — `:371-386`
   `c = cat(mems, x)` recomputes K/V for mem positions already present in `past_key_value`.
   Probe: a 1-token decode step grew the cache **6 → 13**. `start_pos` drifts by `mem_len+1` per
   step, so `generate()`'s `input_ids[:, past_len:]` slice goes empty.
   `generate()` with `use_recurrence=1` cannot work.
+  **Fixed**: mems are used only when `past_key_value is None`. The cache already holds the full
+  history, so it is strictly more information than mems; on the prefill call mems still apply and
+  land in the cache, and every later step reads them back from the cache at correct absolute
+  positions. `next_mems` is likewise skipped once a cache exists. Cache growth is now `6 -> 7`
+  for a 1-token step, and `generate()` with `use_recurrence=1` produces the right length.
 
-- [ ] **C5 — All mem tokens collapse onto RoPE position 0** — `:578-587`
+- [x] **C5 — All mem tokens collapse onto RoPE position 0** — `:578-587`
   In training `start_pos==0`, so `k_start=-mem_len` and the entire mem block is padded with
   `freqs_cos[:1].repeat(...)`. Probe: `k_len=12` but only **6 distinct positions** — all 6 mem
   tokens share position 0, which is *also* the first current token's position.
   Transformer-XL relative positioning is destroyed.
+  **Fixed**: K now spans `[start_pos, start_pos+mem_len+seq_len)` and Q is offset to
+  `[start_pos+mem_len, ...)`. RoPE is relative, so only the mem↔current distance matters and this
+  is exactly right without needing a global stream offset. All 12 key positions are now distinct.
 
 ---
 
