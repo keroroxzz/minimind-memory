@@ -205,9 +205,11 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   **Fixed**: an all-ones mask is normalised to `None` once in `MiniMindModel.forward`, so the
   per-layer check disappears entirely. `Tensor.all()` calls per 3-layer forward: 3 → 1.
 
-- [ ] **M7 — `labels` + `logits_to_keep` misaligned** — `:653-661`
+- [x] **M7 — `labels` + `logits_to_keep` misaligned** — `:653-661`
   Logits sliced to the tail, labels still shifted from position 0 → `ValueError`.
   Not currently hit (`rollout_engine.py` uses `logits_to_keep` without `labels`).
+  **Fixed**: `labels` is trimmed to the kept window before the shift. Full-length behaviour is
+  byte-for-byte unchanged, and the windowed loss is pinned against a manual computation.
 
 ---
 

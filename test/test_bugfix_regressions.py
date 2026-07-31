@@ -95,6 +95,37 @@ class TestDenseAttention(unittest.TestCase):
             self.assertEqual(dt, torch.bool, f"SDPA 收到 {dt} mask，會被當成 additive bias")
 
 
+class TestLossAlignment(unittest.TestCase):
+    def test_m7_labels_with_logits_to_keep(self):
+        """M7: logits 被裁到尾端 n 個位置時，labels 必須跟著對齊。"""
+        m = build()
+        ids = torch.randint(0, 100, (2, 8))
+        with torch.no_grad():
+            loss = m(ids, labels=ids, logits_to_keep=4).loss  # 之前 ValueError
+        self.assertTrue(torch.isfinite(loss))
+
+    def test_m7_matches_manual_windowed_loss(self):
+        """M7: 裁切後的 loss 必須等於手動對同一窗口算出的 loss。"""
+        m = build()
+        ids = torch.randint(0, 100, (2, 8))
+        with torch.no_grad():
+            got = m(ids, labels=ids, logits_to_keep=4).loss
+            full_logits = m(ids).logits[:, -4:]
+            x = full_logits[..., :-1, :].reshape(-1, 100)
+            y = ids[:, -4:][..., 1:].reshape(-1)
+            expected = torch.nn.functional.cross_entropy(x, y, ignore_index=-100)
+        self.assertLess((got - expected).abs().item(), 1e-4)
+
+    def test_m7_full_length_loss_unchanged(self):
+        """M7: 不使用 logits_to_keep 時 loss 必須完全不變。"""
+        m = build()
+        ids = torch.randint(0, 100, (2, 8))
+        with torch.no_grad():
+            a = m(ids, labels=ids).loss
+            b = m(ids, labels=ids, logits_to_keep=0).loss
+        self.assertLess((a - b).abs().item(), 1e-6)
+
+
 class TestGQAPool(unittest.TestCase):
     def test_m2_repeat_kv_heads_matches_repeat_kv_ordering(self):
         """M2: 新的 [B,H,S,D] 展開必須與既有 repeat_kv 的 head 排列完全一致。"""

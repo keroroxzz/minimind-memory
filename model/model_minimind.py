@@ -793,6 +793,10 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         logits = self.lm_head(hidden_states[:, slice_indices, :])
         loss = None
         if labels is not None:
+            # logits 只保留尾端 n 個位置時，labels 也要裁到同一個窗口再做 shift，
+            # 否則長度不符會直接 ValueError (Expected input batch_size to match target)。
+            if logits.shape[1] != labels.shape[1]:
+                labels = labels[:, -logits.shape[1]:]
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
             loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
         return MiniMindLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states, next_mems=next_mems)
