@@ -69,6 +69,46 @@ DEVICE = "cuda"
 SEED = 42
 
 
+# ----------------------------------------------------------------- 置換合成任務
+# 為什麼換掉「數值鏈」：
+#   純加減 →  答案 = v0 + Σ±rhs。加法可交換可結合，整條鏈塌縮成一個求和，
+#             而求和是注意力一層就能做的事 (TC0)。實測 8 層在 k=12 仍有 90%，
+#             量到的根本不是深度。
+#   含乘法 →  確實不可交換，但把答案熵從 3.08 壓到 0.62 bit，長鏈變成猜比算划算。
+#
+# 置換合成同時滿足兩個條件：
+#   * 不可交換 —— f∘g ≠ g∘f，順序不能重排
+#   * 分布不塌縮 —— 置換是雙射，均勻進去必然均勻出來，不存在熵塌縮捷徑
+#   * 理論保證 —— S5 的字問題是 NC1-完備，固定深度 (TC0) 解不了任意長度，
+#     正是為「量測序列深度」而存在的標準任務
+PERM_N = 5
+N_GEN = 8
+
+
+def _generators(seed=20260731):
+    rng = random.Random(seed)
+    gens = []
+    while len(gens) < N_GEN:
+        p = list(range(PERM_N)); rng.shuffle(p)
+        if p != list(range(PERM_N)) and p not in gens:
+            gens.append(p)
+    return gens
+
+
+GENS = _generators()
+
+
+def make_perm(k, rng):
+    """x=<起始置換> f_i f_j ... 求x=<結果置換>"""
+    state = list(range(PERM_N)); rng.shuffle(state)
+    prompt = "x=" + " ".join(map(str, state))
+    for _ in range(k):
+        g = rng.randrange(N_GEN)
+        state = [state[GENS[g][i]] for i in range(PERM_N)]
+        prompt += f" f{g}"
+    return prompt + " 求x=", " ".join(map(str, state))
+
+
 # ----------------------------------------------------------------- 資料產生
 def fmt(n):
     """數字一律拆成「以空白分隔的位數」。
@@ -122,13 +162,38 @@ def gen(args):
                 print(f"  ⚠️  k={k} 只產生 {made}/{n_per_k} 條（問題空間已窮盡）")
         return rows
 
-    # 起始值域互斥 → train 與 val 保證零重疊，且 val 測的是對未見起始值的泛化
+    # train / val 共用完整值域 0..99，改以「val 先生成、train 排除它們」確保零重疊。
+    #
+    # 早期版本用互斥的起始值域 (train 10-79 / val 80-99)。那在混合運算下沒問題 ——
+    # 乘法兩三步就把值打散到整個 0..99，模型被迫學會真正的模算術。但在**純加減**下
+    # 是致命的：答案永遠是 v0 + Σ±rhs，值黏在 v0 附近，模型只要記住訓練那段帶狀區域
+    # 就能把 loss 壓到 0.02，而 94+9=103→03 這種繞回在訓練中幾乎不出現。
+    # 實測：訓練值域內 k=1 100% / k=4 99%，val 值域 0% / 0%。
+    #
     # 預設純加減：乘法會把答案熵從 3.08 壓到 0.62 bit，長鏈變成猜比算划算
     # (實測純乘法正確率隨深度「上升」到 87%)，會污染深度的量測。
-    train_rows = build(per_k_train, rng, 10, 79, unique=False)
-    val_rows = build(per_k_val, random.Random(SEED + 999), 80, 99, unique=True)
-    overlap = {r["prompt"] for r in train_rows} & {r["prompt"] for r in val_rows}
-    assert not overlap, f"train/val 重疊 {len(overlap)} 條"
+    if args.task == "perm":
+        def build_perm(n, rng, unique, exclude=None):
+            rows = []
+            for k in range(1, MAX_K + 1):
+                seen, made, att = set(), 0, 0
+                while made < n and att < n * 50:
+                    att += 1
+                    p, a = make_perm(k, rng)
+                    if unique and p in seen: continue
+                    if exclude and p in exclude: continue
+                    seen.add(p); rows.append({"k": k, "prompt": p, "answer": a}); made += 1
+            return rows
+        val_rows = build_perm(per_k_val, random.Random(SEED + 999), unique=True)
+        vs = {r["prompt"] for r in val_rows}
+        train_rows = build_perm(per_k_train, rng, unique=False, exclude=vs)
+        assert not ({r["prompt"] for r in train_rows} & vs)
+    else:
+        val_rows = build(per_k_val, random.Random(SEED + 999), 0, 99, unique=True)
+        val_set = {r["prompt"] for r in val_rows}
+        train_rows = [r for r in build(int(per_k_train * 1.02), rng, 0, 99, unique=False)
+                      if r["prompt"] not in val_set]
+        assert not ({r["prompt"] for r in train_rows} & val_set)
 
     def encode(rows):
         ids, plen, tlen, ks = [], [], [], []
@@ -165,7 +230,7 @@ def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0):
     """逐 k 計算正確率。貪婪解碼，答案必須完全相符。"""
     from collections import defaultdict
     hit, tot = defaultdict(int), defaultdict(int)
-    tens, ones, wf = defaultdict(int), defaultdict(int), defaultdict(int)
+    pos, wf = defaultdict(float), defaultdict(int)
     by_k = defaultdict(list)
     for r in val_rows:
         by_k[r["k"]].append(r)
@@ -185,12 +250,11 @@ def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0):
             # 逐位數診斷：mod-100 的個位數是 Z_10 上的淺層電路，十位數要進位才難。
             # 若整體正確率對 k 平坦，很可能是兩者混在一起看不出來。
             gd, pd = r["answer"].split(), gen_txt.split()
-            if len(gd) == 2 and len(pd) == 2:
-                tens[k] += (pd[0] == gd[0]); ones[k] += (pd[1] == gd[1])
-            wf[k] += (len(pd) == 2)
+            if len(pd) == len(gd):
+                pos[k] += sum(a == b for a, b in zip(pd, gd)) / len(gd)
+            wf[k] += (len(pd) == len(gd))
     return {k: {"correct": hit[k], "total": tot[k], "acc": hit[k] / max(tot[k], 1),
-                "tens_acc": tens[k] / max(tot[k], 1), "ones_acc": ones[k] / max(tot[k], 1),
-                "wellformed": wf[k] / max(tot[k], 1)}
+                "pos_acc": pos[k] / max(tot[k], 1), "wellformed": wf[k] / max(tot[k], 1)}
             for k in sorted(tot)}
 
 
@@ -256,10 +320,10 @@ def run(name, args):
                      throttle=args.throttle)
     elapsed = time.time() - t0
     overall = sum(v["correct"] for v in per_k.values()) / max(sum(v["total"] for v in per_k.values()), 1)
-    print(f"\n  逐深度正確率（隨機基準 1.0%；逐位數基準 10%）：")
-    print(f"    {'k':>3s} {'完全正確':>9s} {'十位':>7s} {'個位':>7s} {'格式正確':>9s}")
+    print(f"\n  逐深度正確率（置換全對基準 1/120=0.8%；逐位置基準 20%）：")
+    print(f"    {'k':>3s} {'全對':>9s} {'逐位置':>9s} {'格式正確':>9s}")
     for k, v in per_k.items():
-        print(f"    {k:>3d} {v['acc']:8.1%} {v['tens_acc']:7.1%} {v['ones_acc']:7.1%} {v['wellformed']:8.1%}")
+        print(f"    {k:>3d} {v['acc']:8.1%} {v['pos_acc']:8.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
 
     ck = os.path.join(HERE, f"synth_{name.replace('+','_')}.pth")
@@ -300,7 +364,9 @@ if __name__ == "__main__":
     ap.add_argument("--eval-per-k", type=int, default=200)
     ap.add_argument("--from-pretrain", type=int, default=1)
     ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
-    ap.add_argument("--ops", default="+-", help='運算集合，預設純加減（排除乘法捷徑）')
+    ap.add_argument("--ops", default="+-", help='數值鏈的運算集合')
+    ap.add_argument("--task", default="perm", choices=["perm", "chain"],
+                    help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
     a = ap.parse_args()

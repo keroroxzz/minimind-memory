@@ -34,43 +34,43 @@ Most CLI scripts print help text and comments in Chinese; code identifiers are E
 
 All from `experiments/`, single seed, 29M backbone (512d / 8 layers / 8 heads / 2 KV heads).
 
-**Reasoning depth — the positive result, and its ceiling.** On a depth-controlled synthetic task
-(k-step dependency chains, answer-only target so autoregression cannot supply depth), a vanilla
-29M model composes in Z₁₀ inside a single forward pass out to real depth. Measured ones-digit
-accuracy, trained on k=1..16:
+**Reasoning depth — the ceiling, measured on a task that actually requires depth.**
+The depth task went through three versions; the first two were both invalid, and their
+conclusions have been retracted:
 
-| k | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 10 | 12 | 16 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| acc | 99.5% | 97.5% | 92.5% | 91.0% | 80.5% | 72.5% | 56.5% | 45.5% | 44.5% | 42.0% |
-
-The ~42% tail plateau is **confirmed to be a distributional shortcut, not composition.**
-Splitting held-out chains by operation mix (150 each, start values unseen in training):
-
-| k | add/sub only | mixed | multiply only |
+| task | non-commutative? | entropy preserved? | verdict |
 |---|---|---|---|
-| 4 | 100.0% | 91.3% | 76.0% |
-| 8 | 47.3% | 55.3% | 84.0% |
-| 12 | 18.7% | 40.7% | 88.7% |
-| 16 | **12.7%** | 36.7% | **87.3%** |
+| mixed arithmetic (`+-*`) | yes | **no** — 3.08 → 0.62 bit | long chains reward guessing; multiply-only accuracy *rose* with depth to 87% |
+| add/sub only | **no** — collapses to `v0 + Σ±rhs` | yes | a sum is one attention layer (TC⁰); 8 layers scored 90% at k=12 |
+| **S₅ permutation composition** | yes | yes (bijections preserve uniformity) | **current** |
 
-Multiply-only accuracy *rises* with depth, which is impossible for genuine computation. Cause:
-repeated ×2..9 mod 10 collapses the answer's entropy from 3.08 bit at k=1 to **0.62 bit at k=16**
-(one value covers 91% of cases), so guessing beats computing. Add/sub-only chains, whose range is
-never compressed, decay to 12.7% — essentially the 10% chance level.
+Permutation composition is the right instrument: S₅'s word problem is NC¹-complete, so a
+fixed-depth transformer (≈TC⁰) provably cannot solve arbitrary lengths, whereas addition sits
+inside TC⁰ — which is exactly why the add/sub version showed no ceiling.
 
-**Implication for experiment design: the depth task must use add/sub-only chains.** With
-multiplication in the mix, an architecture can "win" by exploiting the shortcut rather than by
-reasoning deeper. On add/sub-only the true sensitive window is **k=6..10** (94.0% → 47.3% →
-24.7%), which is where any depth-adding mechanism should be measured.
+Measured on S₅ composition, vanilla 29M / 8 layers (6k steps, exact-match chance 1/120 = 0.8%,
+per-position chance 20%):
 
-**Caveat:** an earlier run trained only on k=1..6 reached 93.3% at k=6 versus 72.5% here. The
-number depends on the training difficulty distribution, not on the architecture alone — do not
-quote a single-depth accuracy without stating the training range.
+| k | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 12 |
+|---|---|---|---|---|---|---|---|---|
+| exact | 99.3% | 96.7% | **62.7%** | **11.3%** | 1.3% | 0.0% | 0.7% | 0.7% |
+| per-position | 99.7% | 98.9% | 82.8% | 44.0% | 28.0% | 22.5% | 19.5% | 18.9% |
 
-**The real bottleneck is state, not depth.** On the same task the *tens* digit — which requires
-carry propagation, i.e. a small piece of state accumulated across steps — sits near the 10%
-per-digit baseline at every k, while the *ones* digit is ~99%. Attention rebuilds state from
-scratch each layer; this is where recurrence/SSM-style mechanisms should be aimed.
+**The ceiling is k≈3, and by k=5 it is at chance.** Roughly 2.5 layers per composition step.
+The sensitive window for any depth-adding mechanism is **k=2..5**.
+
+**Retracted (2026-07-31):** two earlier claims in this file were artefacts of the broken tasks.
+"Ceiling at k≈8, matching the layer count" came from the mixed-arithmetic task plus a
+distribution shift, and "carry propagation / state accumulation is the real bottleneck" came from
+the tens digit being hard *because multi-digit multiplication is hard* — on add/sub the tens digit
+went straight to ~100%. Neither says anything about depth or state.
+
+**A data-design trap worth remembering.** Holding out val by using a disjoint start-value range
+(train 10–79 / val 80–99) is safe under mixed arithmetic, because multiplication scatters values
+across the whole range within two steps. Under add/sub-only it is fatal: the answer stays pinned
+near `v0`, so the model memorises the training band and scores **100% in-range but 0% out-of-range**
+while training loss reaches 0.02. Hold out by excluding specific examples, not by partitioning the
+value space, unless you have checked that the dynamics mix.
 
 **Complete Attention (`use_dense_attention`) does not buy reasoning depth — it hurts.**
 Ones-digit accuracy at k=6: **93.3% vanilla vs 54.0% dense**, with the gap *widening* with depth.
