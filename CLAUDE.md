@@ -43,10 +43,25 @@ accuracy, trained on k=1..16:
 |---|---|---|---|---|---|---|---|---|---|---|
 | acc | 99.5% | 97.5% | 92.5% | 91.0% | 80.5% | 72.5% | 56.5% | 45.5% | 44.5% | 42.0% |
 
-Monotone decay to k≈11, then a plateau at ~42% — well above the 10% chance level, which suggests
-the tail is being solved by distributional shortcuts (multiplications collapse the ones-digit
-range) rather than by actually running the chain. **The sensitive window is k=6..10** — that is
-where any depth-adding mechanism should be measured.
+The ~42% tail plateau is **confirmed to be a distributional shortcut, not composition.**
+Splitting held-out chains by operation mix (150 each, start values unseen in training):
+
+| k | add/sub only | mixed | multiply only |
+|---|---|---|---|
+| 4 | 100.0% | 91.3% | 76.0% |
+| 8 | 47.3% | 55.3% | 84.0% |
+| 12 | 18.7% | 40.7% | 88.7% |
+| 16 | **12.7%** | 36.7% | **87.3%** |
+
+Multiply-only accuracy *rises* with depth, which is impossible for genuine computation. Cause:
+repeated ×2..9 mod 10 collapses the answer's entropy from 3.08 bit at k=1 to **0.62 bit at k=16**
+(one value covers 91% of cases), so guessing beats computing. Add/sub-only chains, whose range is
+never compressed, decay to 12.7% — essentially the 10% chance level.
+
+**Implication for experiment design: the depth task must use add/sub-only chains.** With
+multiplication in the mix, an architecture can "win" by exploiting the shortcut rather than by
+reasoning deeper. On add/sub-only the true sensitive window is **k=6..10** (94.0% → 47.3% →
+24.7%), which is where any depth-adding mechanism should be measured.
 
 **Caveat:** an earlier run trained only on k=1..6 reached 93.3% at k=6 versus 72.5% here. The
 number depends on the training difficulty distribution, not on the architecture alone — do not
