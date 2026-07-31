@@ -61,6 +61,16 @@ SEED = 42
 
 
 # ----------------------------------------------------------------- 資料產生
+def fmt(n):
+    """數字一律拆成「以空白分隔的位數」。
+
+    minimind 的 6400 BPE 詞表對數字的切法極不一致：0..99 之中 42 個是單 token、
+    58 個是雙 token（'60'→[3873] 但 '97'→[60,58]）。模型得先學會這兩種表示是同
+    一回事才談得上算術，這會直接扼殺算術能力。加空白後每個位數固定一個 token。
+    """
+    return " ".join(f"{n:02d}")
+
+
 def make_one(k, rng, v0_lo=10, v0_hi=79):
     """產生一條 k 步依賴鏈。每一步都必須用到前一步的結果。
 
@@ -69,14 +79,14 @@ def make_one(k, rng, v0_lo=10, v0_hi=79):
     這樣同時也更嚴格：val 的起始值在訓練時從未出現過，測的是泛化而非記憶。
     """
     v = rng.randint(v0_lo, v0_hi)
-    parts = [f"{NAMES[0]}={v}"]
+    parts = [f"{NAMES[0]}={fmt(v)}"]
     for i in range(1, k + 1):
         op = rng.choice("+-*")
         rhs = rng.randint(2, 9)
         v = {"+": v + rhs, "-": v - rhs, "*": v * rhs}[op] % 100
         parts.append(f"{NAMES[i]}={NAMES[i-1]}{op}{rhs}")
     prompt = " ".join(parts) + f" 求{NAMES[k]}="
-    return prompt, str(v)
+    return prompt, fmt(v)
 
 
 def gen(args):
@@ -144,6 +154,7 @@ def acc_by_k(model, tok, val_rows, max_per_k=200):
     """逐 k 計算正確率。貪婪解碼，答案必須完全相符。"""
     from collections import defaultdict
     hit, tot = defaultdict(int), defaultdict(int)
+    tens, ones, wf = defaultdict(int), defaultdict(int), defaultdict(int)
     by_k = defaultdict(list)
     for r in val_rows:
         by_k[r["k"]].append(r)
@@ -156,7 +167,15 @@ def acc_by_k(model, tok, val_rows, max_per_k=200):
             gen_txt = tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
             tot[k] += 1
             hit[k] += (gen_txt == r["answer"])
-    return {k: {"correct": hit[k], "total": tot[k], "acc": hit[k] / max(tot[k], 1)}
+            # 逐位數診斷：mod-100 的個位數是 Z_10 上的淺層電路，十位數要進位才難。
+            # 若整體正確率對 k 平坦，很可能是兩者混在一起看不出來。
+            gd, pd = r["answer"].split(), gen_txt.split()
+            if len(gd) == 2 and len(pd) == 2:
+                tens[k] += (pd[0] == gd[0]); ones[k] += (pd[1] == gd[1])
+            wf[k] += (len(pd) == 2)
+    return {k: {"correct": hit[k], "total": tot[k], "acc": hit[k] / max(tot[k], 1),
+                "tens_acc": tens[k] / max(tot[k], 1), "ones_acc": ones[k] / max(tot[k], 1),
+                "wellformed": wf[k] / max(tot[k], 1)}
             for k in sorted(tot)}
 
 
@@ -213,10 +232,14 @@ def run(name, args):
     per_k = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k)
     elapsed = time.time() - t0
     overall = sum(v["correct"] for v in per_k.values()) / max(sum(v["total"] for v in per_k.values()), 1)
-    print(f"\n  逐深度正確率（隨機基準 1.0%）：")
+    print(f"\n  逐深度正確率（隨機基準 1.0%；逐位數基準 10%）：")
+    print(f"    {'k':>3s} {'完全正確':>9s} {'十位':>7s} {'個位':>7s} {'格式正確':>9s}")
     for k, v in per_k.items():
-        print(f"    k={k}  {v['correct']:3d}/{v['total']:3d} = {v['acc']:6.1%}")
+        print(f"    {k:>3d} {v['acc']:8.1%} {v['tens_acc']:7.1%} {v['ones_acc']:7.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
+
+    ck = os.path.join(HERE, f"synth_{name.replace('+','_')}.pth")
+    torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ck)
 
     res = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
     res[name] = {"per_k": {str(k): v for k, v in per_k.items()}, "overall": overall,
