@@ -80,10 +80,14 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   `indices = torch.randperm(len(train_ds))` feeds `SkipBatchSampler`, then `mems = res.next_mems`
   is threaded batch-to-batch. Consecutive "segments" are unrelated random documents.
 
-- [ ] **H3 — `global_kv_pool` never reset per loop** — `:599`, `:606-607`
+- [x] **H3 — `global_kv_pool` never reset per loop** — `:599`, `:606-607`
   With `use_looped_transformer`, key lengths per attention call (3 layers × 3 loops, seq=8) were
   `[8,16,24,32,40,48,56,64,72]`. Loop 2 layer 0 attends to loop 1's KV; memory is quadratic in
   `layers*num_loops`; violates the "layers 1..L" invariant in `readme_dense_attention.md` §1.1.
+  **Fixed**: the pool is rebuilt at the top of each loop iteration, so key lengths are now
+  `[8,16,24]*3` instead of `[8..72]`. Covered by
+  `test/test_bugfix_regressions.py::TestLoopedTransformer`, which also pins the non-looped
+  behaviour and the looped KV-cache index mapping.
 
 - [x] **H4 — `max_ngram_size > 3` throws** — `:163`, `:196-203`
   `multipliers` is a hardcoded 3-element buffer → `IndexError: index 3 is out of bounds`,

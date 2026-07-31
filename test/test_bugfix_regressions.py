@@ -165,6 +165,54 @@ class TestEngram(unittest.TestCase):
             self._engram_model(max_ngram_size=1)
 
 
+class TestLoopedTransformer(unittest.TestCase):
+    @staticmethod
+    def _key_lengths(model, seq_len=8):
+        import model.model_minimind as mm
+        lengths = []
+        orig = mm.F.scaled_dot_product_attention
+
+        def spy(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, **kw):
+            lengths.append(k.shape[2])
+            return orig(q, k, v, attn_mask, dropout_p, is_causal)
+
+        mm.F.scaled_dot_product_attention = spy
+        try:
+            with torch.no_grad():
+                model(torch.randint(0, 100, (1, seq_len)))
+        finally:
+            mm.F.scaled_dot_product_attention = orig
+        return lengths
+
+    def test_h3_kv_pool_resets_each_loop(self):
+        """H3: dense pool 不可跨 loop 累積，否則深度變成 layers*num_loops。"""
+        m = build(use_dense_attention=True, use_looped_transformer=True,
+                  num_loops=3, num_hidden_layers=3)
+        self.assertEqual(self._key_lengths(m, 8), [8, 16, 24] * 3)
+
+    def test_h3_no_loop_unchanged(self):
+        """H3: 沒開 looped 時行為必須完全不變。"""
+        m = build(use_dense_attention=True, num_hidden_layers=3)
+        self.assertEqual(self._key_lengths(m, 8), [8, 16, 24])
+
+    def test_looped_presents_count(self):
+        """looped: KV cache 條目數 = layers * num_loops。"""
+        m = build(use_looped_transformer=True, num_loops=3, num_hidden_layers=2)
+        with torch.no_grad():
+            out = m(torch.randint(0, 100, (1, 8)), use_cache=True)
+        self.assertEqual(len(out.past_key_values), 6)
+
+    def test_looped_prefill_matches_incremental_decode(self):
+        """looped: 多 loop 下 KV cache 的索引對應要正確。"""
+        m = build(use_looped_transformer=True, num_loops=3, num_hidden_layers=2)
+        ids = torch.randint(0, 100, (1, 10))
+        with torch.no_grad():
+            full = m(ids).logits[:, -1]
+            pre = m(ids[:, :9], use_cache=True)
+            inc = m(ids[:, 9:], past_key_values=pre.past_key_values, use_cache=True).logits[:, -1]
+        self.assertLess((full - inc).abs().max().item(), 1e-4)
+
+
 class TestLatentAttention(unittest.TestCase):
     def test_c1_forward_does_not_crash(self):
         """C1: use_latent_attention=1 之前每次 forward 都 RuntimeError。"""

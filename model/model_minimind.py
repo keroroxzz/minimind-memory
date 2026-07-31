@@ -635,14 +635,15 @@ class MiniMindModel(nn.Module):
             engram_vram_features = self.engram_system.stage1_gather(
                 full_input_ids, seq_length, n_context=self.engram_system.conv_context)
             
-        global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
         presents = []
         next_mems = [] if self.config.use_recurrence else None
-        
-        num_loops = self.config.num_loops if getattr(self.config, 'use_looped_transformer', False) else 1
+
         past_kv_idx = 0
 
         for loop_idx in range(num_loops):
+            # 每個 loop 都重建 pool。dense attention 的不變量是「第 L 層的 Query 看得到第 1..L 層」；
+            # 跨 loop 累積會讓深度變成 layers*num_loops，記憶體平方成長且違反該不變量。
+            global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
             for i, layer in enumerate(self.layers):
                 past_key_value = past_key_values[past_kv_idx] if past_key_values is not None else None
 
