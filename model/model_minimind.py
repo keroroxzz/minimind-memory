@@ -536,7 +536,11 @@ class MOEFeedForward(nn.Module):
         x_flat = x.view(-1, hidden_dim)
         scores = F.softmax(self.gate(x_flat), dim=-1)
         topk_weight, topk_idx = torch.topk(scores, k=self.config.num_experts_per_tok, dim=-1, sorted=False)
-        if self.config.norm_topk_prob: topk_weight = topk_weight / (topk_weight.sum(dim=-1, keepdim=True) + 1e-20)
+        # k=1 時正規化會讓權重恆等於 1.0，router 就完全收不到 LM loss 的梯度
+        # (實測 gate 梯度 1e-7 vs 5e-1)，只能靠 aux_loss 學習。Switch Transformer 指出
+        # 「乘上 router 機率」正是 router 可微分的必要條件，因此 k=1 時不做正規化。
+        if self.config.norm_topk_prob and self.config.num_experts_per_tok > 1:
+            topk_weight = topk_weight / (topk_weight.sum(dim=-1, keepdim=True) + 1e-20)
         y = torch.zeros_like(x_flat)
         for i, expert in enumerate(self.experts):
             mask = (topk_idx == i)
@@ -547,7 +551,9 @@ class MOEFeedForward(nn.Module):
             elif self.training:
                 y[0, 0] += 0 * sum(p.sum() for p in expert.parameters())
         if self.training and self.config.router_aux_loss_coef > 0:
-            load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)
+            # one_hot -> [N, k, E]；必須先對 k 個 slot 求和才是「每個 expert 的 token 佔比」。
+            # 原本直接 mean(0) 得到 [k, E]，後面的 .sum() 會跨 slot 重複計算 (k>1 時失真)。
+            load = F.one_hot(topk_idx, self.config.num_experts).float().sum(dim=1).mean(dim=0)
             self.aux_loss = (load * scores.mean(0)).sum() * self.config.num_experts * self.config.router_aux_loss_coef
         else:
             self.aux_loss = scores.new_zeros(1).squeeze()

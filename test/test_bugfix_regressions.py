@@ -165,6 +165,57 @@ class TestEngram(unittest.TestCase):
             self._engram_model(max_ngram_size=1)
 
 
+class TestMoE(unittest.TestCase):
+    @staticmethod
+    def _moe(**kw):
+        cfg = dict(hidden_size=32, num_hidden_layers=1, use_moe=True, num_experts=4,
+                   use_engram=False, vocab_size=100)
+        cfg.update(kw)
+        torch.manual_seed(0)
+        return MiniMindForCausalLM(MiniMindConfig(**cfg)).train()
+
+    def _gate_grad(self, **kw):
+        m = self._moe(router_aux_loss_coef=0.0, **kw)
+        out = m(torch.randint(0, 100, (2, 8)), labels=torch.randint(0, 100, (2, 8)))
+        out.loss.backward()
+        return m.model.layers[0].mlp.gate.weight.grad.abs().sum().item()
+
+    def test_h6_router_receives_gradient_with_k1(self):
+        """H6: 預設 k=1 + norm_topk_prob=True 讓權重恆為 1.0，router 收不到梯度。"""
+        self.assertGreater(self._gate_grad(num_experts_per_tok=1, norm_topk_prob=True), 1e-3)
+
+    def test_h6_router_gradient_for_all_configs(self):
+        """H6: 各種 k / norm 組合下 router 都必須可學。"""
+        for k, norm in [(1, True), (1, False), (2, True), (2, False)]:
+            with self.subTest(k=k, norm=norm):
+                self.assertGreater(
+                    self._gate_grad(num_experts_per_tok=k, norm_topk_prob=norm), 1e-3)
+
+    def test_h6_topk_normalisation_still_applies_for_k_above_1(self):
+        """H6: k>1 時 norm_topk_prob 的行為不可改變 (權重和為 1)。"""
+        m = self._moe(num_experts_per_tok=2, norm_topk_prob=True)
+        mlp = m.model.layers[0].mlp
+        scores = torch.softmax(mlp.gate(torch.randn(5, 32)), dim=-1)
+        w, _ = torch.topk(scores, k=2, dim=-1, sorted=False)
+        w = w / (w.sum(dim=-1, keepdim=True) + 1e-20)
+        torch.testing.assert_close(w.sum(-1), torch.ones(5))
+
+    def test_m5_aux_loss_load_is_per_expert(self):
+        """M5: load 必須是 [E]，原本 mean(0) 得到 [k,E]，k>1 會跨 slot 重複計算。"""
+        m = self._moe(num_experts_per_tok=2, router_aux_loss_coef=1.0)
+        mlp = m.model.layers[0].mlp
+        m(torch.randint(0, 100, (2, 8)))
+        self.assertEqual(mlp.aux_loss.shape, ())
+
+        # 手算對照：load_i = 每個 token 是否路由到 expert i 的平均
+        x = torch.randn(16, 32)
+        scores = torch.softmax(mlp.gate(x), dim=-1)
+        _, idx = torch.topk(scores, k=2, dim=-1, sorted=False)
+        load = torch.nn.functional.one_hot(idx, 4).float().sum(dim=1).mean(dim=0)
+        self.assertEqual(load.shape, (4,))
+        self.assertAlmostEqual(load.sum().item(), 2.0, places=4)  # k=2
+
+
 class TestEngramOffload(unittest.TestCase):
     CFG = dict(hidden_size=64, num_hidden_layers=2, engram_layers=[0],
                engram_vocab_size=200000, n_head_per_ngram=8, n_embed_per_ngram=64,

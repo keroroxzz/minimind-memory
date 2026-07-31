@@ -135,7 +135,7 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
      trainer ahead of `scaler.unscale_`.
   Covered by `test/test_bugfix_regressions.py::TestEngramOffload`.
 
-- [ ] **H6 — MoE router gets no gradient under current defaults** — `:469-470`
+- [x] **H6 — MoE router gets no gradient under current defaults** — `:469-470`
   Defaults are `num_experts_per_tok=1, norm_topk_prob=True`, so `topk_weight/topk_weight.sum()`
   is exactly `1.0` and the LM loss cannot reach `self.gate`.
 
@@ -146,6 +146,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   | 2 | True           | 9.19e-01       |
 
   Relevant because `HEAD` is `[Update] change moe default`.
+  **Fixed**: `norm_topk_prob` is skipped when `k == 1`, where it is a mathematical no-op that
+  nonetheless severs the gradient path. Switch Transformer names multiplying by the router
+  probability as the condition for the router being differentiable at all, so this is the
+  standard formulation rather than a workaround.
+  **Note:** for `k=1` the expert output is now scaled by the router probability instead of 1.0,
+  which changes numerics for existing MoE checkpoints — their routers were untrainable, so those
+  runs need redoing regardless.
 
 - [x] **H7 — Non-flash path + mems crashes on any attention_mask** — `:437-438`
   `attention_mask` has length `seq_len` but `scores` has `mem_len+seq_len` keys
@@ -171,10 +178,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   `(hashed_len, needed_len)` = `(16,16), (17,1), (18,1), (19,1), (20,1), (21,1)`.
   Quadratic; with `offload_cpu` it round-trips the full prefix over PCIe per step for one row.
 
-- [ ] **M5 — `aux_loss` loses all but the last loop; `load` has the wrong shape** — `:641`, `:481`
+- [~] **M5 — `aux_loss` loses all but the last loop; `load` has the wrong shape** — `:641`, `:481`
   `aux_loss` is read off `l.mlp.aux_loss` after the fact, so with `num_loops>1` only the last
   loop's value survives. `load = one_hot(topk_idx,E).float().mean(0)` is `[k,E]`, not `[E]`;
   the `.sum()` double-counts across slots for `k>1`.
+  **`load` fixed**: now `one_hot(...).sum(dim=1).mean(dim=0)` → `[E]`, the per-expert token
+  fraction (sums to `k`, as Switch Transformer's formulation expects).
+  **Still open** — the looped-transformer half (only the last loop's `aux_loss` survives).
 
 - [ ] **M6 — Per-layer, per-step GPU→CPU sync** — `:430`
   `torch.all(attention_mask == 1)` in the flash-path guard forces a device sync.
