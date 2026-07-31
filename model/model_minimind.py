@@ -74,6 +74,23 @@ class MiniMindConfig(PretrainedConfig):
         self.num_loops: int = kwargs.get("num_loops", 1)
         self.loop_lora_rank: int = kwargs.get("loop_lora_rank", 16)
 
+        # loop_adapter：迴圈適配器的形式，決定「迴圈次數能不能在推論時改變」
+        #   per_index — 每個 loop index 各有一組 LoRA (預設，向後相容)。
+        #               迴圈次數被寫死進參數結構：num_loops=3 訓練的權重載進
+        #               num_loops=5 會缺 64 個參數，因此無法做 test-time scaling。
+        #   shared    — 所有 loop >= 1 共用同一組 LoRA，配合 loop_index_embed
+        #               告知「現在是第幾圈」。迴圈次數可自由變動。
+        #   none      — 不加適配器，純權重共享。
+        self.loop_adapter: str = kwargs.get("loop_adapter", "per_index")
+        # 每一圈重新注入 token embedding，避免輸入資訊在迭代中衰減
+        self.loop_input_injection: bool = kwargs.get("loop_input_injection", False)
+        # 以正弦編碼告知目前圈數。連續訊號才能外推到訓練時沒見過的圈數
+        self.loop_index_embed: bool = kwargs.get("loop_index_embed", False)
+        # >0 時，訓練期間從 [loop_random_min, num_loops] 隨機抽圈數。
+        # 這是 test-time compute scaling 與自適應深度的前提：模型必須學會
+        # 在任意圈數下都輸出合理結果。只在 use_cache=False 時生效。
+        self.loop_random_min: int = kwargs.get("loop_random_min", 0)
+
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
 #                   Engram Module (from https://github.com/deepseek-ai/Engram/tree/main)
@@ -610,15 +627,36 @@ class MiniMindBlock(nn.Module):
         
         self.use_looped_transformer = getattr(config, 'use_looped_transformer', False)
         self.num_loops = getattr(config, 'num_loops', 1)
-        if self.use_looped_transformer and self.num_loops > 1:
-            self.loop_lora_attn = nn.ModuleDict({
-                str(loop_idx): LoopLoRA(config.hidden_size, config.hidden_size, getattr(config, 'loop_lora_rank', 16))
-                for loop_idx in range(1, self.num_loops)
-            })
-            self.loop_lora_mlp = nn.ModuleDict({
-                str(loop_idx): LoopLoRA(config.hidden_size, config.hidden_size, getattr(config, 'loop_lora_rank', 16))
-                for loop_idx in range(1, self.num_loops)
-            })
+        self.loop_adapter = getattr(config, 'loop_adapter', 'per_index')
+        rank = getattr(config, 'loop_lora_rank', 16)
+        if self.use_looped_transformer and self.num_loops > 1 and self.loop_adapter != 'none':
+            if self.loop_adapter == 'shared':
+                # 單一組適配器供所有 loop >= 1 使用 → 迴圈次數不再寫死在參數結構裡
+                self.loop_lora_attn = LoopLoRA(config.hidden_size, config.hidden_size, rank)
+                self.loop_lora_mlp = LoopLoRA(config.hidden_size, config.hidden_size, rank)
+            else:
+                self.loop_lora_attn = nn.ModuleDict({
+                    str(i): LoopLoRA(config.hidden_size, config.hidden_size, rank)
+                    for i in range(1, self.num_loops)
+                })
+                self.loop_lora_mlp = nn.ModuleDict({
+                    str(i): LoopLoRA(config.hidden_size, config.hidden_size, rank)
+                    for i in range(1, self.num_loops)
+                })
+
+    def _adapter(self, which, loop_idx):
+        """取出這一圈要用的適配器；沒有就回傳 None。"""
+        if not self.use_looped_transformer or loop_idx == 0 or self.loop_adapter == 'none':
+            return None
+        mod = getattr(self, f'loop_lora_{which}', None)
+        if mod is None:
+            return None
+        if self.loop_adapter == 'shared':
+            return mod
+        # per_index：圈數超出訓練時建的範圍就沒有對應適配器
+        # (nn.ModuleDict 沒有 .get()，要用 __contains__)
+        key = str(loop_idx)
+        return mod[key] if key in mod else None
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, loop_idx=0):
         residual = hidden_states
@@ -627,15 +665,17 @@ class MiniMindBlock(nn.Module):
             attn_input, position_embeddings,
             past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems
         )
-        if self.use_looped_transformer and loop_idx > 0:
-            hidden_states_attn = hidden_states_attn + self.loop_lora_attn[str(loop_idx)](attn_input)
+        adapter = self._adapter('attn', loop_idx)
+        if adapter is not None:
+            hidden_states_attn = hidden_states_attn + adapter(attn_input)
         hidden_states = residual + hidden_states_attn
 
         residual = hidden_states
         mlp_input = self.post_attention_layernorm(hidden_states)
         hidden_states_mlp = self.mlp(mlp_input)
-        if self.use_looped_transformer and loop_idx > 0:
-            hidden_states_mlp = hidden_states_mlp + self.loop_lora_mlp[str(loop_idx)](mlp_input)
+        adapter = self._adapter('mlp', loop_idx)
+        if adapter is not None:
+            hidden_states_mlp = hidden_states_mlp + adapter(mlp_input)
         hidden_states = residual + hidden_states_mlp
 
         # 第三個回傳值供 Transformer-XL 的 mems 使用，必須是「attention 的輸入」：
@@ -657,13 +697,32 @@ class MiniMindModel(nn.Module):
         self.register_buffer("freqs_cos", freqs_cos, persistent=False)
         self.register_buffer("freqs_sin", freqs_sin, persistent=False)
 
+        # --- Loop-index 嵌入 ---
+        # 用正弦編碼而非可查表的 Embedding：連續訊號才能外推到訓練時沒見過的圈數，
+        # 這是 test-time compute scaling 的前提。投影層零初始化 → 起始時完全不影響輸出。
+        if getattr(config, 'loop_index_embed', False):
+            self.loop_embed_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            nn.init.zeros_(self.loop_embed_proj.weight)
+
         # --- 初始化 Engram 模組 ---
         self.use_engram = getattr(config, 'use_engram', False)
         if self.use_engram:
             self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
             self.engram_system = EngramManager(config)
 
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, mems=None, **kwargs):
+    def _loop_signal(self, loop_idx, device, dtype):
+        """第 loop_idx 圈的正弦位置編碼，經零初始化的投影層。"""
+        d = self.config.hidden_size
+        half = d // 2
+        freqs = torch.exp(-math.log(10000.0) * torch.arange(half, device=device, dtype=torch.float32) / half)
+        ang = float(loop_idx) * freqs
+        sig = torch.cat([torch.sin(ang), torch.cos(ang)])
+        if sig.shape[0] < d:  # hidden_size 為奇數時補齊
+            sig = torch.cat([sig, sig.new_zeros(d - sig.shape[0])])
+        return self.loop_embed_proj(sig.to(dtype))
+
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False,
+                mems=None, num_loops=None, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
 
@@ -671,7 +730,17 @@ class MiniMindModel(nn.Module):
         # 都做一次 torch.all(...) 而觸發 GPU->CPU 同步。
         if attention_mask is not None and bool(attention_mask.all()):
             attention_mask = None
-        num_loops = self.config.num_loops if getattr(self.config, 'use_looped_transformer', False) else 1
+        looped = getattr(self.config, 'use_looped_transformer', False)
+        if not looped:
+            num_loops = 1
+        elif num_loops is None:                      # 呼叫端可覆寫 (test-time compute scaling)
+            num_loops = self.config.num_loops
+            lo = getattr(self.config, 'loop_random_min', 0)
+            # 訓練時隨機抽圈數，讓模型學會在任意圈數下都輸出合理結果。
+            # 有 KV cache 時不能抽 —— cache 的條目數等於 layers*num_loops，
+            # 圈數一變 layout 就對不上了。
+            if self.training and lo > 0 and not use_cache and num_loops > lo:
+                num_loops = int(torch.randint(lo, num_loops + 1, (1,)).item())
         total_layers = len(self.layers) * num_loops
         past_key_values = past_key_values or [None] * total_layers
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
@@ -720,8 +789,19 @@ class MiniMindModel(nn.Module):
         aux_loss = hidden_states.new_zeros(())
 
         past_kv_idx = 0
+        input_emb = hidden_states          # 供 input injection 使用
+        inject = getattr(self.config, 'loop_input_injection', False)
+        idx_embed = getattr(self.config, 'loop_index_embed', False)
 
         for loop_idx in range(num_loops):
+            if loop_idx > 0 and inject:
+                # 每圈重新注入 token embedding：否則輸入資訊只能靠 hidden state 攜帶，
+                # 圈數一多就會衰減。loop 0 不注入，因為此時 hidden_states 就是 input_emb。
+                hidden_states = hidden_states + input_emb
+            if idx_embed:
+                hidden_states = hidden_states + self._loop_signal(
+                    loop_idx, hidden_states.device, hidden_states.dtype)
+
             # 每個 loop 都重建 pool。dense attention 的不變量是「第 L 層的 Query 看得到第 1..L 層」；
             # 跨 loop 累積會讓深度變成 layers*num_loops，記憶體平方成長且違反該不變量。
             global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
@@ -794,9 +874,9 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         return self.model.engram_system.offloaded_parameters()
 
 
-    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, mems=None, **kwargs):
+    def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, mems=None, num_loops=None, **kwargs):
         if 'full_input_ids' not in kwargs: kwargs['full_input_ids'] = input_ids
-        hidden_states, past_key_values, aux_loss, next_mems = self.model(input_ids, attention_mask, past_key_values, use_cache, mems=mems, **kwargs)
+        hidden_states, past_key_values, aux_loss, next_mems = self.model(input_ids, attention_mask, past_key_values, use_cache, mems=mems, num_loops=num_loops, **kwargs)
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
         loss = None

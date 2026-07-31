@@ -574,6 +574,72 @@ class TestLoopedTransformer(unittest.TestCase):
         self.assertLess((full - inc).abs().max().item(), 1e-4)
 
 
+class TestLoopScaling(unittest.TestCase):
+    """test-time compute scaling 的前提條件。見 experiments/PLAN_looped.md。"""
+
+    KW = dict(use_looped_transformer=True, loop_adapter='shared',
+              loop_index_embed=True, loop_input_injection=True)
+
+    def test_shared_adapter_allows_changing_loop_count(self):
+        """圈數不可以被寫死在參數結構裡，否則推論時無法動態加深。"""
+        m3 = build(num_loops=3, **self.KW)
+        m7 = build(num_loops=7, **self.KW)
+        missing, unexpected = m7.load_state_dict(m3.state_dict(), strict=False)
+        missing = [k for k in missing if 'freqs' not in k]
+        self.assertEqual((missing, unexpected), ([], []))
+
+    def test_per_index_adapter_cannot_change_loop_count(self):
+        """對照：預設的 per_index 模式確實會鎖死圈數（記錄這個限制）。"""
+        m3 = build(num_loops=3, use_looped_transformer=True)
+        m7 = build(num_loops=7, use_looped_transformer=True)
+        missing, _ = m7.load_state_dict(m3.state_dict(), strict=False)
+        self.assertTrue([k for k in missing if 'loop_lora' in k])
+
+    def test_num_loops_override_at_inference(self):
+        """同一組權重要能在不同深度執行，且結果真的不同。"""
+        m = build(num_loops=3, **self.KW)
+        ids = torch.randint(0, 100, (1, 8))
+        with torch.no_grad():
+            base = m(ids, num_loops=3).logits
+            for L in (1, 2, 5, 8):
+                out = m(ids, num_loops=L).logits
+                self.assertEqual(out.shape, base.shape)
+                self.assertGreater((out - base).abs().max().item(), 1e-3,
+                                   f"num_loops={L} 與 3 圈輸出相同，覆寫沒有生效")
+
+    def test_loop_index_embed_is_zero_init(self):
+        """loop-index 嵌入必須零初始化，否則會擾動既有權重的行為。"""
+        plain = build(num_loops=3, use_looped_transformer=True, loop_adapter='shared')
+        embed = build(num_loops=3, use_looped_transformer=True, loop_adapter='shared',
+                      loop_index_embed=True)
+        embed.load_state_dict(plain.state_dict(), strict=False)
+        ids = torch.randint(0, 100, (1, 8))
+        with torch.no_grad():
+            self.assertLess((plain(ids).logits - embed(ids).logits).abs().max().item(), 1e-5)
+
+    def test_random_loop_count_only_during_training(self):
+        """訓練時抽圈數；eval 或有 KV cache 時必須固定（cache layout 依賴圈數）。"""
+        m = build(num_loops=4, use_looped_transformer=True, loop_adapter='shared',
+                  loop_random_min=1)
+        ids = torch.randint(0, 100, (1, 8))
+        m.train()
+        seen = {len(m(ids, labels=ids).past_key_values or []) for _ in range(40)}
+        self.assertGreater(len({s for s in seen if s}), 1, "訓練時圈數沒有變動")
+        m.eval()
+        with torch.no_grad():
+            self.assertEqual(len(m(ids, use_cache=True).past_key_values), 4 * 3)
+
+    def test_input_injection_changes_output(self):
+        """input injection 應該真的改變計算，而非被忽略。"""
+        off = build(num_loops=3, use_looped_transformer=True, loop_adapter='shared')
+        on = build(num_loops=3, use_looped_transformer=True, loop_adapter='shared',
+                   loop_input_injection=True)
+        on.load_state_dict(off.state_dict(), strict=False)
+        ids = torch.randint(0, 100, (1, 8))
+        with torch.no_grad():
+            self.assertGreater((off(ids).logits - on(ids).logits).abs().max().item(), 1e-3)
+
+
 class TestLatentAttention(unittest.TestCase):
     def test_c1_forward_does_not_crash(self):
         """C1: use_latent_attention=1 之前每次 forward 都 RuntimeError。"""
