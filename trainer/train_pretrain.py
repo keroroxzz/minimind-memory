@@ -23,10 +23,15 @@ warnings.filterwarnings('ignore')
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
-    # 初始化遞迴記憶體
-    mems = None
-    
+    # 注意：這裡「不」跨 batch 傳遞 mems。
+    # PretrainDataset 的每一列都是獨立文件 (BOS...EOS + padding)，而且 sampler 是
+    # torch.randperm 打亂的，因此第 N+1 個 batch 並不是第 N 個 batch 的後續 segment。
+    # 沿用上一個 batch 的 mems 等於把不相干文件的記憶餵給模型。
+    # 要讓 use_recurrence 真正發揮作用，需要一個會輸出「連續 segment」的 dataset
+    # (把長文件切成多段、並讓同一個 batch slot 固定對應同一份文件)。詳見 FIX_TODO.md H2。
+
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
+        mems = None
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
         last_step = step
@@ -35,14 +40,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             param_group['lr'] = lr
 
         with autocast_ctx:
-            # 傳遞 mems 到模型
             res = model(input_ids, labels=labels, mems=mems)
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
-            
-            # 更新 mems 並 detach (Segment-Level Recurrence)
-            if lm_config.use_recurrence:
-                mems = res.next_mems # next_mems 已經在模型內部 detach() 過了
 
         scaler.scale(loss).backward()
 

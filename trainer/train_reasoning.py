@@ -23,10 +23,13 @@ warnings.filterwarnings('ignore')
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
-    # 初始化遞迴記憶體
-    mems = None
-    
+    # 注意：這裡「不」跨 batch 傳遞 mems。
+    # ReasoningDataset 的每一列都是獨立樣本，且 sampler 是打亂的，因此第 N+1 個 batch
+    # 並不是第 N 個 batch 的後續 segment；沿用上一個 batch 的 mems 等於餵入不相干的記憶。
+    # 詳見 FIX_TODO.md H2。
+
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
+        mems = None
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
         last_step = step
@@ -37,14 +40,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             param_group['lr'] = lr
 
         with autocast_ctx:
-            # 傳遞 mems 到模型
             res = model(input_ids, labels=labels, mems=mems)
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
-            
-            # 更新 mems 並 detach (Segment-Level Recurrence)
-            if lm_config.use_recurrence:
-                mems = res.next_mems # next_mems 已經在模型內部 detach() 過了
 
         scaler.scale(loss).backward()
 

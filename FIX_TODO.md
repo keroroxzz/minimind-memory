@@ -86,10 +86,18 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   and the block returns `attn_input`. mems are now in the same normalization space as the `x`
   they get concatenated with inside `Attention`.
 
-- [ ] **H2 — `mems` carried across shuffled batches** — `trainer/train_pretrain.py:191-194`,
+- [~] **H2 — `mems` carried across shuffled batches** — `trainer/train_pretrain.py:191-194`,
   `trainer/train_reasoning.py:27-47`
   `indices = torch.randperm(len(train_ds))` feeds `SkipBatchSampler`, then `mems = res.next_mems`
   is threaded batch-to-batch. Consecutive "segments" are unrelated random documents.
+  It is worse than shuffling alone: every `PretrainDataset` row is a standalone `BOS…EOS`
+  document padded to `max_length`, so row N+1 is *never* a continuation of row N — the pipeline
+  has no contiguous segment stream at any ordering.
+  **Partially fixed**: the cross-batch threading is removed from `train_pretrain.py` and
+  `train_reasoning.py`, so the model no longer receives an unrelated document's memory.
+  **Still open** — `use_recurrence` is inert during training until there is a dataset that emits
+  genuinely consecutive segments (chunk long documents into ordered sub-segments and pin each
+  batch slot to one document). That is a feature, not a bug fix, so it is left out of this pass.
 
 - [x] **H3 — `global_kv_pool` never reset per loop** — `:599`, `:606-607`
   With `use_looped_transformer`, key lengths per attention call (3 layers × 3 loops, seq=8) were
