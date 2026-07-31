@@ -21,23 +21,43 @@ def init_model(args):
             use_dense_attention=bool(args.use_dense_attention),
             use_latent_attention=bool(args.use_latent_attention),
             inference_rope_scaling=args.inference_rope_scaling,
-        use_looped_transformer=bool(args.use_looped_transformer) if hasattr(args, 'use_looped_transformer') else False,
-        num_loops=args.num_loops if hasattr(args, 'num_loops') else 1,
-        loop_lora_rank=args.loop_lora_rank if hasattr(args, 'loop_lora_rank') else 16))
-        
+            use_looped_transformer=bool(args.use_looped_transformer),
+            num_loops=args.num_loops,
+            loop_lora_rank=args.loop_lora_rank,
+            use_recurrence=bool(args.use_recurrence),
+            mem_len=args.mem_len,
+            kv_lora_rank=args.kv_lora_rank,
+            qk_rope_dim=args.qk_rope_dim,
+            max_ngram_size=args.max_ngram_size,
+            engram_vocab_size=args.engram_vocab_size,
+            n_embed_per_ngram=args.n_embed_per_ngram,
+            n_head_per_ngram=args.n_head_per_ngram,
+            engram_kernel_size=args.engram_kernel_size,
+            engram_layers=[int(x) for x in args.engram_layers.split(',')] if args.engram_layers else [2, 4, 6],
+        ))
+
         if os.path.exists(args.weight):
             ckp_path = args.weight
         else:
             ckp_path, _ = get_model_paths(args.save_dir, args.weight, model.config)
-            
+
         # 支援 .safetensors 格式
         if ckp_path.endswith('.safetensors'):
             from safetensors.torch import load_file
             state_dict = load_file(ckp_path, device=args.device)
         else:
             state_dict = torch.load(ckp_path, map_location=args.device, weights_only=False)
-            
-        model.load_state_dict(state_dict, strict=False)
+
+        # strict=False 會讓「架構旗標與 checkpoint 不符」變成靜默失敗 (權重被跳過、
+        # 模型保持隨機初始化)。這裡把跳過的項目印出來，讓不匹配至少是看得見的。
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        missing = [k for k in missing if not k.endswith(('freqs_cos', 'freqs_sin', 'multipliers', 'offsets'))]
+        if missing or unexpected:
+            print('⚠️  權重與目前架構旗標不完全相符 —— 請確認 --use_* 參數與訓練時一致：')
+            if missing:
+                print(f'   checkpoint 缺少 {len(missing)} 個參數 (將保持隨機初始化)，例如：{missing[:5]}')
+            if unexpected:
+                print(f'   checkpoint 多出 {len(unexpected)} 個參數 (將被忽略)，例如：{unexpected[:5]}')
         
         if args.lora_weight != 'None':
             apply_lora(model)
@@ -62,6 +82,17 @@ def main():
     parser.add_argument('--use_engram', default=1, type=int, choices=[0, 1], help="是否使用Engram架构（0=否，1=是）")
     parser.add_argument('--use_dense_attention', default=0, type=int, choices=[0, 1], help="是否使用Dense Attention架构（0=否，1=是）")
     parser.add_argument('--use_latent_attention', default=0, type=int, choices=[0, 1], help="是否使用Latent Attention架构（0=否，1=是）")
+    # 以下形狀相關參數必須與訓練時一致，否則 strict=False 會讓權重被靜默跳過
+    parser.add_argument('--kv_lora_rank', default=128, type=int, help="Latent Attention 壓縮後的總維度")
+    parser.add_argument('--qk_rope_dim', default=64, type=int, help="獨立用於 RoPE 的特徵維度")
+    parser.add_argument('--use_recurrence', default=0, type=int, choices=[0, 1], help="是否使用遞迴機制（Transformer-XL）")
+    parser.add_argument('--mem_len', default=512, type=int, help="遞迴記憶長度")
+    parser.add_argument('--max_ngram_size', default=3, type=int, help="Engram n-gram 最大階數")
+    parser.add_argument('--engram_vocab_size', default=1024 * 1024, type=int, help="Engram 表大小")
+    parser.add_argument('--n_embed_per_ngram', default=768, type=int, help="每個 n-gram 的嵌入維度")
+    parser.add_argument('--n_head_per_ngram', default=8, type=int, help="每個 n-gram 的雜湊頭數")
+    parser.add_argument('--engram_kernel_size', default=4, type=int, help="Engram ShortConv kernel size")
+    parser.add_argument('--engram_layers', default='2,4,6', type=str, help="Engram 注入的層，逗號分隔")
     parser.add_argument('--inference_rope_scaling', default=False, action='store_true', help="启用RoPE位置编码外推（4倍，仅解决位置编码问题）")
     parser.add_argument('--max_new_tokens', default=8192, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
     parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")

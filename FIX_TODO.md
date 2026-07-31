@@ -238,7 +238,14 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ## Operational hazard
 
-- [ ] **O1 — `eval_llm.py` exposes no `--use_recurrence`, `--mem_len`, `--kv_lora_rank`,
+- [x] **O1 — `eval_llm.py` exposes no `--use_recurrence`, `--mem_len`, `--kv_lora_rank`,
   `--qk_rope_dim`, or engram-shape flags.**
   Because loading is `strict=False` (see `CLAUDE.md`), checkpoints trained with non-default
   values for those load silently wrong rather than erroring.
+  **Fixed**: all the shape-bearing flags are now exposed (`--kv_lora_rank`, `--qk_rope_dim`,
+  `--use_recurrence`, `--mem_len`, `--max_ngram_size`, `--engram_vocab_size`,
+  `--n_embed_per_ngram`, `--n_head_per_ngram`, `--engram_kernel_size`, `--engram_layers`), and
+  `load_state_dict`'s missing/unexpected lists are reported instead of discarded — a mismatch
+  now prints a warning naming the skipped parameters rather than silently yielding a partly
+  random model. Verified: loading looped weights without `--use_looped_transformer` reports 16
+  unexpected parameters.
