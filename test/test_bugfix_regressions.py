@@ -187,6 +187,33 @@ class TestEngram(unittest.TestCase):
                     use_cache=True, full_input_ids=ids).logits[:, -1]
         self.assertLess((full - inc).abs().max().item(), 1e-4)
 
+    def test_m4_windowed_hash_matches_full_prefix_hash(self):
+        """M4: 只 hash 窗口內的 token，結果必須與 hash 整個 prefix 完全相同。"""
+        eng = self._engram_model().model.engram_system
+        ids = torch.randint(1, 100, (2, 64))
+        for L_curr in (1, 3, 16):
+            with self.subTest(L_curr=L_curr):
+                windowed = eng.get_hashes(ids, L_curr)
+                reference = eng.get_hashes(ids, ids.shape[1])[:, -L_curr:, :]
+                self.assertTrue(torch.equal(windowed, reference))
+
+    def test_m4_decode_step_is_constant_work(self):
+        """M4: 解碼時每步搬運的列數應該是常數，而非隨 prefix 線性成長。"""
+        m = self._engram_model()
+        eng = m.model.engram_system
+        widths = []
+        real = eng.embedding_table.forward
+        eng.embedding_table.forward = lambda ids: widths.append(ids.shape[1]) or real(ids)
+        try:
+            with torch.no_grad():
+                m.generate(torch.randint(0, 100, (1, 16)), max_new_tokens=6,
+                           do_sample=False, eos_token_id=None)
+        finally:
+            eng.embedding_table.forward = real
+        decode_widths = widths[1:]  # 第一次是 prefill
+        self.assertTrue(all(w == decode_widths[0] for w in decode_widths),
+                        f"每步搬運列數隨 prefix 成長: {decode_widths}")
+
     def test_h4_max_ngram_size_above_three(self):
         """H4: max_ngram_size 是可調參數，>3 不該 IndexError。"""
         for n in (2, 4, 5, 8):

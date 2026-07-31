@@ -181,9 +181,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   **Fixed**: `dropout_p=self.dropout if self.training else 0.0` is now passed. Verified it
   reaches SDPA on every layer.
 
-- [ ] **M4 — Engram re-hashes the entire prefix every decode step** — `:182-226`
+- [x] **M4 — Engram re-hashes the entire prefix every decode step** — `:182-226`
   `(hashed_len, needed_len)` = `(16,16), (17,1), (18,1), (19,1), (20,1), (21,1)`.
   Quadratic; with `offload_cpu` it round-trips the full prefix over PCIe per step for one row.
+  **Fixed**: `get_hashes` first trims the input to `L_curr + max_ngram_size - 1` tokens — exactly
+  the window needed for every returned position to still see its full n-gram context, so results
+  are bit-identical (pinned by a test against the untrimmed reference). Decode-step work is now
+  constant instead of linear in the prefix.
 
 - [~] **M5 — `aux_loss` loses all but the last loop; `load` has the wrong shape** — `:641`, `:481`
   `aux_loss` is read off `l.mlp.aux_loss` after the fact, so with `num_loops>1` only the last

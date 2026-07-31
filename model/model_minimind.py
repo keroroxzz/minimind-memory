@@ -218,6 +218,14 @@ class EngramManager(nn.Module):
         return [self.embedding_table.embedding.weight]
 
     def get_hashes(self, full_input_ids: torch.Tensor, L_curr: int):
+        # 只有最後 L_curr 個位置的 hash 會被用到，而每個位置最多回看 max_ngram_size-1 個
+        # token，所以先把輸入裁成剛好足夠的窗口。否則每個解碼步驟都會對整個 prefix 重算
+        # 一次 hash 並搬運整份 embedding (O(L^2)，offload 時還要走 PCIe)。
+        # 窗口長度剛好讓第一個被回傳的位置也有完整的 n-gram context，結果與全序列一致。
+        need = L_curr + self.max_ngram_size - 1
+        if full_input_ids.shape[1] > need:
+            full_input_ids = full_input_ids[:, -need:]
+
         B, L_full = full_input_ids.shape
         device = full_input_ids.device
         
