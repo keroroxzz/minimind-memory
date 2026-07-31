@@ -10,3 +10,6 @@ trainer/wandb/
 checkpoints/
 dataset/*.json*
 wandb/*
+# 實驗產物
+experiments/data_tokens.pt
+experiments/*.log
