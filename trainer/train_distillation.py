@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, set_ddp_ignore, sync_offloaded_grads
 
 warnings.filterwarnings('ignore')
 
@@ -94,6 +94,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         scaler.scale(loss).backward()
 
         if step % args.accumulation_steps == 0:
+            sync_offloaded_grads(model)  # CPU offload 的 engram 表不受 DDP 管理
             scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             scaler.step(optimizer)
@@ -135,6 +136,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         del input_ids, labels, loss_mask, res, student_logits, ce_loss, distill_loss, loss
 
     if last_step > start_step and last_step % args.accumulation_steps != 0:
+        sync_offloaded_grads(model)  # CPU offload 的 engram 表不受 DDP 管理
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         scaler.step(optimizer)
@@ -235,7 +237,7 @@ if __name__ == "__main__":
         model = torch.compile(model)
         Logger('torch.compile enabled')
     if dist.is_initialized():
-        model._ddp_params_and_buffers_to_ignore = {"freqs_cos", "freqs_sin"}
+        set_ddp_ignore(model)
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
     # ========== 8. 开始训练 ==========

@@ -12,7 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import torch
 
-from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
+from model.model_minimind import MiniMindConfig, MiniMindForCausalLM  # noqa: E402
 
 
 def build(**kw):
@@ -163,6 +163,55 @@ class TestEngram(unittest.TestCase):
         """H4: max_ngram_size<2 會讓 total_heads=0，應該直接報錯而非除以零。"""
         with self.assertRaises(ValueError):
             self._engram_model(max_ngram_size=1)
+
+
+class TestEngramOffload(unittest.TestCase):
+    CFG = dict(hidden_size=64, num_hidden_layers=2, engram_layers=[0],
+               engram_vocab_size=200000, n_head_per_ngram=8, n_embed_per_ngram=64,
+               engram_offload_cpu=True, vocab_size=100)
+
+    def test_h5_ddp_ignore_list_includes_offloaded_table(self):
+        """H5: DDP 不接受混合裝置的 module，offload 的表必須在忽略名單裡。"""
+        m = MiniMindForCausalLM(MiniMindConfig(**self.CFG))
+        self.assertIn("model.engram_system.embedding_table.embedding.weight",
+                      m._ddp_params_and_buffers_to_ignore)
+
+    def test_h5_offloaded_parameters_exposed(self):
+        """H5: 被 DDP 忽略的參數要能被列出，梯度才有辦法手動同步。"""
+        m = MiniMindForCausalLM(MiniMindConfig(**self.CFG))
+        params = m.offloaded_parameters()
+        self.assertEqual(len(params), 1)
+        self.assertIs(params[0], m.model.engram_system.embedding_table.embedding.weight)
+
+        off = MiniMindForCausalLM(MiniMindConfig(**{**self.CFG, 'engram_offload_cpu': False}))
+        self.assertEqual(off.offloaded_parameters(), [])
+
+    @unittest.skipUnless(torch.cuda.is_available(), "需要 CUDA")
+    def test_h5_table_never_touches_gpu(self):
+        """H5: super()._apply 會先把整張表搬上 GPU 再搬回來，造成暫態 VRAM 尖峰。"""
+        m = MiniMindForCausalLM(MiniMindConfig(**self.CFG))
+        table_bytes = m.model.engram_system.embedding_table.embedding.weight.numel() * 4
+
+        # reset_peak_memory_stats 是把 peak 拉回「目前已配置量」而非 0，所以要量差值
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        before = torch.cuda.memory_allocated()
+        m = m.cuda()
+        spike = torch.cuda.max_memory_allocated() - before
+
+        self.assertEqual(m.model.engram_system.embedding_table.embedding.weight.device.type, 'cpu')
+        self.assertLess(spike, table_bytes,
+                        f"搬移過程的暫態 VRAM 尖峰 {spike} 已達整張 engram 表 {table_bytes} 的規模")
+
+    @unittest.skipUnless(torch.cuda.is_available(), "需要 CUDA")
+    def test_h5_half_keeps_table_on_cpu_with_matching_dtype(self):
+        """H5: .half() 之後表要留在 CPU，但 dtype 必須跟其他元件一致。"""
+        m = MiniMindForCausalLM(MiniMindConfig(**self.CFG)).cuda().half()
+        w = m.model.engram_system.embedding_table.embedding.weight
+        self.assertEqual(w.device.type, 'cpu')
+        self.assertEqual(w.dtype, m.model.engram_system.fusions['0']['value_proj'].weight.dtype)
+        with torch.no_grad():
+            m(torch.randint(0, 100, (1, 8), device='cuda'))
 
 
 class TestRecurrence(unittest.TestCase):

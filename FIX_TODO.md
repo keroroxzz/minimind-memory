@@ -116,11 +116,24 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   since it is a deterministic constant; `max_ngram_size < 2` now raises instead of dividing by
   zero via `total_heads == 0`. Overflow headroom verified up to `max_ngram_size=8`.
 
-- [ ] **H5 — Engram offload puts parameters on mixed devices** — `:176-180`
+- [x] **H5 — Engram offload puts parameters on mixed devices** — `:176-180`
   After `.cuda()`, `{p.device for p in model.parameters()} == {'cpu', 'cuda:0'}`.
   `DistributedDataParallel(model, device_ids=[local_rank])` (`train_pretrain.py:186`) rejects that.
   Also `super()._apply(fn)` moves the full table *to* GPU before `.cpu()` pulls it back — a
   transient VRAM spike that defeats the point of offloading.
+  **Fixed**, three parts:
+  1. `_apply` pops the table out of the module tree before delegating, so it never touches the
+     GPU; it then follows only the *dtype* of the other components and stays on CPU. Measured
+     spike on `.cuda()` dropped from >table-size to ~1 MB for a 6.4 MB table.
+  2. `MiniMindForCausalLM.__init__` declares `_ddp_params_and_buffers_to_ignore`, and the new
+     `trainer_utils.set_ddp_ignore` *merges* rather than overwrites it — all 9 trainers were
+     clobbering it with `{"freqs_cos","freqs_sin"}` (which were also the wrong qualified names;
+     the buffers live at `model.freqs_cos`). DDP now accepts the model.
+  3. Because DDP no longer owns that parameter it would not sync its gradient either — each rank
+     would drift and only rank 0's updates would be saved. `trainer_utils.sync_offloaded_grads`
+     all-reduces it over a gloo sub-group (the grad is on CPU, nccl cannot), wired into every
+     trainer ahead of `scaler.unscale_`.
+  Covered by `test/test_bugfix_regressions.py::TestEngramOffload`.
 
 - [ ] **H6 — MoE router gets no gradient under current defaults** — `:469-470`
   Defaults are `num_experts_per_tok=1, norm_topk_prob=True`, so `topk_weight/topk_weight.sum()`

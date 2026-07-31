@@ -190,11 +190,32 @@ class EngramManager(nn.Module):
             }) for layer_id in self.layer_ids
         })
 
+    # 供 DDP 使用：CPU offload 的表不能交給 DDP 管理 (DDP 不接受混合裝置的 module)
+    OFFLOADED_PARAM_SUFFIX = "engram_system.embedding_table.embedding.weight"
+
     def _apply(self, fn):
-        super()._apply(fn)
-        if self.offload_cpu:
-            self.embedding_table.cpu()
+        if not self.offload_cpu:
+            return super()._apply(fn)
+
+        # 先把表移出 module tree，否則 super()._apply 會先把上百萬列搬到 GPU 再搬回 CPU，
+        # 造成一次巨大的暫態 VRAM 尖峰 —— 正好抵銷 offload 的目的。
+        table = self._modules.pop("embedding_table")
+        try:
+            super()._apply(fn)
+        finally:
+            self._modules["embedding_table"] = table
+
+        # 只跟隨其他元件做 dtype 轉換，永遠留在 CPU
+        ref = self.fusions[str(self.layer_ids[0])]["value_proj"].weight
+        if ref.is_floating_point() and table.embedding.weight.dtype != ref.dtype:
+            table.to(dtype=ref.dtype)
         return self
+
+    def offloaded_parameters(self):
+        """回傳被 offload 到 CPU、因此不受 DDP 管理的參數。"""
+        if not self.offload_cpu:
+            return []
+        return [self.embedding_table.embedding.weight]
 
     def get_hashes(self, full_input_ids: torch.Tensor, L_curr: int):
         B, L_full = full_input_ids.shape
@@ -707,7 +728,23 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         self.model = MiniMindModel(self.config)
         self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
         self.model.embed_tokens.weight = self.lm_head.weight
-    
+
+        # DDP 只接受單一裝置的 module，而 engram 表刻意留在 CPU；先在這裡宣告要忽略的名稱，
+        # DDP 會在做裝置檢查前先剔除它們。其梯度改由 trainer_utils.sync_offloaded_grads 同步。
+        ignored = ["model.freqs_cos", "model.freqs_sin"]
+        if getattr(self.model, "use_engram", False):
+            ignored += [f"model.{n}" for n in
+                        (self.model.engram_system.OFFLOADED_PARAM_SUFFIX,)
+                        if self.model.engram_system.offload_cpu]
+        self._ddp_params_and_buffers_to_ignore = ignored
+
+    def offloaded_parameters(self):
+        """CPU offload、未被 DDP 管理的參數 (梯度需要手動 all-reduce)。"""
+        if not getattr(self.model, "use_engram", False):
+            return []
+        return self.model.engram_system.offloaded_parameters()
+
+
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, logits_to_keep=0, labels=None, mems=None, **kwargs):
         if 'full_input_ids' not in kwargs: kwargs['full_input_ids'] = input_ids
         hidden_states, past_key_values, aux_loss, next_mems = self.model(input_ids, attention_mask, past_key_values, use_cache, mems=mems, **kwargs)

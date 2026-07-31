@@ -51,6 +51,58 @@ def init_distributed_mode():
     return local_rank
 
 
+def set_ddp_ignore(model):
+    """設定 DDP 要忽略的參數/buffer 名稱。
+
+    直接指派 {"freqs_cos", "freqs_sin"} 會蓋掉 MiniMindForCausalLM.__init__ 宣告的名單，
+    其中包含 CPU offload 的 engram 表 —— 少了它，DDP 會因為 module 橫跨 cpu/cuda 而報
+    "input module must be on the same type of devices"。這裡改成合併而非覆寫。
+    另外，正確的限定名稱是 model.freqs_cos (buffer 掛在 MiniMindModel 上)，不是 freqs_cos。
+    """
+    ignore = list(getattr(model, '_ddp_params_and_buffers_to_ignore', []))
+    for name in ("model.freqs_cos", "model.freqs_sin"):
+        if name not in ignore:
+            ignore.append(name)
+    model._ddp_params_and_buffers_to_ignore = ignore
+    return model
+
+
+_OFFLOAD_GLOO_GROUP = None
+
+def sync_offloaded_grads(model):
+    """手動 all-reduce 被 CPU offload、因此不受 DDP 管理的參數梯度。
+
+    engram 的 embedding 表刻意留在 CPU (見 readme_engram.md 的 RAM offloading)，
+    而 DDP 不接受混合裝置的 module，所以該參數被列入 _ddp_params_and_buffers_to_ignore。
+    少了 DDP 的自動同步，各 rank 的表會各自漂移、存檔時只保留 rank 0 的更新，
+    等於丟掉 (world_size-1)/world_size 的梯度訊號。這裡補上這一步。
+
+    必須在 scaler.unscale_() / optimizer.step() 之前呼叫。
+    單卡或未初始化 process group 時為 no-op。
+    """
+    if not (dist.is_available() and dist.is_initialized()):
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+
+    raw = model.module if isinstance(model, DistributedDataParallel) else model
+    raw = getattr(raw, '_orig_mod', raw)
+    if not hasattr(raw, 'offloaded_parameters'):
+        return
+    params = [p for p in raw.offloaded_parameters() if p.grad is not None]
+    if not params:
+        return
+
+    # 這些梯度在 CPU 上，nccl 不支援，另開一個 gloo group
+    global _OFFLOAD_GLOO_GROUP
+    if _OFFLOAD_GLOO_GROUP is None:
+        _OFFLOAD_GLOO_GROUP = dist.new_group(backend='gloo')
+    for p in params:
+        dist.all_reduce(p.grad, op=dist.ReduceOp.SUM, group=_OFFLOAD_GLOO_GROUP)
+        p.grad /= world_size
+
+
 def setup_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
