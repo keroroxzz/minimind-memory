@@ -612,6 +612,57 @@ class TestLatentAttention(unittest.TestCase):
             out = m(torch.randint(0, 100, (1, 8)))
         self.assertEqual(out.logits.shape, (1, 8, 100))
 
+    def test_m8_cache_stores_compressed_latent_only(self):
+        """M8: cache 只能存壓縮後的 latent，不能存展開後的 K/V。
+
+        展開後存會把 rope 段複製 n_heads 份、且 V 與 K 的 content 重複存一次，
+        實測膨脹成 GQA baseline 的 3 倍 —— 與 latent attention 存在的目的相反。
+        """
+        kv_lora_rank, qk_rope_dim, heads = 128, 64, 8
+        m = build(use_latent_attention=True, kv_lora_rank=kv_lora_rank,
+                  qk_rope_dim=qk_rope_dim, num_attention_heads=heads)
+        with torch.no_grad():
+            out = m(torch.randint(0, 100, (1, 64)), use_cache=True)
+        k, v = out.past_key_values[0]
+        per_token = k.numel() // k.shape[1] + v.numel() // v.shape[1]
+        self.assertEqual(per_token, kv_lora_rank + qk_rope_dim,
+                         f"每 token 每層應只存 {kv_lora_rank + qk_rope_dim} 個值，實際 {per_token}")
+
+    def test_m8_latent_cache_smaller_than_gqa(self):
+        """M8: 在實驗用的實際設定下，latent 必須真的比 GQA baseline 省 cache。
+
+        注意這是 config 相依的性質，不是無條件成立：只有當
+            kv_lora_rank + qk_rope_dim  <  2 * n_kv_heads * head_dim
+        才會省。用 experiments/run_ablation.py 的骨幹 (512d/8 heads/2 kv heads,
+        head_dim=64) 驗證，此時 GQA=256、latent=192。
+        """
+        def per_token(**kw):
+            m = build(hidden_size=512, num_attention_heads=8, num_key_value_heads=2, **kw)
+            with torch.no_grad():
+                out = m(torch.randint(0, 100, (1, 32)), use_cache=True)
+            k, v = out.past_key_values[0]
+            return k.numel() // k.shape[1] + v.numel() // v.shape[1]
+
+        gqa = per_token()
+        latent = per_token(use_latent_attention=True, kv_lora_rank=128, qk_rope_dim=64)
+        self.assertEqual(gqa, 256)
+        self.assertEqual(latent, 192)
+        self.assertLess(latent, gqa, f"latent({latent}) 沒有比 GQA({gqa}) 小")
+
+    def test_m8_cache_shape_still_indexable_by_seq_len(self):
+        """M8: 換了 cache 格式後，past_key_values[0][0].shape[1] 仍須是序列長度。
+
+        MiniMindModel.forward 的 start_pos 與 generate 的 past_len 都靠這個。
+        """
+        m = build(use_latent_attention=True, kv_lora_rank=128, qk_rope_dim=64)
+        with torch.no_grad():
+            out = m(torch.randint(0, 100, (1, 17)), use_cache=True)
+        self.assertEqual(out.past_key_values[0][0].shape[1], 17)
+        self.assertEqual(out.past_key_values[0][1].shape[1], 17)
+        gen = m.generate(torch.randint(0, 100, (1, 6)), max_new_tokens=4,
+                         do_sample=False, eos_token_id=None)
+        self.assertEqual(gen.shape, (1, 10))
+
     def test_c1_rejects_indivisible_rank(self):
         """C1: kv_lora_rank 不能整除 head 數時應該直接報錯，而非默默截斷。"""
         with self.assertRaises(ValueError):

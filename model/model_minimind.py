@@ -410,33 +410,34 @@ class Attention(nn.Module):
             q_rope = q_rope.view(bsz, seq_len, self.n_local_heads, self.qk_rope_dim)
 
             kv_out = self.kv_a_proj(c)
-            k_content, k_rope = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_dim], dim=-1)
+            c_content, c_rope = torch.split(kv_out, [self.kv_lora_rank, self.qk_rope_dim], dim=-1)
             # content 沿 head 維度切分 (與 Q 的切法一致)，K 與 V 共享同一份 latent
-            k_content = k_content.view(bsz, c.shape[1], self.n_local_heads, self.latent_head_dim)
-            v_content = k_content  # V 用未經 k_norm 的原始 latent
-            # rope 維度所有 head 共享 (MLA 設計：只有一小部分維度做旋轉位置編碼)
-            k_rope = k_rope.view(bsz, c.shape[1], 1, self.qk_rope_dim).expand(-1, -1, self.n_local_heads, -1)
+            c_content = c_content.view(bsz, c.shape[1], self.n_local_heads, self.latent_head_dim)
+            # rope 段所有 head 共享，先「不要」展開 (MLA 設計：只有一小部分維度做 RoPE)
+            c_rope = c_rope.view(bsz, c.shape[1], 1, self.qk_rope_dim)
 
-            q_content, k_content = self.q_norm(q_content), self.k_norm(k_content)
-            q_rope, k_rope = apply_rotary_pos_emb(q_rope, k_rope, q_cos, q_sin, k_cos, k_sin)
+            q_content = self.q_norm(q_content)
+            q_rope, c_rope = apply_rotary_pos_emb(q_rope, c_rope, q_cos, q_sin, k_cos, k_sin)
 
-
-            # Temporal KV拼接 (B, S, H, D)
-            xk_cur = torch.cat([k_content, k_rope], dim=-1)
-            xv_cur = v_content
-            
+            # === Cache 只存壓縮後的 latent ===
+            # 每個 token 每層只有 kv_lora_rank + qk_rope_dim 個值。
+            # 若像以往那樣存展開後的 K/V，rope 段會被複製 n_heads 份、且 V 與 K 的 content
+            # 完全相同卻各存一份，實測會膨脹成 GQA baseline 的 3 倍 —— 與「壓縮 KV」的目的相反。
             if past_key_value is not None:
-                xk = torch.cat([past_key_value[0], xk_cur], dim=1)
-                xv = torch.cat([past_key_value[1], xv_cur], dim=1)
-            else:
-                xk, xv = xk_cur, xv_cur
-            
-            past_kv = (xk, xv) if use_cache else None
-            
+                c_content = torch.cat([past_key_value[0], c_content], dim=1)
+                c_rope = torch.cat([past_key_value[1], c_rope], dim=1)
+            past_kv = (c_content, c_rope) if use_cache else None
+
+            # === 用的時候才展開，這些是暫時張量，不會隨著解碼步驟累積 ===
+            k_content = self.k_norm(c_content)
+            v_content = c_content  # V 用未經 k_norm 的原始 latent，與 K 共享同一份儲存
+            k_rope = c_rope.expand(-1, -1, self.n_local_heads, -1)
+
             # 準備用於 Attention 的 xq, xk, xv (B, H, S, D)
             xq = torch.cat([q_content, q_rope], dim=-1).transpose(1, 2)
+            xk = torch.cat([k_content, k_rope], dim=-1)
             # latent 模式下每個 head 都有自己的 K/V，沒有 GQA 展開可省
-            xk_pool, xv_pool, pool_n_rep = xk.transpose(1, 2), xv.transpose(1, 2), 1
+            xk_pool, xv_pool, pool_n_rep = xk.transpose(1, 2), v_content.transpose(1, 2), 1
         else:
             # === 標準 MHA/GQA 邏輯 ===
             # mems 與 KV cache 描述的是同一段歷史。若兩者並存，mem 位置的 K/V 會被重新

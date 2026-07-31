@@ -211,6 +211,29 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   **Fixed**: `labels` is trimmed to the kept window before the shift. Full-length behaviour is
   byte-for-byte unchanged, and the windowed loss is pinned against a manual computation.
 
+- [x] **M8 — Latent attention cached the *expanded* K/V, tripling the cache it exists to shrink**
+  — `model/model_minimind.py` latent branch
+  `k_rope` was `.expand(-1,-1,n_heads,-1)` and then materialised by `torch.cat` into the cached
+  tensor, so the shared RoPE segment was stored `n_heads` times; `v_content` was bit-identical to
+  `k_content` yet stored separately. Measured at the ablation backbone (512d, 8 heads, 2 KV
+  heads): **768 values/token/layer vs the GQA baseline's 256 — 3× larger**, the opposite of
+  `readme_dense_attention.md` §1.2's stated purpose.
+  **Fixed**: the cache now holds only the compressed latent
+  (`kv_lora_rank + qk_rope_dim = 192`), with `k_norm` and the head expansion applied on read as
+  transient tensors that do not accumulate across decode steps. 768 → 192 (**4× reduction**),
+  and now 25% *below* the GQA baseline.
+  **Caveat, worth knowing:** this saving is config-dependent, not unconditional — it holds only
+  when `kv_lora_rank + qk_rope_dim < 2 * n_kv_heads * head_dim`. At small `hidden_size` the
+  default `kv_lora_rank=128` can exceed the entire KV width and *cost* memory.
+  Covered by `TestLatentAttention::test_m8_*`.
+
+- **Related finding (not a bug, but the premise is wrong):** §1.2 justifies latent attention as
+  offsetting "the KV cache blow-up that dense attention causes", but dense attention's cache is
+  *identical* to vanilla's (256 both) — `global_kv_pool` is rebuilt each forward from the
+  per-layer caches and stores nothing extra. Dense inflates attention **compute and activation
+  memory** (layer L attends over L·S keys), not the cache. Measured peak VRAM 3.97 G vs vanilla
+  3.25 G, and 1.65× step cost.
+
 ---
 
 ## Test-coverage gaps that let these through
