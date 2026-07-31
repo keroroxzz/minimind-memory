@@ -2,115 +2,138 @@
   "vanilla": {
     "per_k": {
       "1": {
-        "correct": 69,
-        "total": 300,
-        "acc": 0.23,
-        "tens_acc": 0.23,
-        "ones_acc": 0.9933333333333333,
+        "correct": 23,
+        "total": 200,
+        "acc": 0.115,
+        "tens_acc": 0.115,
+        "ones_acc": 0.995,
         "wellformed": 1.0
       },
       "2": {
-        "correct": 50,
-        "total": 300,
-        "acc": 0.16666666666666666,
-        "tens_acc": 0.16666666666666666,
-        "ones_acc": 0.9933333333333333,
+        "correct": 24,
+        "total": 200,
+        "acc": 0.12,
+        "tens_acc": 0.12,
+        "ones_acc": 0.975,
         "wellformed": 1.0
       },
       "3": {
-        "correct": 68,
-        "total": 300,
-        "acc": 0.22666666666666666,
-        "tens_acc": 0.22666666666666666,
-        "ones_acc": 0.9933333333333333,
+        "correct": 29,
+        "total": 200,
+        "acc": 0.145,
+        "tens_acc": 0.145,
+        "ones_acc": 0.925,
         "wellformed": 1.0
       },
       "4": {
-        "correct": 60,
-        "total": 300,
-        "acc": 0.2,
-        "tens_acc": 0.20333333333333334,
-        "ones_acc": 0.99,
+        "correct": 33,
+        "total": 200,
+        "acc": 0.165,
+        "tens_acc": 0.17,
+        "ones_acc": 0.91,
         "wellformed": 1.0
       },
       "5": {
-        "correct": 56,
-        "total": 300,
-        "acc": 0.18666666666666668,
-        "tens_acc": 0.18666666666666668,
-        "ones_acc": 0.9766666666666667,
+        "correct": 29,
+        "total": 200,
+        "acc": 0.145,
+        "tens_acc": 0.17,
+        "ones_acc": 0.805,
         "wellformed": 1.0
       },
       "6": {
-        "correct": 68,
-        "total": 300,
-        "acc": 0.22666666666666666,
-        "tens_acc": 0.23,
-        "ones_acc": 0.9333333333333333,
-        "wellformed": 1.0
-      }
-    },
-    "overall": 0.2061111111111111,
-    "params_M": 28.97664,
-    "wall_clock_s": 746.8162579536438,
-    "steps": 12000,
-    "peak_vram_GiB": 2.559659957885742
-  },
-  "dense": {
-    "per_k": {
-      "1": {
-        "correct": 27,
-        "total": 300,
-        "acc": 0.09,
+        "correct": 13,
+        "total": 200,
+        "acc": 0.065,
         "tens_acc": 0.09,
-        "ones_acc": 0.9766666666666667,
+        "ones_acc": 0.725,
         "wellformed": 1.0
       },
-      "2": {
+      "7": {
+        "correct": 27,
+        "total": 200,
+        "acc": 0.135,
+        "tens_acc": 0.18,
+        "ones_acc": 0.595,
+        "wellformed": 1.0
+      },
+      "8": {
         "correct": 28,
-        "total": 300,
-        "acc": 0.09333333333333334,
-        "tens_acc": 0.09333333333333334,
-        "ones_acc": 0.95,
+        "total": 200,
+        "acc": 0.14,
+        "tens_acc": 0.18,
+        "ones_acc": 0.565,
         "wellformed": 1.0
       },
-      "3": {
-        "correct": 36,
-        "total": 300,
-        "acc": 0.12,
-        "tens_acc": 0.12333333333333334,
-        "ones_acc": 0.89,
+      "9": {
+        "correct": 14,
+        "total": 200,
+        "acc": 0.07,
+        "tens_acc": 0.105,
+        "ones_acc": 0.5,
         "wellformed": 1.0
       },
-      "4": {
-        "correct": 36,
-        "total": 300,
-        "acc": 0.12,
-        "tens_acc": 0.13666666666666666,
-        "ones_acc": 0.76,
+      "10": {
+        "correct": 16,
+        "total": 200,
+        "acc": 0.08,
+        "tens_acc": 0.115,
+        "ones_acc": 0.455,
         "wellformed": 1.0
       },
-      "5": {
-        "correct": 30,
-        "total": 300,
-        "acc": 0.1,
-        "tens_acc": 0.13333333333333333,
-        "ones_acc": 0.62,
+      "11": {
+        "correct": 19,
+        "total": 200,
+        "acc": 0.095,
+        "tens_acc": 0.185,
+        "ones_acc": 0.375,
         "wellformed": 1.0
       },
-      "6": {
-        "correct": 32,
-        "total": 300,
-        "acc": 0.10666666666666667,
-        "tens_acc": 0.13666666666666666,
-        "ones_acc": 0.54,
+      "12": {
+        "correct": 13,
+        "total": 200,
+        "acc": 0.065,
+        "tens_acc": 0.125,
+        "ones_acc": 0.445,
+        "wellformed": 1.0
+      },
+      "13": {
+        "correct": 10,
+        "total": 200,
+        "acc": 0.05,
+        "tens_acc": 0.12,
+        "ones_acc": 0.46,
+        "wellformed": 1.0
+      },
+      "14": {
+        "correct": 21,
+        "total": 200,
+        "acc": 0.105,
+        "tens_acc": 0.15,
+        "ones_acc": 0.435,
+        "wellformed": 1.0
+      },
+      "15": {
+        "correct": 16,
+        "total": 200,
+        "acc": 0.08,
+        "tens_acc": 0.125,
+        "ones_acc": 0.42,
+        "wellformed": 1.0
+      },
+      "16": {
+        "correct": 21,
+        "total": 200,
+        "acc": 0.105,
+        "tens_acc": 0.18,
+        "ones_acc": 0.42,
         "wellformed": 1.0
       }
     },
     "overall": 0.105,
     "params_M": 28.97664,
-    "wall_clock_s": 886.4034411907196,
+    "wall_clock_s": 3785.181873559952,
     "steps": 12000,
-    "peak_vram_GiB": 2.925809860229492
+    "peak_vram_GiB": 4.354471206665039
   }
 }

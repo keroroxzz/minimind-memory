@@ -34,11 +34,23 @@ Most CLI scripts print help text and comments in Chinese; code identifiers are E
 
 All from `experiments/`, single seed, 29M backbone (512d / 8 layers / 8 heads / 2 KV heads).
 
-**Reasoning depth — the positive result.** On a depth-controlled synthetic task (k-step
-dependency chains, answer-only target so autoregression cannot supply depth), a **vanilla 29M
-model does 6-step composition in Z₁₀ inside one forward pass at 93% accuracy** and had not yet
-saturated. Small backbones have real single-pass composition depth. This is the foundation the
-whole thesis rests on, and it is stronger than expected.
+**Reasoning depth — the positive result, and its ceiling.** On a depth-controlled synthetic task
+(k-step dependency chains, answer-only target so autoregression cannot supply depth), a vanilla
+29M model composes in Z₁₀ inside a single forward pass out to real depth. Measured ones-digit
+accuracy, trained on k=1..16:
+
+| k | 1 | 2 | 3 | 4 | 5 | 6 | 8 | 10 | 12 | 16 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| acc | 99.5% | 97.5% | 92.5% | 91.0% | 80.5% | 72.5% | 56.5% | 45.5% | 44.5% | 42.0% |
+
+Monotone decay to k≈11, then a plateau at ~42% — well above the 10% chance level, which suggests
+the tail is being solved by distributional shortcuts (multiplications collapse the ones-digit
+range) rather than by actually running the chain. **The sensitive window is k=6..10** — that is
+where any depth-adding mechanism should be measured.
+
+**Caveat:** an earlier run trained only on k=1..6 reached 93.3% at k=6 versus 72.5% here. The
+number depends on the training difficulty distribution, not on the architecture alone — do not
+quote a single-depth accuracy without stating the training range.
 
 **The real bottleneck is state, not depth.** On the same task the *tens* digit — which requires
 carry propagation, i.e. a small piece of state accumulated across steps — sits near the 10%
