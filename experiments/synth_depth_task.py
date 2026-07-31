@@ -45,17 +45,26 @@ BASE_CKPT = os.path.join(HERE, "ckpt_vanilla.pth")
 
 BACKBONE = dict(hidden_size=512, num_hidden_layers=8, num_attention_heads=8,
                 num_key_value_heads=2, vocab_size=6400, max_position_embeddings=1024)
+LOOP_KW = dict(use_looped_transformer=True, loop_adapter="shared",
+               loop_input_injection=True, loop_index_embed=True)
 CONFIGS = {
     "vanilla":   dict(use_engram=False, use_dense_attention=False),
     "dense":     dict(use_engram=False, use_dense_attention=True),
     "engram":    dict(use_engram=True,  use_dense_attention=False),
     "engram+ca": dict(use_engram=True,  use_dense_attention=True),
+    # E1：迴圈次數 = 架構深度。num_loops=1 與 vanilla 完全等價
+    # (適配器只在 num_loops>1 時建立，loop_index_embed 在 loop 0 恆為 0)
+    "loop1": dict(use_engram=False, use_dense_attention=False, num_loops=1, **LOOP_KW),
+    "loop2": dict(use_engram=False, use_dense_attention=False, num_loops=2, **LOOP_KW),
+    "loop3": dict(use_engram=False, use_dense_attention=False, num_loops=3, **LOOP_KW),
+    "loop4": dict(use_engram=False, use_dense_attention=False, num_loops=4, **LOOP_KW),
 }
 ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 
-MAX_K = 6
-NAMES = "abcdefghij"
-SEQ_LEN = 96
+import string
+MAX_K = 6                       # 由 --max-k 覆寫
+NAMES = string.ascii_lowercase   # 最多支援 k=25
+SEQ_LEN = 176                    # k=16 的題目約 80 tokens，留餘裕
 DEVICE = "cuda"
 SEED = 42
 
@@ -71,7 +80,7 @@ def fmt(n):
     return " ".join(f"{n:02d}")
 
 
-def make_one(k, rng, v0_lo=10, v0_hi=79):
+def make_one(k, rng, v0_lo=10, v0_hi=79, ops="+-"):
     """產生一條 k 步依賴鏈。每一步都必須用到前一步的結果。
 
     train / val 用**互斥的起始值域**來保證不重疊，而不是靠拒絕採樣去找唯一解 ——
@@ -81,7 +90,7 @@ def make_one(k, rng, v0_lo=10, v0_hi=79):
     v = rng.randint(v0_lo, v0_hi)
     parts = [f"{NAMES[0]}={fmt(v)}"]
     for i in range(1, k + 1):
-        op = rng.choice("+-*")
+        op = rng.choice(ops)
         rhs = rng.randint(2, 9)
         v = {"+": v + rhs, "-": v - rhs, "*": v * rhs}[op] % 100
         parts.append(f"{NAMES[i]}={NAMES[i-1]}{op}{rhs}")
@@ -102,7 +111,7 @@ def gen(args):
             seen, made, attempts = set(), 0, 0
             while made < n_per_k and attempts < n_per_k * 50:
                 attempts += 1
-                p, a = make_one(k, rng, v0_lo, v0_hi)
+                p, a = make_one(k, rng, v0_lo, v0_hi, args.ops)
                 if unique:
                     if p in seen:
                         continue
@@ -114,6 +123,8 @@ def gen(args):
         return rows
 
     # 起始值域互斥 → train 與 val 保證零重疊，且 val 測的是對未見起始值的泛化
+    # 預設純加減：乘法會把答案熵從 3.08 壓到 0.62 bit，長鏈變成猜比算划算
+    # (實測純乘法正確率隨深度「上升」到 87%)，會污染深度的量測。
     train_rows = build(per_k_train, rng, 10, 79, unique=False)
     val_rows = build(per_k_val, random.Random(SEED + 999), 80, 99, unique=True)
     overlap = {r["prompt"] for r in train_rows} & {r["prompt"] for r in val_rows}
@@ -150,7 +161,7 @@ def labels_of(ids, plen, tlen):
 
 
 @torch.no_grad()
-def acc_by_k(model, tok, val_rows, max_per_k=200):
+def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0):
     """逐 k 計算正確率。貪婪解碼，答案必須完全相符。"""
     from collections import defaultdict
     hit, tot = defaultdict(int), defaultdict(int)
@@ -160,11 +171,15 @@ def acc_by_k(model, tok, val_rows, max_per_k=200):
         by_k[r["k"]].append(r)
     for k in sorted(by_k):
         for r in by_k[k][:max_per_k]:
+            g_t0 = time.time()
             ids = tok(tok.bos_token + r["prompt"], add_special_tokens=False,
                       return_tensors="pt").input_ids.to(DEVICE)
             out = model.generate(ids, max_new_tokens=6, do_sample=False,
                                  eos_token_id=tok.eos_token_id)
             gen_txt = tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+            if throttle < 1.0:
+                torch.cuda.synchronize()
+                time.sleep((time.time() - g_t0) * (1.0 / throttle - 1.0))
             tot[k] += 1
             hit[k] += (gen_txt == r["answer"])
             # 逐位數診斷：mod-100 的個位數是 Z_10 上的淺層電路，十位數要進位才難。
@@ -213,6 +228,7 @@ def run(name, args):
              (1 + math.cos(math.pi * min(1.0, step / steps))))
         for pg in opt.param_groups:
             pg["lr"] = lr
+        step_t0 = time.time()
         sel = order[(step - 1) * bs:step * bs]
         ids = tr_ids[sel].to(DEVICE).long()
         lab = labels_of(ids, tr_plen[sel].to(DEVICE).long(), tr_tlen[sel].to(DEVICE).long())
@@ -223,13 +239,21 @@ def run(name, args):
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step(); opt.zero_grad(set_to_none=True)
         run_loss += out.loss.detach(); run_n += 1
+
+        if args.throttle < 1.0:
+            # duty cycle 節流：算完一步就休息，把平均功耗壓下來。
+            # nvidia-smi -pl 鎖功耗需要 sudo，所以用 sleep 達成同樣效果。
+            torch.cuda.synchronize()
+            dt = time.time() - step_t0
+            time.sleep(dt * (1.0 / args.throttle - 1.0))
         if step % 500 == 0:
             print(f"  step {step:5d}/{steps} loss={(run_loss/run_n).item():.4f} "
                   f"{step/(time.time()-t0):.1f} it/s", flush=True)
             run_loss = torch.zeros((), device=DEVICE); run_n = 0
 
     model.eval()
-    per_k = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k)
+    per_k = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
+                     throttle=args.throttle)
     elapsed = time.time() - t0
     overall = sum(v["correct"] for v in per_k.values()) / max(sum(v["total"] for v in per_k.values()), 1)
     print(f"\n  逐深度正確率（隨機基準 1.0%；逐位數基準 10%）：")
@@ -275,7 +299,14 @@ if __name__ == "__main__":
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-per-k", type=int, default=200)
     ap.add_argument("--from-pretrain", type=int, default=1)
+    ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
+    ap.add_argument("--ops", default="+-", help='運算集合，預設純加減（排除乘法捷徑）')
+    ap.add_argument("--throttle", type=float, default=1.0,
+                    help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
     a = ap.parse_args()
+    MAX_K = a.max_k
+    if a.throttle < 1.0:
+        print(f"⚙️  GPU 節流至 {a.throttle:.0%} duty cycle（降溫用，時間約 {1/a.throttle:.1f}x）")
     if a.gen: gen(a)
     elif a.run: run(a.run, a)
     elif a.report: report()
