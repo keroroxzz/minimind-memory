@@ -190,6 +190,12 @@ def run(name, data, seq_len=512):
             val_hist["val_loss"].append(vl)
             print(f"  step {step:5d}  >>> val_loss={vl:.4f}  ppl={math.exp(min(vl,20)):.2f}", flush=True)
 
+    # 存下權重：後續的 reasoning SFT 要從這裡接手。
+    # 用 fp32 保留精度，29M 參數約 116MB。
+    ckpt = os.path.join(HERE, f"ckpt_{name.replace('+','_')}.pth")
+    torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ckpt)
+    print(f"  → checkpoint 已存至 {ckpt}", flush=True)
+
     elapsed = time.time() - t0
     peak = torch.cuda.max_memory_allocated() / 2**30
     final_val = val_hist["val_loss"][-1]

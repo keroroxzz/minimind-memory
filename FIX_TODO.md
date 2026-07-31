@@ -236,6 +236,36 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ---
 
+## Found while building the reasoning experiments (2026-07-31, not yet fixed)
+
+- [ ] **R1 — `ReasoningDataset.__getitem__` does not mask padding in the labels**
+  — `dataset/data_reasoning.py`
+  It masks the prompt (`labels[:prompt_len] = -100`) but leaves the padding tail as
+  `pad_token_id = 0`, which is a real token id, so `cross_entropy(ignore_index=-100)` does not
+  skip it. The model is trained to emit padding after its answer. `PretrainDataset` does this
+  correctly (`labels[input_ids == pad_token_id] = -100`), so the two are inconsistent.
+  With a median response of ~90 tokens in a 512-wide window, most of the supervised positions
+  are padding — this likely dominates the SFT loss.
+  `experiments/prepare_reasoning_data.py` masks both prompt and padding and does not reuse it.
+
+- [ ] **R2 — `eval_reasoning.py` is not a quantitative evaluation**
+  It prints four hard-coded questions and streams the answers for a human to read. No test set,
+  no metric, no score. Architectures cannot be compared with it, and it is the same
+  "eyeball it" pattern that let the inference-path bugs (C1–C5) survive.
+  `experiments/eval_reasoning_quant.py` adds held-out CoT loss + generation exact-match with
+  Wilson confidence intervals.
+
+- [ ] **R3 — Answer extraction by "last number in the text" is unreliable on Chinese math data**
+  Measured on 2000 held-out Belle samples: a number is extractable 96% of the time, but on
+  manual inspection of the first four, only one had the *answer* as its final number. Chinese
+  solutions routinely end with a remainder ("每人分到2颗，剩下1颗" → extracts 1, answer is 2) or a
+  multi-part answer ("分别为 20 个和 10 个" → extracts 10, answer is a pair).
+  Exact-match on this data measures extraction noise, not correctness. This is why
+  `experiments/synth_depth_task.py` (answer determined by construction) is the primary accuracy
+  metric rather than a supplement.
+
+---
+
 ## Test-coverage gaps that let these through
 
 - [x] **T1** — `test/test_engram_v2.py` stops at `stage1_gather`; a `stage2_fusion` equivalence

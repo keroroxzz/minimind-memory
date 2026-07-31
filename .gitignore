@@ -13,3 +13,7 @@ wandb/*
 # 實驗產物
 experiments/data_tokens.pt
 experiments/*.log
+experiments/*.pth
+experiments/*_tokens.pt
+experiments/synth_depth.pt
+experiments/reasoning_val_raw.json
