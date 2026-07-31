@@ -559,22 +559,26 @@ class MiniMindBlock(nn.Module):
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, loop_idx=0):
         residual = hidden_states
-        normed_x = self.input_layernorm(hidden_states)
+        attn_input = self.input_layernorm(hidden_states)
         hidden_states_attn, updated_kv = self.self_attn(
-            normed_x, position_embeddings,
+            attn_input, position_embeddings,
             past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems
         )
         if self.use_looped_transformer and loop_idx > 0:
-            hidden_states_attn = hidden_states_attn + self.loop_lora_attn[str(loop_idx)](normed_x)
+            hidden_states_attn = hidden_states_attn + self.loop_lora_attn[str(loop_idx)](attn_input)
         hidden_states = residual + hidden_states_attn
-        
+
         residual = hidden_states
-        normed_x = self.post_attention_layernorm(hidden_states)
-        hidden_states_mlp = self.mlp(normed_x)
+        mlp_input = self.post_attention_layernorm(hidden_states)
+        hidden_states_mlp = self.mlp(mlp_input)
         if self.use_looped_transformer and loop_idx > 0:
-            hidden_states_mlp = hidden_states_mlp + self.loop_lora_mlp[str(loop_idx)](normed_x)
+            hidden_states_mlp = hidden_states_mlp + self.loop_lora_mlp[str(loop_idx)](mlp_input)
         hidden_states = residual + hidden_states_mlp
-        return hidden_states, updated_kv, normed_x
+
+        # 第三個回傳值供 Transformer-XL 的 mems 使用，必須是「attention 的輸入」：
+        # 下個 segment 在 Attention 裡會把 mems 跟同樣經過 input_layernorm 的 x 串接，
+        # 兩者必須位於同一個 normalize 空間 (原本誤傳 post_attention_layernorm 的輸出)。
+        return hidden_states, updated_kv, attn_input
 
 class MiniMindModel(nn.Module):
     def __init__(self, config: MiniMindConfig):
@@ -657,7 +661,7 @@ class MiniMindModel(nn.Module):
 
                 layer_mems = mems[past_kv_idx] if mems is not None else None
                 
-                hidden_states, present, normed_x = layer(
+                hidden_states, present, attn_input = layer(
                     hidden_states,
                     position_embeddings,
                     past_key_value=past_key_value,
@@ -670,12 +674,13 @@ class MiniMindModel(nn.Module):
                 presents.append(present)
                 
                 if self.config.use_recurrence:
-                    # 這裡儲存經過 Norm 的狀態作為下一個 segment 的 mems (重要：為了數值穩定)
+                    # 儲存本層 attention 的輸入 (input_layernorm 之後) 作為下個 segment 的 mems
                     if layer_mems is not None:
-                        cat_mem = torch.cat([layer_mems, normed_x], dim=1)
+                        cat_mem = torch.cat([layer_mems, attn_input], dim=1)
                     else:
-                        cat_mem = normed_x
-                    
+                        cat_mem = attn_input
+
+
                     # 保持長度為 mem_len
                     next_mems.append(cat_mem[:, -self.config.mem_len:].detach())
                     

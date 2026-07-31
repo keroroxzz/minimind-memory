@@ -69,11 +69,14 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ## High
 
-- [ ] **H1 — Mems harvested from the wrong tensor** *(inspection)* — `:535`, `:631-636`
+- [x] **H1 — Mems harvested from the wrong tensor** *(inspection)* — `:535`, `:631-636`
   `MiniMindBlock.forward` reassigns `normed_x` at `:530`, so the returned value is
   `post_attention_layernorm(hidden)`. It is consumed at `:372` concatenated with
   `input_layernorm(hidden)` — two different norm spaces, and it is layer *i*'s post-MLP-norm
   state rather than its input hidden state as TXL specifies.
+  **Fixed**: the two locals are renamed `attn_input` / `mlp_input` so the shadowing cannot recur,
+  and the block returns `attn_input`. mems are now in the same normalization space as the `x`
+  they get concatenated with inside `Attention`.
 
 - [ ] **H2 — `mems` carried across shuffled batches** — `trainer/train_pretrain.py:191-194`,
   `trainer/train_reasoning.py:27-47`

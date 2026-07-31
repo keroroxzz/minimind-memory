@@ -190,6 +190,38 @@ class TestRecurrence(unittest.TestCase):
         self.assertLess((base - alt).abs().max().item(), 1e-5)
 
 
+    def test_h1_mems_are_the_attention_input(self):
+        """H1: mems 必須是 input_layernorm 的輸出，而非 post_attention_layernorm。"""
+        m = build(use_recurrence=True, mem_len=16, num_hidden_layers=2)
+        layer = m.model.layers[0]
+        captured = {}
+
+        def pre_hook(mod, args, kwargs):
+            captured['h'] = args[0] if args else kwargs['hidden_states']
+
+        handle = layer.register_forward_pre_hook(pre_hook, with_kwargs=True)
+        try:
+            with torch.no_grad():
+                out = m(torch.randint(0, 100, (1, 6)))
+        finally:
+            handle.remove()
+
+        with torch.no_grad():
+            expected = layer.input_layernorm(captured['h'])
+        torch.testing.assert_close(out.next_mems[0], expected)
+
+    def test_h1_mems_not_post_attention_norm(self):
+        """H1: 明確確認 mems 不等於 post_attention_layernorm 的輸出 (舊行為)。"""
+        m = build(use_recurrence=True, mem_len=16, num_hidden_layers=2)
+        layer = m.model.layers[0]
+        with torch.no_grad():
+            layer.post_attention_layernorm.weight.fill_(3.0)
+            out = m(torch.randint(0, 100, (1, 6)))
+            captured = out.next_mems[0]
+        # post_attention_layernorm 的 weight 被放大到 3，若 mems 來自它，RMS 會明顯偏大
+        self.assertLess(captured.pow(2).mean().sqrt().item(), 2.0)
+
+
 class TestLoopedTransformer(unittest.TestCase):
     @staticmethod
     def _key_lengths(model, seq_len=8):
