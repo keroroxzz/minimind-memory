@@ -487,12 +487,15 @@ class Attention(nn.Module):
             output = F.scaled_dot_product_attention(
                 xq, keys_total, values_total,
                 attn_mask=extended_mask,
+                dropout_p=self.dropout if self.training else 0.0,
                 is_causal=False
             )
         else:
             # 標準單層 Attention (或 Dense 被禁用)
             # 注意：如果使用 mems，Flash Attention 的 is_causal=True 會失效（因為 Q/K 長度不對等且有位移）
-            if self.flash and (seq_len > 1) and (past_key_value is None) and (mems is None) and (attention_mask is None or torch.all(attention_mask == 1)):
+            # attention_mask 為全 1 時已在 MiniMindModel.forward 統一換成 None，
+            # 所以這裡不需要再做 torch.all(...) —— 那會在每層每步觸發一次 GPU->CPU 同步。
+            if self.flash and (seq_len > 1) and (past_key_value is None) and (mems is None) and (attention_mask is None):
                 output = F.scaled_dot_product_attention(xq, xk_for_attn, xv_for_attn, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
             else:
                 curr_head_dim = xq.shape[-1]
@@ -636,6 +639,11 @@ class MiniMindModel(nn.Module):
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False, mems=None, **kwargs):
         batch_size, seq_length = input_ids.shape
         if hasattr(past_key_values, 'layers'): past_key_values = None
+
+        # 全 1 的 mask 等同沒有 mask。在這裡判斷一次，就不必在每層 (每個解碼步驟)
+        # 都做一次 torch.all(...) 而觸發 GPU->CPU 同步。
+        if attention_mask is not None and bool(attention_mask.all()):
+            attention_mask = None
         num_loops = self.config.num_loops if getattr(self.config, 'use_looped_transformer', False) else 1
         total_layers = len(self.layers) * num_loops
         past_key_values = past_key_values or [None] * total_layers

@@ -171,8 +171,10 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 - [ ] **M2 — Dense pool stores post-`repeat_kv` K/V** — `:395-396`
   Holds `n_rep`× more than needed; erases GQA's cache savings.
 
-- [ ] **M3 — Attention dropout silently disabled under dense** — `:422-426`
+- [x] **M3 — Attention dropout silently disabled under dense** — `:422-426`
   The dense branch never passes `dropout_p`.
+  **Fixed**: `dropout_p=self.dropout if self.training else 0.0` is now passed. Verified it
+  reaches SDPA on every layer.
 
 - [ ] **M4 — Engram re-hashes the entire prefix every decode step** — `:182-226`
   `(hashed_len, needed_len)` = `(16,16), (17,1), (18,1), (19,1), (20,1), (21,1)`.
@@ -186,8 +188,10 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   fraction (sums to `k`, as Switch Transformer's formulation expects).
   **Still open** — the looped-transformer half (only the last loop's `aux_loss` survives).
 
-- [ ] **M6 — Per-layer, per-step GPU→CPU sync** — `:430`
+- [x] **M6 — Per-layer, per-step GPU→CPU sync** — `:430`
   `torch.all(attention_mask == 1)` in the flash-path guard forces a device sync.
+  **Fixed**: an all-ones mask is normalised to `None` once in `MiniMindModel.forward`, so the
+  per-layer check disappears entirely. `Tensor.all()` calls per 3-layer forward: 3 → 1.
 
 - [ ] **M7 — `labels` + `logits_to_keep` misaligned** — `:653-661`
   Logits sliced to the tail, labels still shifted from position 0 → `ValueError`.
