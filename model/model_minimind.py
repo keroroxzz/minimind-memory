@@ -472,8 +472,12 @@ class Attention(nn.Module):
                 scores = (xq @ xk_for_attn.transpose(-2, -1)) / math.sqrt(curr_head_dim)
                 if xk_for_attn.shape[2] > 1 and seq_len > 1:
                     scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
-                if attention_mask is not None: 
-                    scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+                if attention_mask is not None:
+                    am = attention_mask
+                    if am.shape[-1] != scores.shape[-1]:
+                        # mems / cache 讓 K 比 attention_mask 長；左側補 1 (歷史一律可見)
+                        am = F.pad(am, (scores.shape[-1] - am.shape[-1], 0), value=1)
+                    scores = scores + (1.0 - am.unsqueeze(1).unsqueeze(2).to(scores.dtype)) * -1e9
                 output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv_for_attn
 
         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)

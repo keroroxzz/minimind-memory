@@ -115,9 +115,11 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
   Relevant because `HEAD` is `[Update] change moe default`.
 
-- [ ] **H7 — Non-flash path + mems crashes on any attention_mask** — `:437-438`
+- [x] **H7 — Non-flash path + mems crashes on any attention_mask** — `:437-438`
   `attention_mask` has length `seq_len` but `scores` has `mem_len+seq_len` keys
   → `RuntimeError: size of tensor a (12) must match b (6)`.
+  **Fixed**: the mask is left-padded with 1 to the score width before being applied (same
+  convention as the dense path in C2/M1), and the additive term is dtype-matched to `scores`.
 
 ---
 

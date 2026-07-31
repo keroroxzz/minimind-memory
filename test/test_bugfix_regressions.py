@@ -165,6 +165,31 @@ class TestEngram(unittest.TestCase):
             self._engram_model(max_ngram_size=1)
 
 
+class TestRecurrence(unittest.TestCase):
+    def test_h7_non_flash_mems_with_attention_mask(self):
+        """H7: attention_mask 長度是 seq_len，但有 mems 時 scores 是 mem_len+seq_len。"""
+        m = build(use_recurrence=True, mem_len=8, flash_attn=False)
+        ids = torch.randint(0, 100, (1, 6))
+        am = torch.ones(1, 6)
+        with torch.no_grad():
+            first = m(ids, attention_mask=am)
+            m(ids, attention_mask=am, mems=first.next_mems)  # 之前 RuntimeError
+
+    def test_h7_padding_still_masked_with_mems(self):
+        """H7: 補齊 mask 之後，當前 segment 的 padding 仍然要被遮住。"""
+        m = build(use_recurrence=True, mem_len=8, flash_attn=False)
+        ids = torch.randint(1, 100, (1, 6))
+        am = torch.ones(1, 6)
+        am[0, :2] = 0
+        with torch.no_grad():
+            mems = m(ids, attention_mask=am).next_mems
+            base = m(ids, attention_mask=am, mems=mems).logits[:, -1]
+            mutated = ids.clone()
+            mutated[0, :2] = torch.tensor([13, 17])
+            alt = m(mutated, attention_mask=am, mems=mems).logits[:, -1]
+        self.assertLess((base - alt).abs().max().item(), 1e-5)
+
+
 class TestLoopedTransformer(unittest.TestCase):
     @staticmethod
     def _key_lengths(model, seq_len=8):
