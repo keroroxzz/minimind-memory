@@ -707,6 +707,9 @@ class MiniMindModel(nn.Module):
         presents = []
         # 有 cache 時 mems 不會被使用，也就沒必要再累積下一段的 mems
         next_mems = [] if (self.config.use_recurrence and past_key_values[0] is None) else None
+        # 逐層累積 aux_loss。若等到迴圈結束才讀 layer.mlp.aux_loss，同一層在多個 loop 中
+        # 會互相覆寫，只剩最後一個 loop 的值被計入。
+        aux_loss = hidden_states.new_zeros(())
 
         past_kv_idx = 0
 
@@ -735,6 +738,8 @@ class MiniMindModel(nn.Module):
                     loop_idx=loop_idx
                 )
                 presents.append(present)
+                if isinstance(layer.mlp, MOEFeedForward):
+                    aux_loss = aux_loss + layer.mlp.aux_loss
                 
                 if next_mems is not None:
                     # 儲存本層 attention 的輸入 (input_layernorm 之後) 作為下個 segment 的 mems
@@ -750,7 +755,10 @@ class MiniMindModel(nn.Module):
                 past_kv_idx += 1
 
         hidden_states = self.norm(hidden_states)
-        aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
+        # 除以 num_loops，讓 router_aux_loss_coef 的量級不隨 num_loops 改變
+        # (num_loops=1 時與原本完全相同)
+        if num_loops > 1:
+            aux_loss = aux_loss / num_loops
         return hidden_states, presents, aux_loss, next_mems
 
 class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):

@@ -189,13 +189,16 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   are bit-identical (pinned by a test against the untrimmed reference). Decode-step work is now
   constant instead of linear in the prefix.
 
-- [~] **M5 — `aux_loss` loses all but the last loop; `load` has the wrong shape** — `:641`, `:481`
+- [x] **M5 — `aux_loss` loses all but the last loop; `load` has the wrong shape** — `:641`, `:481`
   `aux_loss` is read off `l.mlp.aux_loss` after the fact, so with `num_loops>1` only the last
   loop's value survives. `load = one_hot(topk_idx,E).float().mean(0)` is `[k,E]`, not `[E]`;
   the `.sum()` double-counts across slots for `k>1`.
   **`load` fixed**: now `one_hot(...).sum(dim=1).mean(dim=0)` → `[E]`, the per-expert token
   fraction (sums to `k`, as Switch Transformer's formulation expects).
-  **Still open** — the looped-transformer half (only the last loop's `aux_loss` survives).
+  **Looped half fixed**: `aux_loss` is accumulated inside the layer loop instead of being read
+  off `layer.mlp.aux_loss` afterwards (where later loops overwrite earlier ones), then divided by
+  `num_loops` so `router_aux_loss_coef` keeps its meaning as `num_loops` changes. Identical to the
+  old behaviour when `num_loops == 1`, which a test pins.
 
 - [x] **M6 — Per-layer, per-step GPU→CPU sync** — `:430`
   `torch.all(attention_mask == 1)` in the flash-path guard forces a device sync.

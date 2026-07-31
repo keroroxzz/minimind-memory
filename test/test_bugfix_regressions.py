@@ -275,6 +275,32 @@ class TestMoE(unittest.TestCase):
         w = w / (w.sum(dim=-1, keepdim=True) + 1e-20)
         torch.testing.assert_close(w.sum(-1), torch.ones(5))
 
+    def test_m5_aux_loss_accumulates_over_loops(self):
+        """M5: 迴圈結束後才讀 layer.mlp.aux_loss，只會剩下最後一個 loop 的值。"""
+        collected = []
+        m = self._moe(num_hidden_layers=2, use_looped_transformer=True, num_loops=3,
+                      router_aux_loss_coef=1.0)
+        for layer in m.model.layers:
+            real = layer.mlp.forward
+            layer.mlp.forward = (lambda r, mod: (lambda x: (r(x), collected.append(
+                mod.aux_loss.item()))[0]))(real, layer.mlp)
+
+        out = m(torch.randint(0, 100, (2, 8)))
+        self.assertEqual(len(collected), 6, "2 層 x 3 loop 應該有 6 次 MoE 前向")
+        expected = sum(collected) / 3  # 除以 num_loops 保持量級
+        self.assertAlmostEqual(out.aux_loss.item(), expected, places=5)
+
+    def test_m5_aux_loss_unchanged_without_loops(self):
+        """M5: 沒開 looped 時 aux_loss 必須與原本一致 (各層相加)。"""
+        collected = []
+        m = self._moe(num_hidden_layers=2, router_aux_loss_coef=1.0)
+        for layer in m.model.layers:
+            real = layer.mlp.forward
+            layer.mlp.forward = (lambda r, mod: (lambda x: (r(x), collected.append(
+                mod.aux_loss.item()))[0]))(real, layer.mlp)
+        out = m(torch.randint(0, 100, (2, 8)))
+        self.assertAlmostEqual(out.aux_loss.item(), sum(collected), places=5)
+
     def test_m5_aux_loss_load_is_per_expert(self):
         """M5: load 必須是 [E]，原本 mean(0) 得到 [k,E]，k>1 會跨 slot 重複計算。"""
         m = self._moe(num_experts_per_tok=2, router_aux_loss_coef=1.0)
