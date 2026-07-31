@@ -215,14 +215,24 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
 
 ## Test-coverage gaps that let these through
 
-- [ ] **T1** — `test/test_engram_v2.py` stops at `stage1_gather`; a `stage2_fusion` equivalence
+- [x] **T1** — `test/test_engram_v2.py` stops at `stage1_gather`; a `stage2_fusion` equivalence
   assertion catches **C3** immediately.
-- [ ] **T2** — `test/test_dense_attention.py` asserts nothing and never exercises
+  **Done**: added `test_stage2_batch_vs_incremental_equivalence` and
+  `test_model_level_generation_equivalence`.
+- [x] **T2** — `test/test_dense_attention.py` asserts nothing and never exercises
   `attention_mask` or `use_cache`; **C2** is invisible to it.
-- [ ] **T3** — `test/test_looped_transformer.py` only counts `len(presents)`; it does not check
+  **Done**: the stats pass now asserts per-layer pool depth (`seq_len * L`) and distribution
+  sanity, plus two new checks — `test_dense_causality` (perturbing future tokens must not move
+  earlier outputs) and `test_dense_padding_and_cache` (prefill == incremental, padding honoured
+  at `seq_len=1`).
+- [x] **T3** — `test/test_looped_transformer.py` only counts `len(presents)`; it does not check
   KV-pool shapes, so **H3** passes.
-- [ ] **T4** — No test at all for `use_latent_attention` or `use_recurrence`
+  **Done**: added per-loop KV-pool shape assertions, a LoopLoRA zero-init check, and a
+  looped KV-cache round-trip.
+- [x] **T4** — No test at all for `use_latent_attention` or `use_recurrence`
   (hence **C1, C4, C5, H7**).
+  **Done**: `test/test_bugfix_regressions.py` adds `TestLatentAttention` and `TestRecurrence`,
+  46 tests in total across every finding in this document.
 
 ---
 

@@ -78,6 +78,39 @@ class TestEngramV2(unittest.TestCase):
         torch.testing.assert_close(feat_idx3_full, feat_idx3_inc)
         print("✅ End-to-end equivalence verified (Batch vs Incremental)")
 
+    def test_stage2_batch_vs_incremental_equivalence(self):
+        """T1/C3: stage2 (含 ShortConv) 也必須滿足 batch == incremental。
+
+        原本這個檔案只驗到 stage1 的 hash，所以 ShortConv 在 seq_len=1 時
+        對著 zero-padding 卷積的 bug 完全沒被抓到 (實測差異 2.99e-01)。
+        """
+        eng = self.engram
+        ctx = eng.conv_context
+        ids = torch.tensor([[11, 22, 33, 44, 55, 66, 77, 88, 99, 12, 34, 56]], device=self.device)
+        hidden = torch.randn(1, ids.shape[1], self.config.hidden_size, device=self.device)
+        t = ids.shape[1] - 1
+
+        with torch.no_grad():
+            full = eng.stage2_fusion(1, hidden, eng.stage1_gather(ids, ids.shape[1], n_context=ctx))
+            inc = eng.stage2_fusion(1, hidden[:, t:t + 1], eng.stage1_gather(ids, 1, n_context=ctx))
+
+        torch.testing.assert_close(full[:, t:t + 1], inc, rtol=1e-4, atol=1e-4)
+        print("✅ Stage2 equivalence verified (ShortConv context preserved)")
+
+    def test_model_level_generation_equivalence(self):
+        """T1: 整個模型層級的 teacher-forcing vs KV-cache 解碼一致性。"""
+        from model.model_minimind import MiniMindForCausalLM
+        torch.manual_seed(0)
+        model = MiniMindForCausalLM(self.config).to(self.device).eval()
+        ids = torch.randint(0, self.config.vocab_size, (1, 12), device=self.device)
+        with torch.no_grad():
+            full = model(ids).logits[:, -1]
+            pre = model(ids[:, :11], use_cache=True)
+            inc = model(ids[:, 11:], past_key_values=pre.past_key_values,
+                        use_cache=True, full_input_ids=ids).logits[:, -1]
+        torch.testing.assert_close(full, inc, rtol=1e-3, atol=1e-3)
+        print("✅ Model-level engram generation equivalence verified")
+
     def test_differentiability(self):
         """Ensure gradients can flow back to the CPU table (if not frozen)."""
         input_ids = torch.tensor([[1, 2, 3]], device=self.device)
