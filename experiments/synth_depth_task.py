@@ -277,12 +277,15 @@ def run(name, args):
     model = model.to(DEVICE)
 
     torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
-    bs, steps = args.batch_size, args.steps
+    bs, steps, accum = args.batch_size, args.steps, args.accum
+    # 梯度累積：loop3/4 的 activation 記憶體撐不住 bs=64（實測 loop3 在 11.4 GiB OOM）。
+    # 降 micro-batch 但保持等效 batch 不變，避免把「記憶體限制」變成組間的混淆因子。
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01,
                             betas=(0.9, 0.95), fused=True)
     g = torch.Generator().manual_seed(SEED)
     n = tr_ids.shape[0]
-    order = torch.cat([torch.randperm(n, generator=g) for _ in range(steps * bs // n + 2)])
+    order = torch.cat([torch.randperm(n, generator=g)
+                       for _ in range(steps * bs * accum // n + 2)])
 
     print(f"\n{'='*60}\n  {name} — {steps} 步\n{'='*60}", flush=True)
     model.train(); t0 = time.time()
@@ -293,16 +296,20 @@ def run(name, args):
         for pg in opt.param_groups:
             pg["lr"] = lr
         step_t0 = time.time()
-        sel = order[(step - 1) * bs:step * bs]
-        ids = tr_ids[sel].to(DEVICE).long()
-        lab = labels_of(ids, tr_plen[sel].to(DEVICE).long(), tr_tlen[sel].to(DEVICE).long())
-        with torch.amp.autocast(DEVICE, dtype=torch.bfloat16):
-            out = model(ids, labels=lab)
-            loss = out.loss + out.aux_loss
-        loss.backward()
+        opt.zero_grad(set_to_none=True)
+        for micro in range(accum):
+            base = ((step - 1) * accum + micro) * bs
+            sel = order[base:base + bs]
+            ids = tr_ids[sel].to(DEVICE).long()
+            lab = labels_of(ids, tr_plen[sel].to(DEVICE).long(), tr_tlen[sel].to(DEVICE).long())
+            with torch.amp.autocast(DEVICE, dtype=torch.bfloat16):
+                out = model(ids, labels=lab)
+                loss = (out.loss + out.aux_loss) / accum
+            loss.backward()
+            run_loss += out.loss.detach() / accum
+        run_n += 1
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step(); opt.zero_grad(set_to_none=True)
-        run_loss += out.loss.detach(); run_n += 1
+        opt.step()
 
         if args.throttle < 1.0:
             # duty cycle 節流：算完一步就休息，把平均功耗壓下來。
@@ -359,7 +366,8 @@ if __name__ == "__main__":
     ap.add_argument("--train-per-k", type=int, default=20000)
     ap.add_argument("--val-per-k", type=int, default=300)
     ap.add_argument("--steps", type=int, default=6000)
-    ap.add_argument("--batch-size", type=int, default=64)
+    ap.add_argument("--batch-size", type=int, default=64, help="micro-batch")
+    ap.add_argument("--accum", type=int, default=1, help="梯度累積步數；等效 batch = batch_size*accum")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-per-k", type=int, default=200)
     ap.add_argument("--from-pretrain", type=int, default=1)

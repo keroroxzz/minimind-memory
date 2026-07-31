@@ -1,0 +1,188 @@
+{
+  "loop1": {
+    "per_k": {
+      "1": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 190,
+        "total": 200,
+        "acc": 0.95,
+        "pos_acc": 0.9769999999999998,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 171,
+        "total": 200,
+        "acc": 0.855,
+        "pos_acc": 0.9369999999999997,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 119,
+        "total": 200,
+        "acc": 0.595,
+        "pos_acc": 0.8039999999999995,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 60,
+        "total": 200,
+        "acc": 0.3,
+        "pos_acc": 0.6419999999999993,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 37,
+        "total": 200,
+        "acc": 0.185,
+        "pos_acc": 0.48000000000000015,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 15,
+        "total": 200,
+        "acc": 0.075,
+        "pos_acc": 0.37200000000000044,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 4,
+        "total": 200,
+        "acc": 0.02,
+        "pos_acc": 0.27600000000000047,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 7,
+        "total": 200,
+        "acc": 0.035,
+        "pos_acc": 0.2580000000000002,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 0.5845833333333333,
+    "params_M": 29.238784,
+    "wall_clock_s": 1477.1918528079987,
+    "steps": 12000,
+    "peak_vram_GiB": 4.357158184051514
+  },
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 1.0,
+    "params_M": 29.500928,
+    "wall_clock_s": 2853.644843816757,
+    "steps": 12000,
+    "peak_vram_GiB": 7.592045307159424
+  }
+}
