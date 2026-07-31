@@ -95,6 +95,54 @@ class TestDenseAttention(unittest.TestCase):
             self.assertEqual(dt, torch.bool, f"SDPA 收到 {dt} mask，會被當成 additive bias")
 
 
+class TestGQAPool(unittest.TestCase):
+    def test_m2_repeat_kv_heads_matches_repeat_kv_ordering(self):
+        """M2: 新的 [B,H,S,D] 展開必須與既有 repeat_kv 的 head 排列完全一致。"""
+        from model.model_minimind import repeat_kv, repeat_kv_heads
+        x = torch.randn(2, 5, 3, 8)  # [B, S, H_kv, D]
+        for n_rep in (1, 2, 4):
+            with self.subTest(n_rep=n_rep):
+                expected = repeat_kv(x, n_rep).transpose(1, 2)
+                got = repeat_kv_heads(x.transpose(1, 2), n_rep)
+                torch.testing.assert_close(got, expected)
+
+    def test_m2_pool_holds_kv_heads_not_query_heads(self):
+        """M2: pool 應該存 n_kv_heads 份，而非展開後的 n_attention_heads。"""
+        import model.model_minimind as mm
+        m = build(use_dense_attention=True, num_attention_heads=8,
+                  num_key_value_heads=2, num_hidden_layers=2)
+        pooled, orig = [], mm.torch.cat
+
+        attn = m.model.layers[0].self_attn
+        real_forward = attn.forward
+
+        def wrapper(x, position_embeddings, past_key_value=None, use_cache=False,
+                    attention_mask=None, global_kv_pool=None, mems=None):
+            out = real_forward(x, position_embeddings, past_key_value, use_cache,
+                               attention_mask, global_kv_pool, mems)
+            if global_kv_pool:
+                pooled.append(global_kv_pool['k'][0].shape[1])
+            return out
+
+        attn.forward = wrapper
+        try:
+            with torch.no_grad():
+                m(torch.randint(0, 100, (1, 8)))
+        finally:
+            attn.forward = real_forward
+        self.assertEqual(pooled, [2], "pool 存了展開後的 head 數，GQA 的節省被抵銷")
+
+    def test_m2_gqa_dense_prefill_matches_decode(self):
+        """M2: GQA + dense 的 cache 行為必須維持正確。"""
+        m = build(use_dense_attention=True, num_attention_heads=8, num_key_value_heads=2)
+        ids = torch.randint(0, 100, (1, 10))
+        with torch.no_grad():
+            full = m(ids).logits[:, -1]
+            pre = m(ids[:, :9], use_cache=True)
+            inc = m(ids[:, 9:], past_key_values=pre.past_key_values, use_cache=True).logits[:, -1]
+        self.assertLess((full - inc).abs().max().item(), 1e-4)
+
+
 class TestEngram(unittest.TestCase):
     def _engram_model(self, **kw):
         cfg = dict(hidden_size=64, num_hidden_layers=2, num_attention_heads=4,

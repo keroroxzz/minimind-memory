@@ -168,8 +168,13 @@ Status legend: `[ ]` open · `[x]` fixed · `[~]` partially fixed / mitigated
   `am.repeat(1,1,1,depth)` misaligns whenever mems are active.
   **Fixed** alongside C2: the mask is left-padded with `True` to `total_seq_len` before tiling.
 
-- [ ] **M2 — Dense pool stores post-`repeat_kv` K/V** — `:395-396`
+- [x] **M2 — Dense pool stores post-`repeat_kv` K/V** — `:395-396`
   Holds `n_rep`× more than needed; erases GQA's cache savings.
+  **Fixed**: the pool now stores the pre-expansion `[B, H_kv, S, D]` tensors and expands once at
+  the end via the new `repeat_kv_heads`. Expanding along the head axis and concatenating along
+  the time axis commute, so the result is numerically identical — pinned by a test that asserts
+  `repeat_kv_heads` reproduces `repeat_kv`'s head ordering exactly. With 8 heads / 2 KV heads the
+  pool is 4× smaller.
 
 - [x] **M3 — Attention dropout silently disabled under dense** — `:422-426`
   The dense branch never passes `dropout_p`.

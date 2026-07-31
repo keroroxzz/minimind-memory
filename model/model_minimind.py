@@ -335,6 +335,12 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     if n_rep == 1: return x
     return (x[:, :, :, None, :].expand(bs, slen, num_key_value_heads, n_rep, head_dim).reshape(bs, slen, num_key_value_heads * n_rep, head_dim))
 
+def repeat_kv_heads(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """[B, H_kv, S, D] -> [B, H_kv*n_rep, S, D]，head 排列順序與 repeat_kv 一致。"""
+    if n_rep == 1: return x
+    bs, n_kv, slen, head_dim = x.shape
+    return x[:, :, None].expand(bs, n_kv, n_rep, slen, head_dim).reshape(bs, n_kv * n_rep, slen, head_dim)
+
 class Attention(nn.Module):
     def __init__(self, config: MiniMindConfig):
         super().__init__()
@@ -421,8 +427,8 @@ class Attention(nn.Module):
             
             # 準備用於 Attention 的 xq, xk, xv (B, H, S, D)
             xq = torch.cat([q_content, q_rope], dim=-1).transpose(1, 2)
-            xk_for_attn = xk.transpose(1, 2)
-            xv_for_attn = xv.transpose(1, 2)
+            # latent 模式下每個 head 都有自己的 K/V，沒有 GQA 展開可省
+            xk_pool, xv_pool, pool_n_rep = xk.transpose(1, 2), xv.transpose(1, 2), 1
         else:
             # === 標準 MHA/GQA 邏輯 ===
             # mems 與 KV cache 描述的是同一段歷史。若兩者並存，mem 位置的 K/V 會被重新
@@ -446,21 +452,24 @@ class Attention(nn.Module):
             past_kv = (xk, xv) if use_cache else None
             
             xq = xq.transpose(1, 2)
-            xk_for_attn = repeat_kv(xk, self.n_rep).transpose(1, 2)
-            xv_for_attn = repeat_kv(xv, self.n_rep).transpose(1, 2)
+            # 保留 repeat_kv 之前的形狀 (B, H_kv, S, D) 給 dense pool 使用
+            xk_pool, xv_pool, pool_n_rep = xk.transpose(1, 2), xv.transpose(1, 2), self.n_rep
 
         # === Dense Attention (T x D) 核心邏輯 ===
         if self.use_dense_attention and global_kv_pool is not None:
-            # 將當前層「已經拼接好過去時間」的 KV 放入 Pool (形狀均為 B, H, S_total, D)
-            global_kv_pool['k'].append(xk_for_attn)
-            global_kv_pool['v'].append(xv_for_attn)
+            # Pool 存的是 repeat_kv 展開「之前」的 KV：GQA 下只有 n_kv_heads，
+            # 記憶體是展開後的 1/n_rep。展開留到最後一次做即可 (沿 head 維度展開與
+            # 沿時間維度串接互相可交換，數值完全相同)。
+            global_kv_pool['k'].append(xk_pool)
+            global_kv_pool['v'].append(xv_pool)
 
-            keys_total = torch.cat(global_kv_pool['k'], dim=2)
-            values_total = torch.cat(global_kv_pool['v'], dim=2)
-            
+            keys_total = repeat_kv_heads(torch.cat(global_kv_pool['k'], dim=2), pool_n_rep)
+            values_total = repeat_kv_heads(torch.cat(global_kv_pool['v'], dim=2), pool_n_rep)
+
             current_layer_depth = len(global_kv_pool['k'])
-            total_seq_len = xk_for_attn.shape[2]
-            
+            total_seq_len = xk_pool.shape[2]
+
+
             # 先針對「單層」建構 bool keep-mask (True = 可見)，最後才沿著層維度平鋪。
             # 注意：SDPA 會把 float mask 當成 additive bias，因此這裡一律使用 bool，
             # 否則 0/1 的 padding mask 會變成「不遮罩 + 加 1 偏置」(完全相反的語意)。
@@ -492,6 +501,8 @@ class Attention(nn.Module):
             )
         else:
             # 標準單層 Attention (或 Dense 被禁用)
+            xk_for_attn = repeat_kv_heads(xk_pool, pool_n_rep)
+            xv_for_attn = repeat_kv_heads(xv_pool, pool_n_rep)
             # 注意：如果使用 mems，Flash Attention 的 is_causal=True 會失效（因為 Q/K 長度不對等且有位移）
             # attention_mask 為全 1 時已在 MiniMindModel.forward 統一換成 None，
             # 所以這裡不需要再做 torch.all(...) —— 那會在每層每步觸發一次 GPU->CPU 同步。
