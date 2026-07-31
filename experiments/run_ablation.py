@@ -56,16 +56,16 @@ ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 
 SEED = 42
 BATCH_SIZE = 16
-STEPS = 3000
-WARMUP = 150
+STEPS = 30000          # 30000 x 16 x 512 = 245.8M tokens = 剛好一個 epoch
+WARMUP = 1500          # 5% of STEPS
 LR = 5e-4
 MIN_LR_RATIO = 0.1
 GRAD_CLIP = 1.0
 WEIGHT_DECAY = 0.1
 VERBOSE_GROUPS = True
-EVAL_EVERY = 150
-EVAL_BATCHES = 32
-LOG_EVERY = 50
+EVAL_EVERY = 1000
+EVAL_BATCHES = 125   # 2000 條 val 全用上
+LOG_EVERY = 200
 DEVICE = "cuda"
 
 
@@ -78,12 +78,12 @@ def lr_at(step):
 
 
 @torch.no_grad()
-def evaluate(model, val_ids, val_labels):
+def evaluate(model, val_ids):
     model.eval()
     total_loss, total_batches = 0.0, 0
     for i in range(0, min(EVAL_BATCHES * BATCH_SIZE, val_ids.shape[0]), BATCH_SIZE):
-        ids = val_ids[i:i + BATCH_SIZE].to(DEVICE, non_blocking=True)
-        lbl = val_labels[i:i + BATCH_SIZE].to(DEVICE, non_blocking=True)
+        ids = val_ids[i:i + BATCH_SIZE].to(DEVICE, non_blocking=True).long()
+        lbl = ids
         with torch.amp.autocast(DEVICE, dtype=torch.bfloat16):
             out = model(ids, labels=lbl)
         # 只看語言模型 loss，不含 aux_loss —— 那是正則項，不是能力指標
@@ -128,12 +128,11 @@ def run(name, data, seq_len=512):
     opt = torch.optim.AdamW(
         [{"params": decay, "weight_decay": WEIGHT_DECAY},
          {"params": no_decay, "weight_decay": 0.0}],
-        lr=LR, betas=(0.9, 0.95))
+        lr=LR, betas=(0.9, 0.95), fused=True)
     if VERBOSE_GROUPS:
         print(f"  weight decay: {sum(p.numel() for p in decay)/1e6:.2f}M 套用 / "
               f"{sum(p.numel() for p in no_decay)/1e6:.2f}M 豁免", flush=True)
-    train_ids, train_labels = data["train_ids"], data["train_labels"]
-    val_ids, val_labels = data["val_ids"], data["val_labels"]
+    train_ids, val_ids = data["train_ids"], data["val_ids"]
 
     # 固定批次順序：所有 config 看到完全相同的資料序列
     g = torch.Generator().manual_seed(SEED)
@@ -143,7 +142,10 @@ def run(name, data, seq_len=512):
     val_hist = {"step": [], "val_loss": []}
     model.train()
     t0 = time.time()
-    running, running_n = 0.0, 0
+    # loss 累加在 GPU 上，只在 log 時才 .item()。每步 .item() 會強制
+    # cudaStreamSynchronize，讓 CPU 無法提前排下一步的 kernel，形成 step 邊界氣泡。
+    running = torch.zeros((), device=DEVICE)
+    running_n = 0
 
     for step in range(1, STEPS + 1):
         lr = lr_at(step)
@@ -153,8 +155,9 @@ def run(name, data, seq_len=512):
         sel = order[((step - 1) * BATCH_SIZE) % train_ids.shape[0]:][:BATCH_SIZE]
         if sel.shape[0] < BATCH_SIZE:  # 繞回開頭
             sel = order[:BATCH_SIZE]
-        ids = train_ids[sel].to(DEVICE, non_blocking=True)
-        lbl = train_labels[sel].to(DEVICE, non_blocking=True)
+        # 資料以 int16 儲存 (省 4 倍 RAM)，逐 batch 轉回 long
+        ids = train_ids[sel].to(DEVICE, non_blocking=True).long()
+        lbl = ids  # packing 之後沒有 padding，每個位置都是有效預測目標
 
         with torch.amp.autocast(DEVICE, dtype=torch.bfloat16):
             out = model(ids, labels=lbl)
@@ -165,15 +168,16 @@ def run(name, data, seq_len=512):
         opt.step()
         opt.zero_grad(set_to_none=True)
 
-        running += out.loss.float().item()
+        running += out.loss.detach()
         running_n += 1
 
         if step % LOG_EVERY == 0:
-            avg = running / running_n
+            avg = (running / running_n).item()
             hist["step"].append(step)
             hist["train_loss"].append(avg)
             hist["lr"].append(lr)
-            running, running_n = 0.0, 0
+            running = torch.zeros((), device=DEVICE)
+            running_n = 0
             if step % (LOG_EVERY * 4) == 0:
                 el = time.time() - t0
                 eta = el / step * (STEPS - step)
@@ -181,7 +185,7 @@ def run(name, data, seq_len=512):
                       f"{step/el:.2f} it/s  eta {eta/60:.1f}min", flush=True)
 
         if step % EVAL_EVERY == 0 or step == STEPS:
-            vl = evaluate(model, val_ids, val_labels)
+            vl = evaluate(model, val_ids)
             val_hist["step"].append(step)
             val_hist["val_loss"].append(vl)
             print(f"  step {step:5d}  >>> val_loss={vl:.4f}  ppl={math.exp(min(vl,20)):.2f}", flush=True)
@@ -228,7 +232,7 @@ def main():
         RESULTS = os.path.join(HERE, args.out)
 
     data = torch.load(DATA)
-    print(f"資料：train={tuple(data['train_ids'].shape)} val={tuple(data['val_ids'].shape)}")
+    print(f"資料：train={tuple(data['train_ids'].shape)} val={tuple(data['val_ids'].shape)} dtype={data['train_ids'].dtype}")
     print(f"設定：steps={STEPS} bs={BATCH_SIZE} seq={data['seq_len']} lr={LR} seed={SEED}")
     print(f"每個 config 看到 {STEPS*BATCH_SIZE*data['seq_len']/1e6:.2f}M tokens")
 

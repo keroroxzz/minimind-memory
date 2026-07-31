@@ -495,9 +495,16 @@ class Attention(nn.Module):
             # 每個 Query token t 只能看到時間點 t' <= t 的所有層
             # 如果有 mems 或 past_key_value，需要加上偏移量
             if seq_len > 1:
+                # 快取 causal mask：形狀只由 (seq_len, total_seq_len) 決定，
+                # 原本每一層、每一步都重新配置一次，純屬浪費。
                 diag_offset = total_seq_len - seq_len
-                causal_mask = torch.tril(torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool), diagonal=diag_offset)
-                keep_mask = keep_mask & causal_mask
+                ck = (seq_len, total_seq_len, xq.device)
+                if getattr(self, "_causal_cache_key", None) != ck:
+                    self._causal_cache_key = ck
+                    self._causal_cache = torch.tril(
+                        torch.ones(seq_len, total_seq_len, device=xq.device, dtype=torch.bool),
+                        diagonal=diag_offset)
+                keep_mask = keep_mask & self._causal_cache
 
             # 沿著「層」維度平鋪，對齊 keys_total 的 [layer0(T), layer1(T), ...] 佈局
             extended_mask = keep_mask.repeat(1, 1, 1, current_layer_depth)
