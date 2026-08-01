@@ -62,6 +62,12 @@ CONFIGS = {
     # 這是 test-time compute scaling 的前提 —— 推論時才能自由加深。
     "loopR": dict(use_engram=False, use_dense_attention=False, num_loops=4,
                   loop_random_min=1, **LOOP_KW),
+    # E2b：修正版。從已找到迭代解的 loop4 出發（課程式），圈數分布偏深
+    # ({2,3,4,4,4} → 60% 落在 4 圈)，並讓模型看得見剩餘預算。
+    # loopR 均勻抽 [1,4] 失敗的原因：25% 的步在 1 圈，而 1 圈天花板 k≈2.7，
+    # 那些樣本目標不可達、梯度是噪音，把模型帶往只做 k<=2 的退化解。
+    "loopR2": dict(use_engram=False, use_dense_attention=False, num_loops=4,
+                   loop_random_choices=[2, 3, 4, 4, 4], loop_budget_embed=True, **LOOP_KW),
 }
 ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 
@@ -275,12 +281,15 @@ def run(name, args):
         kw.update(ENGRAM)
     torch.manual_seed(SEED); torch.cuda.manual_seed_all(SEED)
     model = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **kw))
-    if args.from_pretrain and os.path.exists(BASE_CKPT):
-        sd = torch.load(BASE_CKPT, map_location="cpu")
+    init_path = args.init_from or (BASE_CKPT if args.from_pretrain else None)
+    if init_path and os.path.exists(init_path):
+        sd = torch.load(init_path, map_location="cpu")
         miss, unexp = model.load_state_dict(sd, strict=False)
         if unexp:
             raise RuntimeError(f"checkpoint 與架構不符：{unexp[:3]}")
-        print(f"  從 pretrain checkpoint 出發", flush=True)
+        miss = [k for k in miss if not k.endswith(("freqs_cos", "freqs_sin"))]
+        print(f"  從 {os.path.basename(init_path)} 出發"
+              f"{f'（{len(miss)} 個新參數零初始化）' if miss else ''}", flush=True)
     model = model.to(DEVICE)
 
     torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
@@ -398,6 +407,7 @@ if __name__ == "__main__":
     ap.add_argument("--eval-loops", default=None, help='E2：逗號分隔的推論圈數，例如 "1,2,3,4,6,8"')
     ap.add_argument("--eval-k", default=None, help='只評這些 k，例如 "2,4,8,12,16,24"')
     ap.add_argument("--from-pretrain", type=int, default=1)
+    ap.add_argument("--init-from", default=None, help="指定初始 checkpoint（課程式微調用）")
     ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
     ap.add_argument("--ops", default="+-", help='數值鏈的運算集合')
     ap.add_argument("--task", default="perm", choices=["perm", "chain"],

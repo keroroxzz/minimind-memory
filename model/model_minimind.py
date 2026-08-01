@@ -90,6 +90,14 @@ class MiniMindConfig(PretrainedConfig):
         # 這是 test-time compute scaling 與自適應深度的前提：模型必須學會
         # 在任意圈數下都輸出合理結果。只在 use_cache=False 時生效。
         self.loop_random_min: int = kwargs.get("loop_random_min", 0)
+        # 明確指定訓練時的圈數候選（可重複以加權），例如 [2,3,4,4,4] 偏深。
+        # 均勻抽 [1,4] 會讓 25% 的步落在 1 圈，而 1 圈的天花板是 k≈2.7 ——
+        # 那些樣本目標不可達、梯度是噪音，實測會把模型帶往只做 k<=2 的退化解。
+        self.loop_random_choices: List[int] = kwargs.get("loop_random_choices", None)
+        # 除了「第幾圈」，也告訴模型「還剩幾圈」。原本模型看得到 loop_idx 卻看不到
+        # num_loops，等於要它適應一個看不見的預算。用獨立的零初始化投影，
+        # 既有 checkpoint 完全不受擾動。
+        self.loop_budget_embed: bool = kwargs.get("loop_budget_embed", False)
 
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -703,6 +711,10 @@ class MiniMindModel(nn.Module):
         if getattr(config, 'loop_index_embed', False):
             self.loop_embed_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
             nn.init.zeros_(self.loop_embed_proj.weight)
+        if getattr(config, 'loop_budget_embed', False):
+            # 獨立投影、零初始化 → 載入舊 checkpoint 時貢獻為 0，不擾動既有行為
+            self.loop_budget_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            nn.init.zeros_(self.loop_budget_proj.weight)
 
         # --- 初始化 Engram 模組 ---
         self.use_engram = getattr(config, 'use_engram', False)
@@ -710,16 +722,27 @@ class MiniMindModel(nn.Module):
             self.engram_layers = set(getattr(config, 'engram_layers', [0, 1]))
             self.engram_system = EngramManager(config)
 
-    def _loop_signal(self, loop_idx, device, dtype):
-        """第 loop_idx 圈的正弦位置編碼，經零初始化的投影層。"""
+    def _sinusoid(self, value, device):
         d = self.config.hidden_size
         half = d // 2
         freqs = torch.exp(-math.log(10000.0) * torch.arange(half, device=device, dtype=torch.float32) / half)
-        ang = float(loop_idx) * freqs
+        ang = float(value) * freqs
         sig = torch.cat([torch.sin(ang), torch.cos(ang)])
-        if sig.shape[0] < d:  # hidden_size 為奇數時補齊
+        if sig.shape[0] < d:
             sig = torch.cat([sig, sig.new_zeros(d - sig.shape[0])])
-        return self.loop_embed_proj(sig.to(dtype))
+        return sig
+
+    def _loop_signal(self, loop_idx, device, dtype, num_loops=None):
+        """第 loop_idx 圈的正弦編碼，經零初始化投影。
+
+        若啟用 loop_budget_embed，另外加上「還剩幾圈」的編碼 —— 模型必須看得到
+        預算才可能排程。用獨立投影，既有 checkpoint 的行為完全不變。
+        """
+        out = self.loop_embed_proj(self._sinusoid(loop_idx, device).to(dtype))
+        if getattr(self.config, 'loop_budget_embed', False) and num_loops is not None:
+            remaining = num_loops - 1 - loop_idx
+            out = out + self.loop_budget_proj(self._sinusoid(remaining, device).to(dtype))
+        return out
 
     def forward(self, input_ids, attention_mask=None, past_key_values=None, use_cache=False,
                 mems=None, num_loops=None, **kwargs):
@@ -739,7 +762,10 @@ class MiniMindModel(nn.Module):
             # 訓練時隨機抽圈數，讓模型學會在任意圈數下都輸出合理結果。
             # 有 KV cache 時不能抽 —— cache 的條目數等於 layers*num_loops，
             # 圈數一變 layout 就對不上了。
-            if self.training and lo > 0 and not use_cache and num_loops > lo:
+            choices = getattr(self.config, 'loop_random_choices', None)
+            if self.training and not use_cache and choices:
+                num_loops = int(choices[torch.randint(len(choices), (1,)).item()])
+            elif self.training and lo > 0 and not use_cache and num_loops > lo:
                 num_loops = int(torch.randint(lo, num_loops + 1, (1,)).item())
         total_layers = len(self.layers) * num_loops
         past_key_values = past_key_values or [None] * total_layers
@@ -800,7 +826,7 @@ class MiniMindModel(nn.Module):
                 hidden_states = hidden_states + input_emb
             if idx_embed:
                 hidden_states = hidden_states + self._loop_signal(
-                    loop_idx, hidden_states.device, hidden_states.dtype)
+                    loop_idx, hidden_states.device, hidden_states.dtype, num_loops)
 
             # 每個 loop 都重建 pool。dense attention 的不變量是「第 L 層的 Query 看得到第 1..L 層」；
             # 跨 loop 累積會讓深度變成 layers*num_loops，記憶體平方成長且違反該不變量。
