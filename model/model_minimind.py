@@ -98,6 +98,12 @@ class MiniMindConfig(PretrainedConfig):
         # num_loops，等於要它適應一個看不見的預算。用獨立的零初始化投影，
         # 既有 checkpoint 完全不受擾動。
         self.loop_budget_embed: bool = kwargs.get("loop_budget_embed", False)
+        # 跨迴圈的逐位置狀態通道（E3）。
+        # 文獻（Universal Transformers Need Memory）指出殘差流不足以支撐持續遞迴計算，
+        # 需要顯式的狀態外部化；該文用額外的 memory token，但那在 causal LM 下會洩漏 ——
+        # memory 若能看到未來 token，真實 token 再讀 memory 就等於看到未來。
+        # 這裡改成每個位置各自帶一條跨迴圈的狀態，因果安全且不需更動 mask。
+        self.loop_state_channel: bool = kwargs.get("loop_state_channel", False)
 
 
 # 🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏🌎🌍🌏
@@ -715,6 +721,12 @@ class MiniMindModel(nn.Module):
             # 獨立投影、零初始化 → 載入舊 checkpoint 時貢獻為 0，不擾動既有行為
             self.loop_budget_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
             nn.init.zeros_(self.loop_budget_proj.weight)
+        if getattr(config, 'loop_state_channel', False):
+            # read 零初始化 → 起始時狀態通道完全不影響輸出，既有 checkpoint 零擾動
+            self.state_read = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            nn.init.zeros_(self.state_read.weight)
+            self.state_write = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+            self.state_gate = nn.Parameter(torch.zeros(config.hidden_size))
 
         # --- 初始化 Engram 模組 ---
         self.use_engram = getattr(config, 'use_engram', False)
@@ -816,6 +828,8 @@ class MiniMindModel(nn.Module):
 
         past_kv_idx = 0
         input_emb = hidden_states          # 供 input injection 使用
+        use_state = getattr(self.config, 'loop_state_channel', False)
+        loop_state = torch.zeros_like(hidden_states) if use_state else None
         inject = getattr(self.config, 'loop_input_injection', False)
         idx_embed = getattr(self.config, 'loop_index_embed', False)
 
@@ -827,6 +841,8 @@ class MiniMindModel(nn.Module):
             if idx_embed:
                 hidden_states = hidden_states + self._loop_signal(
                     loop_idx, hidden_states.device, hidden_states.dtype, num_loops)
+            if use_state and loop_idx > 0:
+                hidden_states = hidden_states + self.state_read(loop_state)
 
             # 每個 loop 都重建 pool。dense attention 的不變量是「第 L 層的 Query 看得到第 1..L 層」；
             # 跨 loop 累積會讓深度變成 layers*num_loops，記憶體平方成長且違反該不變量。
@@ -867,6 +883,11 @@ class MiniMindModel(nn.Module):
                     next_mems.append(cat_mem[:, -self.config.mem_len:].detach())
                     
                 past_kv_idx += 1
+
+            if use_state:
+                # GRU 風格的閘控寫入：舊狀態與新內容之間插值，避免長迴圈下爆炸或消失
+                g = torch.sigmoid(self.state_gate)
+                loop_state = g * loop_state + (1 - g) * self.state_write(hidden_states)
 
         hidden_states = self.norm(hidden_states)
         # 除以 num_loops，讓 router_aux_loss_coef 的量級不隨 num_loops 改變

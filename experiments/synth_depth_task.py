@@ -68,6 +68,14 @@ CONFIGS = {
     # 那些樣本目標不可達、梯度是噪音，把模型帶往只做 k<=2 的退化解。
     "loopR2": dict(use_engram=False, use_dense_attention=False, num_loops=4,
                    loop_random_choices=[2, 3, 4, 4, 4], loop_budget_embed=True, **LOOP_KW),
+    # E3：跨迴圈狀態通道。與 loop2/loop3 成對比較 —— 若狀態能替代深度，
+    # 加了狀態的 loop2 應該接近沒狀態的 loop3。
+    "loop2S": dict(use_engram=False, use_dense_attention=False, num_loops=2,
+                   loop_state_channel=True, **LOOP_KW),
+    "loop3S": dict(use_engram=False, use_dense_attention=False, num_loops=3,
+                   loop_state_channel=True, **LOOP_KW),
+    "loop1S": dict(use_engram=False, use_dense_attention=False, num_loops=1,
+                   loop_state_channel=True, **LOOP_KW),
 }
 ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 
