@@ -84,9 +84,24 @@ It scales badly in both depth and context.
 4.6× the parameters. But note that pretrain perplexity mostly rewards memorisation — the axis
 engram is supposed to *offload* — so this is weak evidence either way.
 
-**`use_looped_transformer` is the mechanism that actually adds sequential computation**
-(`num_loops` × layers effective steps for ~0.5M extra parameters) and **has never been
-evaluated**. It is the most promising untested item in the repo.
+**`use_looped_transformer` buys reasoning depth super-linearly — the strongest result here.**
+S₅ composition, k=1..24, 12000 steps, all four from one shared checkpoint, and loop2/3/4 carrying
+*identical* parameter counts (29.50M) so only compute differs:
+
+| | steps | overall | ceiling k* | k*/steps | VRAM |
+|---|---|---|---|---|---|
+| loop1 | 8 | 10.3% | 2.69 | 0.34 | 2.54 G |
+| loop2 | 16 | 20.1% | 4.83 | 0.30 | 4.18 G |
+| loop3 | 24 | 73.2% | **17.92** | **0.75** | 5.84 G |
+| loop4 | 32 | **99.1%** | **>24** | >0.75 | 7.50 G |
+
+Not linear — super-linear, and not smooth: loop2→loop3 is 1.5× the compute for 3.7× the ceiling,
+with `k*/steps` jumping 0.30 → 0.75. This looks like a phase transition in strategy: at ≤2 loops
+the model appears to use a shallow lookup, at ≥3 loops something close to the actual iterative
+algorithm (loop3 degrades right where its 24 steps run out, at k≈18).
+
+**+0.9% parameters bought >9× reasoning depth**, at 3× VRAM. This is the mechanism the thesis
+needs; CompleteAttention does the opposite.
 
 Pretrain reference numbers (246M tokens, 30k steps, bs16, seq512): vanilla val_loss 1.696
 (ppl 5.45), 40.6 min, 3.25 GiB peak on an RTX 4070.
