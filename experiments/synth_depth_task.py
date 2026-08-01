@@ -58,6 +58,10 @@ CONFIGS = {
     "loop2": dict(use_engram=False, use_dense_attention=False, num_loops=2, **LOOP_KW),
     "loop3": dict(use_engram=False, use_dense_attention=False, num_loops=3, **LOOP_KW),
     "loop4": dict(use_engram=False, use_dense_attention=False, num_loops=4, **LOOP_KW),
+    # E2：訓練時從 [1,4] 隨機抽圈數，讓模型學會在任意深度都輸出合理結果。
+    # 這是 test-time compute scaling 的前提 —— 推論時才能自由加深。
+    "loopR": dict(use_engram=False, use_dense_attention=False, num_loops=4,
+                  loop_random_min=1, **LOOP_KW),
 }
 ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 
@@ -226,7 +230,7 @@ def labels_of(ids, plen, tlen):
 
 
 @torch.no_grad()
-def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0):
+def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0, n_loops=None, only_k=None):
     """逐 k 計算正確率。貪婪解碼，答案必須完全相符。"""
     from collections import defaultdict
     hit, tot = defaultdict(int), defaultdict(int)
@@ -235,12 +239,15 @@ def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0):
     for r in val_rows:
         by_k[r["k"]].append(r)
     for k in sorted(by_k):
+        if only_k and k not in only_k:
+            continue
         for r in by_k[k][:max_per_k]:
             g_t0 = time.time()
             ids = tok(tok.bos_token + r["prompt"], add_special_tokens=False,
                       return_tensors="pt").input_ids.to(DEVICE)
+            gkw = {"num_loops": n_loops} if n_loops else {}
             out = model.generate(ids, max_new_tokens=6, do_sample=False,
-                                 eos_token_id=tok.eos_token_id)
+                                 eos_token_id=tok.eos_token_id, **gkw)
             gen_txt = tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
             if throttle < 1.0:
                 torch.cuda.synchronize()
@@ -323,8 +330,26 @@ def run(name, args):
             run_loss = torch.zeros((), device=DEVICE); run_n = 0
 
     model.eval()
-    per_k = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
-                     throttle=args.throttle)
+    if args.eval_loops:
+        loops = [int(x) for x in args.eval_loops.split(",")]
+        only = [int(x) for x in args.eval_k.split(",")] if args.eval_k else None
+        by_loop = {}
+        print(f"\n  test-time scaling：同一組權重，推論圈數 {loops}", flush=True)
+        for L in loops:
+            pk = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
+                          throttle=args.throttle, n_loops=L, only_k=only)
+            by_loop[L] = pk
+            ov = sum(v["correct"] for v in pk.values()) / max(sum(v["total"] for v in pk.values()), 1)
+            seen = " ".join(f"k{k}:{v['acc']:.0%}" for k, v in sorted(pk.items()))
+            print(f"    {L} 圈{'（訓練沒見過）' if L > 4 else '':　<8s}  整體 {ov:6.1%}   {seen}", flush=True)
+        res = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
+        res[name + "_ttscale"] = {str(L): {str(k): v for k, v in pk.items()}
+                                  for L, pk in by_loop.items()}
+        json.dump(res, open(RESULTS, "w"), indent=2, ensure_ascii=False)
+        per_k = by_loop[loops[-1]]
+    else:
+        per_k = acc_by_k(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
+                         throttle=args.throttle)
     elapsed = time.time() - t0
     overall = sum(v["correct"] for v in per_k.values()) / max(sum(v["total"] for v in per_k.values()), 1)
     print(f"\n  逐深度正確率（置換全對基準 1/120=0.8%；逐位置基準 20%）：")
@@ -370,6 +395,8 @@ if __name__ == "__main__":
     ap.add_argument("--accum", type=int, default=1, help="梯度累積步數；等效 batch = batch_size*accum")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--eval-per-k", type=int, default=200)
+    ap.add_argument("--eval-loops", default=None, help='E2：逗號分隔的推論圈數，例如 "1,2,3,4,6,8"')
+    ap.add_argument("--eval-k", default=None, help='只評這些 k，例如 "2,4,8,12,16,24"')
     ap.add_argument("--from-pretrain", type=int, default=1)
     ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
     ap.add_argument("--ops", default="+-", help='數值鏈的運算集合')
