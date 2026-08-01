@@ -1,6 +1,6 @@
 # 研究規劃：邏輯推論 / 記憶分離
 
-最後更新：2026-08-01（E1 完成）
+最後更新：2026-08-01（E1 完成、E2 失敗並修正中、補查文獻）
 
 ---
 
@@ -152,6 +152,76 @@ pretrain perplexity 3.34 vs vanilla 3.28（4.6× 參數卻更差）。但 **pret
 - **中文數學的答案抽取不可靠** —— 「取最後一個數字」四題只對一題（餘數、多部分答案）
 - **推論路徑才是 bug 的溫床** —— 本 repo 24 個 bug 幾乎全在增量解碼路徑，訓練路徑大多正確
 - **中止實驗時要清掉對應的等待迴圈**，否則會留下永遠不會觸發的殭屍
+
+
+---
+
+## 4.5 相關文獻與定位（2026-08-01 補查）
+
+**查文獻的時機錯了。** 這一節是在 E1/E2 都跑完之後才補的，而其中一篇直接寫著 E2 失敗的原因 ——
+如果先查，那 3 小時可以省下來。**文獻檢索應該前置到實驗設計，不是事後對答案。**
+
+（下列除 *Universal Transformers Need Memory* 外，其餘僅讀過摘要與檢索片段，未通讀全文。）
+
+### 我們獨立重現了一個已知結果
+
+[Chain of Thought Empowers Transformers to Solve Inherently Serial Problems](https://proceedings.iclr.cc/paper_files/paper/2024/file/3309b4112c9f04a993f2bbdd0274bba1-Paper-Conference.pdf)（ICLR 2024）
+證明 S₅ 字問題是 NC¹-完備，且實測**固定深度、無 CoT 的 transformer 在置換合成上約 20% 正確率 —— 不比隨機好**。
+
+我們的 loop1 逐位置正確率正是 ~20%。任務選擇的理論依據因此得到獨立確認。
+
+**我們在他們之外的部分**：他們證明 CoT 提供序列計算；我們展示**遞迴深度也可以，且不需吐出任何 token**（E1 的超線性）。
+
+### E2 的失敗，文獻早有答案
+
+[Geiping et al. 2025 — Scaling up Test-Time Compute with Latent Reasoning](https://arxiv.org/abs/2502.05171)
+（Huginn-3.5B，800B tokens，推論可達 50 圈）用 **Poisson 分布抽圈數、重心在深處**。
+
+我用均勻 [1,4]、25% 落在最淺處，正是他們刻意避開的做法。
+
+### 一篇直接證實了我對 E3 的預測
+
+[Universal Transformers Need Memory: Depth-State Trade-offs](https://arxiv.org/html/2604.21999v3)（已讀）：
+
+> 「殘差流本身不足以支撐持續的遞迴計算，需要某種形式的**顯式狀態外部化**。」
+
+- 記憶 token 為 0 → 正確率 **2.5%**；8 個以上 → **57.4%**（Sudoku-Extreme）
+- **深度與狀態是可互相替代的資源** —— 記憶多就能用更少迴圈達到同樣正確率
+- 並指出 HRM、TRM、URM、MeSH、Ouro、Huginn 都獨立加了持久狀態 → 這是架構必然而非特例
+- 作者自陳結論「可能是任務特定的」
+
+**影響**：E3 不必再驗證「需不需要狀態」，直接做「怎麼加、代價多少」。
+
+### 自適應深度已被反覆實作
+
+| 工作 | 做法 |
+|---|---|
+| [Mixture-of-Recursions](https://arxiv.org/html/2507.10524v1) | token 級動態遞迴深度 |
+| Ouro (Zhu et al. 2025) | 熵正則化 early exit，熵低於學到的閾值就退出 |
+| ANIRA | 兩種 decider：Prelude 一次決定 vs 每圈線上判斷 —— **正是我們討論過的兩個選項** |
+| [Adaptive Depth in Looped Transformers](https://arxiv.org/html/2607.20519v1) | 診斷學到的 halting gate |
+| [Dense Supervision Is Not Enough](https://arxiv.org/pdf/2606.24898) | **逐圈監督不足以解決 readout 問題** —— 直接打到我提的修法 3 |
+
+**影響**：E5/E6 的機制新穎性低。但**可控 ground-truth 難度的測試台仍稀缺** ——
+多數論文驗不了「圈數是否真的對應難度」，這是 E6 保留下來的理由。
+
+### 記憶軸
+
+| 工作 | 與本研究的關係 |
+|---|---|
+| [Pre-training Limited Memory LMs with Internal and External Knowledge](https://arxiv.org/html/2505.15962) | **預訓練時把被檢索到的事實從 loss 遮蔽**，強迫查庫。比「每樣本重抽記憶」更直接 |
+| [Pretraining with hierarchical memories](https://arxiv.org/pdf/2510.02375) | 分離長尾與常見知識 |
+| [Digital Metabolism: Decoupling Logic from Facts](https://arxiv.org/pdf/2601.10810) | 標題即本研究的命題 |
+| RETRO / kNN-LM | 凍結檢索器 + 可微分整合的經典做法 |
+
+**影響**：M1 的強制分離手段改用 **loss 遮蔽**，不只靠重抽。
+
+### 本研究還站得住的位置
+
+1. **極小規模（29M）下的深度縮放曲線** —— 文獻多在 1B–3.5B，小模型的相變點沒人量過
+2. **可控難度的測試台** —— 能驗證「圈數 ↔ 真實難度」的對應，多數工作做不到
+3. **成本核算的紀律** —— 參數／VRAM／tokens-per-second 三軸並陳
+4. **深度 × 記憶的交互** —— 兩條軸都有人做，但在同一個可控測試台上量交互的還少
 
 ---
 
