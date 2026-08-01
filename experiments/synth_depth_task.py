@@ -132,31 +132,67 @@ def make_lookup(k, rng, n_gen=N_GEN):
     return mem + f" | 求f{g}=", " ".join(map(str, defs[g])), defs
 
 
-def make_mem(k, rng, n_gen=N_GEN, distractors=0):
-    """R3：生成元定義放在 prompt 的記憶區，每個樣本重抽。
+KEY_POOL = ["ka", "z7", "p2", "mq", "vb", "x9", "ct", "ry", "jw", "n4", "hs", "d6"]
 
-    現行 make_perm 的 f0..f7 是固定的 —— 模型把它們背進權重，那正是「參數知識」。
-    這裡每個樣本重新抽定義，於是背下來不只沒用，而是**主動有害**（背的必答錯）。
-    模型只能去讀記憶區。
 
-    distractors：記憶區裡塞入未被使用的定義，測「從無關內容中檢索」。
+def make_mem(k, rng, n_gen=N_GEN, distractors=0, shuffle=True, rename=False, cf=None):
+    """P2a：生成元定義放在 prompt 的記憶區，每個樣本重抽。
+
+    make_perm 的 f0..f7 是固定的 —— 模型把它們背進權重，那正是「參數知識」。
+    這裡每樣本重抽定義，背下來不只沒用而是**主動有害**，模型只能去讀記憶區。
+
+    shuffle：記憶條目順序隨機化。**必須開啟** —— 否則 key 與位置完全相關，
+             模型可以用「第幾條」取代 key lookup，容量曲線就量不到真東西。
+    rename ：改用隨機 key 符號（ka/z7/...），測是否依賴 f0..f7 的固定語意。
+    cf     ：'used'   換掉一條實際被用到的定義，答案**必須**改變 → 測記憶跟隨
+             'unused' 換掉一條沒被用到的定義，答案**不應**改變 → 測選擇性
+             回傳 (prompt, answer, cf_prompt, cf_answer, 換掉的索引)
     """
-    defs = []
-    used = set()
-    while len(defs) < n_gen + distractors:
-        q = list(range(PERM_N)); rng.shuffle(q)
-        t = tuple(q)
-        if q != list(range(PERM_N)) and t not in used:
-            used.add(t); defs.append(q)
-    mem = " ".join(f"f{i}=" + " ".join(map(str, d)) for i, d in enumerate(defs))
+    total = n_gen + distractors
+    defs, seen = [], set()
+    while len(defs) < total:
+        q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+        if q != list(range(PERM_N)) and t not in seen:
+            seen.add(t); defs.append(q)
 
-    state = list(range(PERM_N)); rng.shuffle(state)
-    prompt = mem + " | x=" + " ".join(map(str, state))
-    for _ in range(k):
-        g = rng.randrange(n_gen)          # 只用前 n_gen 個，其餘是干擾項
-        state = [state[defs[g][i]] for i in range(PERM_N)]
-        prompt += f" f{g}"
-    return prompt + f" 求x=", " ".join(map(str, state)), defs
+    names = (rng.sample(KEY_POOL, total) if rename else [f"f{i}" for i in range(total)])
+    order = list(range(total))
+    if shuffle:
+        rng.shuffle(order)
+
+    def render(dfs):
+        return " ".join(f"{names[i]}=" + " ".join(map(str, dfs[i])) for i in order)
+
+    state0 = list(range(PERM_N)); rng.shuffle(state0)
+    chain = [rng.randrange(n_gen) for _ in range(k)]        # 干擾項永遠不被使用
+
+    def run(dfs):
+        st = list(state0)
+        for g in chain:
+            st = [st[dfs[g][i]] for i in range(PERM_N)]
+        return " ".join(map(str, st))
+
+    tail = " | x=" + " ".join(map(str, state0)) + "".join(f" {names[g]}" for g in chain) + " 求x="
+    prompt, answer = render(defs) + tail, run(defs)
+    if cf is None:
+        return prompt, answer, defs
+
+    pool = sorted(set(chain)) if cf == "used" else [i for i in range(total) if i not in set(chain)]
+    if not pool:
+        return None
+    for _ in range(50):
+        tgt = pool[rng.randrange(len(pool))]
+        alt = [d[:] for d in defs]
+        q = list(range(PERM_N)); rng.shuffle(q)
+        if q == defs[tgt]:
+            continue
+        alt[tgt] = q
+        cf_ans = run(alt)
+        # S5 中換掉生成元後結果仍可能碰巧相同 —— used 配對必須丟棄這種，
+        # 否則分不出模型是「跟隨記憶」還是「忽略修改」。
+        if (cf == "used") == (cf_ans != answer):
+            return prompt, answer, render(alt) + tail, cf_ans, tgt
+    return None
 
 
 def make_perm(k, rng):
@@ -242,6 +278,19 @@ def gen(args):
     # 不要改用「切分狀態空間」來做 held-out：那在混合運算下安全，但在純加減下致命
     # （答案永遠黏在 v0 附近，實測訓練值域內 100%、值域外 0%，而 loss 只有 0.02）。
     val_rows = build(args.val_per_k, random.Random(SEED + 999), unique=True)
+    if args.task == "mem":
+        # 成對反事實：聚合正確率會被捷徑污染，真正的判準是「同一問題只因記憶改變
+        # 而得到不同答案時，模型跟不跟得上」。used 必須改變、unused 必須不變。
+        cf_rng = random.Random(SEED + 4242)
+        for r in val_rows:
+            for kind in ("used", "unused"):
+                got = make_mem(r["k"], cf_rng, args.n_gen, args.distractors, cf=kind)
+                if got:
+                    _, _, cp, ca, _ = got
+                    r[f"cf_{kind}_prompt"], r[f"cf_{kind}_answer"] = cp, ca
+        n_u = sum(1 for r in val_rows if "cf_used_prompt" in r)
+        n_n = sum(1 for r in val_rows if "cf_unused_prompt" in r)
+        print(f"  反事實配對：used {n_u} 對 / unused {n_n} 對")
     val_set = {r["prompt"] for r in val_rows}
     train_rows = build(args.train_per_k, random.Random(SEED), unique=False, exclude=val_set)
     assert not ({r["prompt"] for r in train_rows} & val_set)
@@ -310,6 +359,37 @@ def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0, n_loops=None, on
     return {k: {"correct": hit[k], "total": tot[k], "acc": hit[k] / max(tot[k], 1),
                 "pos_acc": pos[k] / max(tot[k], 1), "wellformed": wf[k] / max(tot[k], 1)}
             for k in sorted(tot)}
+
+
+@torch.no_grad()
+def cf_eval(model, tok, val_rows, n=300, n_loops=None):
+    """成對反事實評測。回傳四個指標，其中 C_cf 才是真正的門檻。"""
+    def gen_one(prompt):
+        ids = tok(tok.bos_token + prompt, add_special_tokens=False,
+                  return_tensors="pt").input_ids.to(DEVICE)
+        kw = {"num_loops": n_loops} if n_loops else {}
+        out = model.generate(ids, max_new_tokens=8, do_sample=False,
+                             eos_token_id=tok.eos_token_id, **kw)
+        return tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+
+    m = dict(full=0, mem=0, stale=0, both=0, n_used=0, unused_inv=0, n_unused=0)
+    for r in [x for x in val_rows if "cf_used_prompt" in x][:n]:
+        p0, a0 = gen_one(r["prompt"]), r["answer"]
+        p1, a1 = gen_one(r["cf_used_prompt"]), r["cf_used_answer"]
+        m["n_used"] += 1
+        m["full"] += (p0 == a0)
+        m["mem"] += (p1 == a1)
+        m["stale"] += (p1 == a0)          # 換了記憶卻還是給舊答案
+        m["both"] += (p0 == a0 and p1 == a1)
+    for r in [x for x in val_rows if "cf_unused_prompt" in x][:n]:
+        p0 = gen_one(r["prompt"])
+        p1 = gen_one(r["cf_unused_prompt"])
+        m["n_unused"] += 1
+        m["unused_inv"] += (p0 == p1)     # 改無關條目，輸出不應變
+    u, v = max(m["n_used"], 1), max(m["n_unused"], 1)
+    return {"A_full": m["full"]/u, "A_mem": m["mem"]/u, "S_stale": m["stale"]/u,
+            "C_cf": m["both"]/u, "unused_invariance": m["unused_inv"]/v,
+            "n_used": m["n_used"], "n_unused": m["n_unused"]}
 
 
 def run(name, args):
@@ -408,6 +488,16 @@ def run(name, args):
         print(f"    {k:>3d} {v['acc']:8.1%} {v['pos_acc']:8.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
 
+    if args.cf_eval and any("cf_used_prompt" in r for r in d["val_rows"]):
+        cf = cf_eval(model, tok, d["val_rows"], n=args.cf_n)
+        print(f"\n  成對反事實（n={cf['n_used']}）：")
+        print(f"    A_full  原始正確率           {cf['A_full']:6.1%}")
+        print(f"    A_mem   反事實正確率         {cf['A_mem']:6.1%}")
+        print(f"    S_stale 換了記憶仍給舊答案   {cf['S_stale']:6.1%}  ← 越低越好")
+        print(f"    C_cf    兩個世界都對         {cf['C_cf']:6.1%}  ← 真正的門檻")
+        print(f"    unused  改無關條目輸出不變   {cf['unused_invariance']:6.1%}", flush=True)
+        per_k["_cf"] = cf
+
     ck = os.path.join(HERE, f"synth_{name.replace('+','_')}.pth")
     torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ck)
 
@@ -451,6 +541,8 @@ if __name__ == "__main__":
     ap.add_argument("--init-from", default=None, help="指定初始 checkpoint（課程式微調用）")
     ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
     ap.add_argument("--ops", default="+-", help='數值鏈的運算集合')
+    ap.add_argument("--cf-eval", type=int, default=1, help="mem 任務跑成對反事實評測")
+    ap.add_argument("--cf-n", type=int, default=200, help="反事實配對數")
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
