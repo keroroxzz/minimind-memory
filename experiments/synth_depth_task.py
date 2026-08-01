@@ -40,7 +40,7 @@ from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "synth_depth.pt")
-RESULTS = os.path.join(HERE, "results_synth.json")
+RESULTS = os.path.join(HERE, "results_synth.json")   # 由 main() 依 --task 覆寫
 BASE_CKPT = os.path.join(HERE, "ckpt_vanilla.pth")
 
 BACKBONE = dict(hidden_size=512, num_hidden_layers=8, num_attention_heads=8,
@@ -82,7 +82,7 @@ ENGRAM = dict(engram_offload_cpu=False, engram_layers=[2, 4, 6])
 import string
 MAX_K = 6                       # 由 --max-k 覆寫
 NAMES = string.ascii_lowercase   # 最多支援 k=25
-SEQ_LEN = 176                    # k=16 的題目約 80 tokens，留餘裕
+SEQ_LEN = 160                    # mem 任務：記憶區 ~72 + k=12 的鏈 ~30 + 答案 5
 DEVICE = "cuda"
 SEED = 42
 
@@ -114,6 +114,49 @@ def _generators(seed=20260731):
 
 
 GENS = _generators()
+
+
+def make_lookup(k, rng, n_gen=N_GEN):
+    """純檢索診斷：只要求把被查詢的定義原樣輸出，完全不含組合。
+
+    這是 match-and-copy（induction head）能力的最小測試。
+    若這個都學不會，代表失敗在檢索本身，而不是「檢索 + 組合」的疊加。
+    """
+    defs, used = [], set()
+    while len(defs) < n_gen:
+        q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+        if q != list(range(PERM_N)) and t not in used:
+            used.add(t); defs.append(q)
+    mem = " ".join(f"f{i}=" + " ".join(map(str, d)) for i, d in enumerate(defs))
+    g = rng.randrange(n_gen)
+    return mem + f" | 求f{g}=", " ".join(map(str, defs[g])), defs
+
+
+def make_mem(k, rng, n_gen=N_GEN, distractors=0):
+    """R3：生成元定義放在 prompt 的記憶區，每個樣本重抽。
+
+    現行 make_perm 的 f0..f7 是固定的 —— 模型把它們背進權重，那正是「參數知識」。
+    這裡每個樣本重新抽定義，於是背下來不只沒用，而是**主動有害**（背的必答錯）。
+    模型只能去讀記憶區。
+
+    distractors：記憶區裡塞入未被使用的定義，測「從無關內容中檢索」。
+    """
+    defs = []
+    used = set()
+    while len(defs) < n_gen + distractors:
+        q = list(range(PERM_N)); rng.shuffle(q)
+        t = tuple(q)
+        if q != list(range(PERM_N)) and t not in used:
+            used.add(t); defs.append(q)
+    mem = " ".join(f"f{i}=" + " ".join(map(str, d)) for i, d in enumerate(defs))
+
+    state = list(range(PERM_N)); rng.shuffle(state)
+    prompt = mem + " | x=" + " ".join(map(str, state))
+    for _ in range(k):
+        g = rng.randrange(n_gen)          # 只用前 n_gen 個，其餘是干擾項
+        state = [state[defs[g][i]] for i in range(PERM_N)]
+        prompt += f" f{g}"
+    return prompt + f" 求x=", " ".join(map(str, state)), defs
 
 
 def make_perm(k, rng):
@@ -157,61 +200,51 @@ def make_one(k, rng, v0_lo=10, v0_hi=79, ops="+-"):
 
 
 def gen(args):
-    tok = AutoTokenizer.from_pretrained(os.path.join(HERE, "..", "model"))
-    rng = random.Random(SEED)
-    per_k_train = args.train_per_k
-    per_k_val = args.val_per_k
+    """四個任務共用同一個生成骨架，差別只在「怎麼產一條樣本」。
 
-    def build(n_per_k, rng, v0_lo, v0_hi, unique):
-        """unique=True 時去重（val 用）；train 允許重複，反正就是重複樣本。"""
+    TASKS 把每個任務歸約成一個 (k, rng) -> (prompt, answer) 的函式，
+    其餘（去重、train/val 互斥、樣本數控制）完全共用。
+    """
+    tok = AutoTokenizer.from_pretrained(os.path.join(HERE, "..", "model"))
+
+    TASKS = {
+        # 數值鏈：已知有缺陷，保留供對照。純加減可交換 → 塌縮成求和(TC0)；
+        # 含乘法則把答案熵從 3.08 壓到 0.62 bit，長鏈變成猜比算划算。
+        "chain":  lambda k, rng: make_one(k, rng, 0, 99, args.ops),
+        # S5 置換合成：不可交換且分布不塌縮，量深度的正確工具
+        "perm":   lambda k, rng: make_perm(k, rng),
+        # 定義搬進 prompt 的記憶區、每樣本重抽 → 背下來主動有害
+        "mem":    lambda k, rng: make_mem(k, rng, args.n_gen, args.distractors)[:2],
+        # 純檢索（match-and-copy），不含組合。用來分離「檢索」與「運用檢索結果」
+        "lookup": lambda k, rng: make_lookup(k, rng)[:2],
+    }
+    make = TASKS[args.task]
+
+    def build(n_per_k, rng, unique, exclude=None):
         rows = []
         for k in range(1, MAX_K + 1):
-            seen, made, attempts = set(), 0, 0
-            while made < n_per_k and attempts < n_per_k * 50:
-                attempts += 1
-                p, a = make_one(k, rng, v0_lo, v0_hi, args.ops)
-                if unique:
-                    if p in seen:
-                        continue
-                    seen.add(p)
-                rows.append({"k": k, "prompt": p, "answer": a})
+            seen, made, att = set(), 0, 0
+            while made < n_per_k and att < n_per_k * 50:
+                att += 1
+                pr, a = make(k, rng)
+                if unique and pr in seen:
+                    continue
+                if exclude and pr in exclude:
+                    continue
+                seen.add(pr)
+                rows.append({"k": k, "prompt": pr, "answer": a})
                 made += 1
             if made < n_per_k:
                 print(f"  ⚠️  k={k} 只產生 {made}/{n_per_k} 條（問題空間已窮盡）")
         return rows
 
-    # train / val 共用完整值域 0..99，改以「val 先生成、train 排除它們」確保零重疊。
-    #
-    # 早期版本用互斥的起始值域 (train 10-79 / val 80-99)。那在混合運算下沒問題 ——
-    # 乘法兩三步就把值打散到整個 0..99，模型被迫學會真正的模算術。但在**純加減**下
-    # 是致命的：答案永遠是 v0 + Σ±rhs，值黏在 v0 附近，模型只要記住訓練那段帶狀區域
-    # 就能把 loss 壓到 0.02，而 94+9=103→03 這種繞回在訓練中幾乎不出現。
-    # 實測：訓練值域內 k=1 100% / k=4 99%，val 值域 0% / 0%。
-    #
-    # 預設純加減：乘法會把答案熵從 3.08 壓到 0.62 bit，長鏈變成猜比算划算
-    # (實測純乘法正確率隨深度「上升」到 87%)，會污染深度的量測。
-    if args.task == "perm":
-        def build_perm(n, rng, unique, exclude=None):
-            rows = []
-            for k in range(1, MAX_K + 1):
-                seen, made, att = set(), 0, 0
-                while made < n and att < n * 50:
-                    att += 1
-                    p, a = make_perm(k, rng)
-                    if unique and p in seen: continue
-                    if exclude and p in exclude: continue
-                    seen.add(p); rows.append({"k": k, "prompt": p, "answer": a}); made += 1
-            return rows
-        val_rows = build_perm(per_k_val, random.Random(SEED + 999), unique=True)
-        vs = {r["prompt"] for r in val_rows}
-        train_rows = build_perm(per_k_train, rng, unique=False, exclude=vs)
-        assert not ({r["prompt"] for r in train_rows} & vs)
-    else:
-        val_rows = build(per_k_val, random.Random(SEED + 999), 0, 99, unique=True)
-        val_set = {r["prompt"] for r in val_rows}
-        train_rows = [r for r in build(int(per_k_train * 1.02), rng, 0, 99, unique=False)
-                      if r["prompt"] not in val_set]
-        assert not ({r["prompt"] for r in train_rows} & val_set)
+    # val 先生成並去重，train 再排除它們 —— 保證零重疊。
+    # 不要改用「切分狀態空間」來做 held-out：那在混合運算下安全，但在純加減下致命
+    # （答案永遠黏在 v0 附近，實測訓練值域內 100%、值域外 0%，而 loss 只有 0.02）。
+    val_rows = build(args.val_per_k, random.Random(SEED + 999), unique=True)
+    val_set = {r["prompt"] for r in val_rows}
+    train_rows = build(args.train_per_k, random.Random(SEED), unique=False, exclude=val_set)
+    assert not ({r["prompt"] for r in train_rows} & val_set)
 
     def encode(rows):
         ids, plen, tlen, ks = [], [], [], []
@@ -418,12 +451,18 @@ if __name__ == "__main__":
     ap.add_argument("--init-from", default=None, help="指定初始 checkpoint（課程式微調用）")
     ap.add_argument("--max-k", type=int, default=6, help="最大推理深度")
     ap.add_argument("--ops", default="+-", help='數值鏈的運算集合')
-    ap.add_argument("--task", default="perm", choices=["perm", "chain"],
+    ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
+    ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
+    ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
     a = ap.parse_args()
     MAX_K = a.max_k
+    # 每個任務寫自己的結果檔，避免不同任務互相覆蓋
+    # （先前得手動 cp 出六個快照才不會弄丟）
+    RESULTS = os.path.join(HERE, a.out) if a.out else os.path.join(HERE, f"results_{a.task}.json")
     if a.throttle < 1.0:
         print(f"⚙️  GPU 節流至 {a.throttle:.0%} duty cycle（降溫用，時間約 {1/a.throttle:.1f}x）")
     if a.gen: gen(a)
