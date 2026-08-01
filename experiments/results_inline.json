@@ -1,0 +1,188 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 1.0,
+    "params_M": 29.500928,
+    "wall_clock_s": 3600.6451563835144,
+    "steps": 12000,
+    "peak_vram_GiB": 3.759467124938965
+  },
+  "loop4": {
+    "per_k": {
+      "1": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 150,
+        "total": 150,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 1.0,
+    "params_M": 29.500928,
+    "wall_clock_s": 6723.085122346878,
+    "steps": 12000,
+    "peak_vram_GiB": 6.66829776763916
+  }
+}

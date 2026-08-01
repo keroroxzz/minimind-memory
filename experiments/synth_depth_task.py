@@ -541,6 +541,12 @@ def run(name, args):
 
     res = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
     res[name] = {"per_k": {str(k): v for k, v in per_k.items()}, "overall": overall,
+                 # 記下訓練分布 —— 天花板 k* 對它極度敏感（同一模型在
+                 # k<=12 訓練是 k*~7，在 k<=24 訓練是 k*~2.69）。
+                 # 沒有這欄，跨檔比較就會不知不覺比到兩種不同的東西。
+                 "train_dist": {"task": args.task, "max_k": MAX_K, "steps": steps,
+                                "n_gen": args.n_gen, "ops": args.ops,
+                                "train_per_k": None},
                  "params_M": sum(p.numel() for p in model.parameters()) / 1e6,
                  "wall_clock_s": elapsed, "steps": steps,
                  "peak_vram_GiB": torch.cuda.max_memory_allocated() / 2**30}
