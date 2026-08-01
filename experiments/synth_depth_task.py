@@ -195,6 +195,27 @@ def make_mem(k, rng, n_gen=N_GEN, distractors=0, shuffle=True, rename=False, cf=
     return None
 
 
+def make_inline(k, rng):
+    """P2b：runtime 已完成 exact-key lookup，運算元直接內聯在使用處。
+
+    完全沒有 key、沒有搜尋 —— 核心只需要「依序套用交給它的運算元」。
+    這是「把選擇搬到核心外面」的極端情形，用來隔離：
+      * 核心能不能用交給它的內容計算（本任務）
+      * 核心能不能自己找到該用哪一條（mem 任務，已知上限 2 個候選）
+
+    與 perm 任務（定義背在權重裡）相減，即為「從記憶讀取」的深度代價。
+    """
+    state = list(range(PERM_N)); rng.shuffle(state)
+    parts = ["x=" + " ".join(map(str, state))]
+    for _ in range(k):
+        q = list(range(PERM_N)); rng.shuffle(q)
+        if q == list(range(PERM_N)):
+            q = [q[1], q[0]] + q[2:]
+        state = [state[q[i]] for i in range(PERM_N)]
+        parts.append(" ".join(map(str, q)))
+    return " | ".join(parts) + " 求x=", " ".join(map(str, state))
+
+
 def make_perm(k, rng):
     """x=<起始置換> f_i f_j ... 求x=<結果置換>"""
     state = list(range(PERM_N)); rng.shuffle(state)
@@ -253,6 +274,8 @@ def gen(args):
         "mem":    lambda k, rng: make_mem(k, rng, args.n_gen, args.distractors)[:2],
         # 純檢索（match-and-copy），不含組合。用來分離「檢索」與「運用檢索結果」
         "lookup": lambda k, rng: make_lookup(k, rng)[:2],
+        # runtime 解析完成、運算元內聯：隔離「用」與「找」
+        "inline": lambda k, rng: make_inline(k, rng),
     }
     make = TASKS[args.task]
 
@@ -279,15 +302,29 @@ def gen(args):
     # （答案永遠黏在 v0 附近，實測訓練值域內 100%、值域外 0%，而 loss 只有 0.02）。
     val_rows = build(args.val_per_k, random.Random(SEED + 999), unique=True)
     if args.task == "mem":
-        # 成對反事實：聚合正確率會被捷徑污染，真正的判準是「同一問題只因記憶改變
-        # 而得到不同答案時，模型跟不跟得上」。used 必須改變、unused 必須不變。
+        # 成對反事實必須與基準**同源** —— 早期版本用新的 rng 另外產生一個問題，
+        # 只把它的反事實半邊接到既有 row 上，結果是在比較兩個不相干的問題：
+        # unused_invariance 恆為 0%（模型明明 100% 正確），S_stale/C_cf 全無意義。
+        # 這裡改成從同一次 make_mem 呼叫同時取得基準與反事實。
         cf_rng = random.Random(SEED + 4242)
+        paired = []
         for r in val_rows:
-            for kind in ("used", "unused"):
-                got = make_mem(r["k"], cf_rng, args.n_gen, args.distractors, cf=kind)
-                if got:
-                    _, _, cp, ca, _ = got
-                    r[f"cf_{kind}_prompt"], r[f"cf_{kind}_answer"] = cp, ca
+            got = make_mem(r["k"], cf_rng, args.n_gen, args.distractors, cf="used")
+            if not got:
+                continue
+            pr, a, cp, ca, _ = got
+            row = {"k": r["k"], "prompt": pr, "answer": a,
+                   "cf_used_prompt": cp, "cf_used_answer": ca}
+            got2 = make_mem(r["k"], cf_rng, args.n_gen, args.distractors, cf="unused")
+            if got2:
+                pr2, a2, cp2, ca2, _ = got2
+                row.update(unused_base_prompt=pr2, unused_base_answer=a2,
+                           cf_unused_prompt=cp2, cf_unused_answer=ca2)
+            paired.append(row)
+        val_rows = paired
+        n_u = sum(1 for r in val_rows if "cf_used_prompt" in r)
+        n_n = sum(1 for r in val_rows if "cf_unused_prompt" in r)
+        print(f"  成對反事實：used {n_u} 對 / unused {n_n} 對（與基準同源）")
         n_u = sum(1 for r in val_rows if "cf_used_prompt" in r)
         n_n = sum(1 for r in val_rows if "cf_unused_prompt" in r)
         print(f"  反事實配對：used {n_u} 對 / unused {n_n} 對")
@@ -382,7 +419,7 @@ def cf_eval(model, tok, val_rows, n=300, n_loops=None):
         m["stale"] += (p1 == a0)          # 換了記憶卻還是給舊答案
         m["both"] += (p0 == a0 and p1 == a1)
     for r in [x for x in val_rows if "cf_unused_prompt" in x][:n]:
-        p0 = gen_one(r["prompt"])
+        p0 = gen_one(r["unused_base_prompt"])      # 必須用 unused 配對自己的基準
         p1 = gen_one(r["cf_unused_prompt"])
         m["n_unused"] += 1
         m["unused_inv"] += (p0 == p1)     # 改無關條目，輸出不應變
@@ -498,7 +535,8 @@ def run(name, args):
         print(f"    unused  改無關條目輸出不變   {cf['unused_invariance']:6.1%}", flush=True)
         per_k["_cf"] = cf
 
-    ck = os.path.join(HERE, f"synth_{name.replace('+','_')}.pth")
+    tag = f"{args.task}{args.n_gen}" if args.task == "mem" else args.task
+    ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")
     torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ck)
 
     res = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
@@ -546,7 +584,7 @@ if __name__ == "__main__":
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
