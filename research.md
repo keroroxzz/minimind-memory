@@ -522,6 +522,48 @@ R5（記憶衝突）需要的是同一個比對電路。
 
 ---
 
+## 4.13 n2-pointer：閘門被 joint trainability 污染，分解後看到兩個成分
+
+`n2-pointer` k≤24：整體 4.2%，k=1 僅 **27.0%**，loss 平台 0.7291。
+依 §4.10 預登記，**只談 trainability，不談 pointer 的深度天花板**。
+
+### 分解（Codex 設計，在已存 checkpoint 上算，未重訓）
+
+`E_apply = P(pred ∈ 套用了某個在場置換的集合)`、
+`B_select = P(pred 正確 | pred ∈ 該集合)`：
+
+| | E_apply | 隨機基準 | B_select | 集合內均勻猜 |
+|---|---|---|---|---|
+| n2-pointer k=1 | **52.4%** | 1.7% | **47.3%** | 50.0% |
+| n2-pointer k=2 | 26.8% | 3.2% | 32.8% | **26.3%** |
+| §4.9 `p=0` 對照 k=1 | **94.7%** | 1.7% | ~53% | 50.0% |
+
+k=1 條件樣本 n≈131，47.3% 與 50% 無法區分 → **selector 是純擲硬幣**。
+k=2 的 32.8% vs 26.3%：n≈67、sd 3.6pp、**z≈1.2 不顯著**，不可讀成高於 chance。
+（基準率必須**逐題**算唯一候選數 —— S₅ 裡 a/b 組合會碰撞，
+k=2 的平均唯一候選是 3.88 而非 4。）
+
+### 兩個可區分的 failure component
+
+- **selector 跨兩種分布都是擲硬幣** → 與「缺 matching 目標」一致（§4.12）
+- **executor 只在 k≤24 退化**（94.7% → 52.4%）→ 指向 k≤24 × pointer 的
+  joint trainability
+
+⚠️ `exact = E × B` 是**定義上的分解，不證明兩者是獨立的電路**（Codex）。
+
+### 閘門要恢復需要 matched k≤4
+
+我原本的二分法（value 的 k=1 高 → 訓練分布解釋出局 → pointer 失敗歸因缺
+matching）**太乾淨**。value k=1 高只能排除「這個分布讓**所有** carrier 的
+executor 都退化」，**不能**排除 distribution × pointer 的交互作用。
+
+正確做法：跑 matched `n2-pointer k≤4` 與 `n2-value k≤4`。
+k≤4 過、k≤24 不過 → joint distribution/optimization；
+兩者都不過 → 才進 presence-pretrain rescue。
+`n2-blank k≤4` **條件式**補：只有 pointer k≤4 通過才有意義。
+
+---
+
 ## 4.10 預先登記：matched A/B/C 的判讀規則（結果出來前寫下）
 
 `n2` 三條件（k≤24、loop2、12000 步、樣本/前綴/答案/長度/搜尋寬度全配平，
