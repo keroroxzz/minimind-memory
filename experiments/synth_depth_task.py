@@ -250,6 +250,37 @@ def _remote_start(perms, final):
     return st
 
 
+def make_padded(k, rng):
+    """條件 D+：remote 的格式，但在狀態之後補上 k 個空白位置。
+
+    用來檢驗「序列維度是工作記憶」這個假說。remote 失敗（5.5%）的原因若是
+    「沒有位置可以累積部分乘積」，那麼補上位置就該回升；若失敗是因為
+    「順序語意」（值排在狀態前就是讀不到），補位置也救不了。
+
+      remote     : p1 | p2 | p3 || x=STATE 求x=
+      remote+pad : p1 | p2 | p3 || x=STATE . . . 求x=
+    """
+    state = list(range(PERM_N)); rng.shuffle(state)
+    perms = []
+    for _ in range(k):
+        q = list(range(PERM_N)); rng.shuffle(q)
+        if q == list(range(PERM_N)):
+            q = [q[1], q[0]] + q[2:]
+        perms.append(q)
+    block = " | ".join(" ".join(map(str, q)) for q in perms)
+    start = _remote_start(perms, _apply_all(state, perms))
+    final = _apply_all(start, perms)
+    pad = " ".join(["."] * k)
+    return (block + " || x=" + " ".join(map(str, start)) + " " + pad + " 求x=",
+            " ".join(map(str, final)))
+
+
+def _apply_all(st, perms):
+    for q in perms:
+        st = [st[q[i]] for i in range(PERM_N)]
+    return st
+
+
 def make_perm(k, rng):
     """x=<起始置換> f_i f_j ... 求x=<結果置換>"""
     state = list(range(PERM_N)); rng.shuffle(state)
@@ -310,8 +341,10 @@ def gen(args):
         "lookup": lambda k, rng: make_lookup(k, rng)[:2],
         # runtime 解析完成、運算元內聯：隔離「用」與「找」
         "inline": lambda k, rng: make_inline(k, rng),
-        # 同樣已解析，但放在遠端 block：把 locality 單獨拉出來測
+        # 同樣已解析，但放在遠端 block：測「順序」的影響
         "remote": lambda k, rng: make_remote(k, rng),
+        # remote + 狀態後補 k 個空位：檢驗「序列維度是工作記憶」的假說
+        "padded": lambda k, rng: make_padded(k, rng),
     }
     make = TASKS[args.task]
 
@@ -626,7 +659,7 @@ if __name__ == "__main__":
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
