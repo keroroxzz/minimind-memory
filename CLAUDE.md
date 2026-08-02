@@ -165,6 +165,12 @@ Design rules these encode, which matter more than the code:
 - **The 6400 BPE vocab tokenises numbers inconsistently** — 42 of 0..99 are one token, 58 are two
   (`'60'→[3873]` but `'97'→[60,58]`). This crippled arithmetic: formatting numbers as
   space-separated digits took the depth task from 3.7% → 11.3% at 60% fewer steps.
+- **Token count is a property of the string *in its context*, not of the string.** `'q'` is one
+  token alone but two with a leading space, so a 5-letter code containing `q` became 6 tokens —
+  reintroducing target-length variation into the very condition built to control it, and
+  correlating it with specific codes. When a task depends on targets being a fixed length, verify
+  the *full* target fragment as it actually appears (leading space, boundaries), never the bare
+  character. `'? ? ? ? ?'` is 9 tokens for the same reason — the space is its own token.
 - **Weight decay must be grouped.** AdamW decays every parameter each step, but only ~0.4% of the
   105M-row engram table receives gradient — uniform decay drags unvisited rows toward zero.
   Exempt embeddings, norms and the engram table.
