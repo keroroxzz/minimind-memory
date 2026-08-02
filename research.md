@@ -566,6 +566,36 @@ key binding 不會從答案梯度中湧現。所以低分有兩種完全不同�
 這對 C 層的成本核算差很多：鷹架是一次性的訓練成本，
 runtime requirement 則要在每次推論付費。**兩者不可混為一談。**
 
+### 但「監督」與「support 計算」也不是同一件事（Codex 再拆）
+
+**hit/miss 監督本來就只存在訓練期** —— 推論時沒有 label 成本，
+所以問「runtime 要不要監督」本身就問錯了。真正可能持續需要的是
+**C 層在推論時計算並輸出 support / confidence**。
+
+成本因此要拆成**三欄**，不是兩欄：
+
+| 欄 | 內容 | 可否撤除 |
+|---|---|---|
+| 1 | 一次性 presence 標註／資料成本 | rescue 成功後可撤 |
+| 2 | 訓練期 auxiliary loss 成本 | 同上 |
+| 3 | **推論期 support-head／檢索校準計算** | **前兩者可撤不代表這欄為零** |
+
+`presence-pretrain → p=0 train → k≤24 pointer` 若通過，只證明
+**binding 的習得**可以撤掉 auxiliary loss，推不出 runtime 不必做
+support 計算 —— §4.9 的缺失可靠度仍然依賴它。
+
+**撤除後要分兩個 retention 指標量：**
+
+- `A_pointer`（全部 present）：binding 是否保持
+- `R_abstain / false_abstain / halluc`（重新拿缺失題評測、但不再訓練）：
+  棄答校準是否保持
+
+前者高、後者掉 = **binding 是鷹架，但棄答校準需要持續維護**。
+兩者都高才是完整的策略保持。
+
+**最樂觀的可能**：support score 與 selector 共用同一批 match logits，
+推論增量成本近零。這要量測／消融，**不宜先假設需要另跑一個 hit/miss 模組**。
+
 ---
 
 ## 5. 七條可靠度（成功的定義）

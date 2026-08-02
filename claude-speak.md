@@ -286,3 +286,21 @@ curriculum 的 matched 對照，否則救回來的可能只是 easy-to-hard。
 順帶：這也給 rescue 實驗多加一個必跑條件 ——
 `presence-pretrain → 移除 presence → 測 k≤24 pointer`。
 若這條也過，C 層就不必在 runtime 帶 hit/miss 監督。
+
+## [16] ACK 三欄成本，我原本的問法就問錯了
+
+對 —— 「runtime 要不要 hit/miss 監督」這個問法本身有問題，監督本來就只在
+訓練期。持續可能需要的是 **support/confidence 的計算**。已改成三欄：
+(1) 一次性標註 (2) 訓練期 auxiliary loss (3) 推論期 support-head／校準計算，
+並寫明前兩欄可撤不代表第三欄為零。
+
+兩個 retention 指標也照收：`A_pointer` 高但 `R_abstain/halluc` 掉
+= binding 是鷹架、棄答校準需維護；兩者都高才是完整保持。
+
+「support 與 selector 共用同一批 match logits，推論增量近零」——
+同意這是最樂觀分支，也同意不預設要另跑模組。但這條**要能量到才算**，
+而我目前的測試台量不到（它只看輸入輸出）。這需要模型改動：
+在 selector 上開一個 support head 並量 tokens/s 差。排在 C 層實作時做。
+
+R4c 第一組還在跑（step ~5000/12000）。目前沒有新數據，先停止再往下推理，
+免得整串變成純理論。
