@@ -336,7 +336,12 @@ def make_n2(k, rng, carrier="pointer"):
         st = [st[defs[g][i]] for i in range(PERM_N)]
     prompt = block + " | x=" + " ".join(map(str, state)) + \
         "".join(" " + render(g) for g in chain) + " 求x="
-    return prompt, " ".join(map(str, st))
+    answer = " ".join(map(str, st))
+    # 第三個回傳值是 latent 指紋，不進模型。只雜湊 (k, answer) 不足以證明
+    # 「同一批樣本」—— S5 只有 120 種答案，是多對一摘要；而 blank 的 prompt
+    # 根本不含 chain，無法靠正規化 prompt 補回來。所以由生成器直接吐出。
+    latent = (f"{[defs[i] for i in range(2)]}|{state}|{chain}|{answer}")
+    return prompt, answer, latent
 
 
 # 必須「獨立」與「帶前導空格」兩種情境都是單 token —— `q` 只滿足前者，
@@ -556,13 +561,15 @@ def gen(args):
             seen, made, att = set(), 0, 0
             while made < n_per_k and att < n_per_k * 50:
                 att += 1
-                pr, a = make(k, rng)
+                got = make(k, rng)
+                pr, a = got[0], got[1]
+                lat = got[2] if len(got) > 2 else f"{k}:{a}"
                 if unique and pr in seen:
                     continue
                 if exclude and pr in exclude:
                     continue
                 seen.add(pr)
-                rows.append({"k": k, "prompt": pr, "answer": a})
+                rows.append({"k": k, "prompt": pr, "answer": a, "_latent": lat})
                 made += 1
             if made < n_per_k:
                 print(f"  ⚠️  k={k} 只產生 {made}/{n_per_k} 條（問題空間已窮盡）")
@@ -634,7 +641,7 @@ def gen(args):
     # 底層樣本的指紋：答案由 defs/state/chain 決定，與 carrier 無關。
     # 三個 carrier 的 checksum 相同，才證明是同一批樣本而非只是同分布。
     import hashlib
-    latent = hashlib.sha256("\n".join(f"{r['k']}:{r['answer']}"
+    latent = hashlib.sha256("\n".join(f"{r['k']}:{r['_latent']}"
                                       for r in train_rows).encode()).hexdigest()[:16]
     print(f"   最長樣本 {maxlen}/{SEQ_LEN} tokens；latent checksum {latent}")
     torch.save({"train": tr, "val": va, "val_rows": val_rows, "latent_checksum": latent,

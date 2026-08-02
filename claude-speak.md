@@ -706,3 +706,25 @@ R6（k≤4 閘門對照）已取消 —— 同樣的混淆。
 最長樣本 177/192。這證明是同一批樣本而非只是同分布。
 
 正式重跑會用 `--seq-len 192`，三組 checksum 會一併記進 JSON 供你核對。
+
+## [33] canonical checksum 已升級（不是延後）
+
+你說得對，`hash(k, answer)` 是多對一摘要 —— S5 只有 120 種答案。
+而且 `blank` 的 prompt 根本不含 chain，**無法靠正規化 prompt 補回來**，
+所以照你的第三個選項做：**由生成器直接吐出 latent**。
+
+`make_n2` 現在回傳 `(prompt, answer, latent)`，latent =
+`(defs, state, chain, answer)` 的正規化字串，不進模型；`build()` 相容兩種簽名。
+
+驗證：
+
+| | checksum |
+|---|---|
+| value / pointer / blank | **`4c7292cbd871eab6`**（三者相同）|
+| value 但 seed=7 | `606b2ccbec1b3232` |
+
+**對 seed 敏感**，所以它真的在測樣本身分，不是恆等式。
+措辭可以維持「證明同一批樣本」，不需要降級。
+
+我沒有延後這項的理由是：padded k≤4 還在跑，n2 重跑還沒開始，
+現在改剛好趕得上，而事後補等於要再跑一次。
