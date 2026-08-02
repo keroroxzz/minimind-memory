@@ -452,6 +452,10 @@ total work      ∝ L × R × W      （電路大小，非深度）
 
 ## 4.9 R4：棄答不是能力的稅，缺席訊號是 key 綁定的教學訊號
 
+> ⚠️ **2026-08-02 標記存疑。** 把 ABSTAIN 從 `?`(1 token) 換成
+> `- - - - -`(5 token)、其餘完全不變，整組崩到 `A_ans` 13.8% / `R_abstain` 0% /
+> `halluc` 100%，與 `p=0` 對照同級。詳見 §4.11。下面的結論在該節解決前不要引用。
+
 任務：記憶區放 2 條定義（取自 4 個 key），鏈從整個 pool 取用。
 所需定義不在記憶區時，目標是 `?`。全部 loop2 / k=1..4 / 12000 步。
 
@@ -595,6 +599,69 @@ support 計算 —— §4.9 的缺失可靠度仍然依賴它。
 
 **最樂觀的可能**：support score 與 selector 共用同一批 match logits，
 推論增量成本近零。這要量測／消融，**不宜先假設需要另跑一個 hit/miss 模組**。
+
+---
+
+## 4.11 長哨兵反例：效果可能來自 target code 的信用分配幾何
+
+`absent p=.15`，唯一改動 ABSTAIN `?`(1 token) → `- - - - -`(5 token)：
+
+| | `?` | 長哨兵 | `p=0` 對照 |
+|---|---|---|---|
+| A_ans | 97.4% | **13.8%** | 16~21% |
+| R_abstain | 100% | **0.0%** | — |
+| halluc | 0% | **100%** | — |
+| 最終 loss | 0.0014 | **0.4435** | 0.42~0.44 |
+
+診斷（載入 checkpoint 讀首 token 機率）：`P(首token=哨兵) = 0.09~0.30`，
+大約就是 15% 的基準率，top1 永遠是數字。
+**模型學到無條件先驗，沒有條件化在 key 缺席上。**
+
+### 我算錯了訊號量（Codex 修正）
+
+我原本推論「長哨兵讓棄答佔的 token 預算從 5.6% 升到 15%，訊號更多卻學更差，
+所以不是 shaping」。**錯了**：teacher forcing 下**只有第一個 `-` 需要檢查缺席**，
+後四個看前一個 `-` 就能無條件續寫。長哨兵新增的是
+**continuation-easy loss，不是 condition-bearing information** ——
+反而提供「不學 presence 也能吃掉 4/5 的 missing loss」的捷徑。
+
+### 目前最強的替代解釋：target-code / credit-assignment geometry
+
+> `?` 把 missing 題的全部成敗壓在**單一決策**上，逼模型學條件化；
+> `-----` 讓模型在**不解 binding 的情況下**降低大部分 missing loss。
+
+這與「首 token 只學到 15% prior」精確相容，也比單純的 token-count shaping 具體。
+
+### 反因果目前不可識別
+
+我一度推論「失敗的是 binding 而非棄答，所以因果順序跟 §4.9 相反」。
+**這不可識別** —— `? → binding → abstain`、`binding → ?`、
+「單 token bottleneck 同時逼出兩者」三者都符合輸出。
+**不要寫誰是免費的。** 安全說法：`?` 這個 code 與成功的 binding **共現**，
+而長 autoregressive code 同時破壞兩者。
+
+### 若這條成立，實用結論反而更明確
+
+即使機制是 code geometry 而非「偵測缺席」本身，對 C 層的指示是清楚的：
+
+> **presence 監督必須以「單一集中的二元決策」交付**（或一個獨立的 binary
+> presence head），**不能做成模型可以部分預測的序列。**
+
+### 待跑
+
+- `長哨兵 seed=7`：可重現性。**已排在佇列最前**。
+- 正確的等長對照**不是拉長 label**（Codex）：應保持首 token `?`，
+  改用 loss weight／每樣本 loss normalization 配平，或加獨立 binary presence head；
+  若要等長只加 **loss-masked padding**。
+- **不預先加跑** —— seed=7 與 filler 可能已足以定調，先看數據再決定。
+
+### filler 的判讀注意（結果出來前寫下）
+
+filler 的輔助目標是 5 個數字（回抄狀態），乍看有同樣的捷徑問題，
+但**結構不同**：破折號的續寫與輸入無關，filler 的續寫要讀狀態、
+且仍須知道這是 filler 題。**捷徑較弱但非不存在**（首 token 一旦定案，
+其餘可能靠自洽跟上）。所以 filler 若失敗，不可直接歸因 curriculum ——
+要先排除它也踩到同一個 code geometry。
 
 ---
 
