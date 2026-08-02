@@ -1,0 +1,195 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 48,
+        "total": 200,
+        "acc": 0.24,
+        "pos_acc": 0.5300000000000004,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 16,
+        "total": 200,
+        "acc": 0.08,
+        "pos_acc": 0.27600000000000013,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 6,
+        "total": 200,
+        "acc": 0.03,
+        "pos_acc": 0.25500000000000017,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 12,
+        "total": 200,
+        "acc": 0.06,
+        "pos_acc": 0.2600000000000002,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 5,
+        "total": 200,
+        "acc": 0.025,
+        "pos_acc": 0.25700000000000023,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 6,
+        "total": 200,
+        "acc": 0.03,
+        "pos_acc": 0.23700000000000007,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 2,
+        "total": 200,
+        "acc": 0.01,
+        "pos_acc": 0.2230000000000002,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 8,
+        "total": 200,
+        "acc": 0.04,
+        "pos_acc": 0.27000000000000013,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 5,
+        "total": 200,
+        "acc": 0.025,
+        "pos_acc": 0.27100000000000046,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 8,
+        "total": 200,
+        "acc": 0.04,
+        "pos_acc": 0.2760000000000003,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 2,
+        "total": 200,
+        "acc": 0.01,
+        "pos_acc": 0.24300000000000008,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 7,
+        "total": 200,
+        "acc": 0.035,
+        "pos_acc": 0.24999999999999992,
+        "wellformed": 1.0
+      },
+      "13": {
+        "correct": 4,
+        "total": 200,
+        "acc": 0.02,
+        "pos_acc": 0.2500000000000002,
+        "wellformed": 1.0
+      },
+      "14": {
+        "correct": 12,
+        "total": 200,
+        "acc": 0.06,
+        "pos_acc": 0.28100000000000036,
+        "wellformed": 1.0
+      },
+      "15": {
+        "correct": 3,
+        "total": 200,
+        "acc": 0.015,
+        "pos_acc": 0.2330000000000003,
+        "wellformed": 1.0
+      },
+      "16": {
+        "correct": 4,
+        "total": 200,
+        "acc": 0.02,
+        "pos_acc": 0.24000000000000005,
+        "wellformed": 1.0
+      },
+      "17": {
+        "correct": 3,
+        "total": 200,
+        "acc": 0.015,
+        "pos_acc": 0.26500000000000024,
+        "wellformed": 1.0
+      },
+      "18": {
+        "correct": 10,
+        "total": 200,
+        "acc": 0.05,
+        "pos_acc": 0.30300000000000027,
+        "wellformed": 1.0
+      },
+      "19": {
+        "correct": 2,
+        "total": 200,
+        "acc": 0.01,
+        "pos_acc": 0.23900000000000005,
+        "wellformed": 1.0
+      },
+      "20": {
+        "correct": 3,
+        "total": 200,
+        "acc": 0.015,
+        "pos_acc": 0.22800000000000012,
+        "wellformed": 1.0
+      },
+      "21": {
+        "correct": 8,
+        "total": 200,
+        "acc": 0.04,
+        "pos_acc": 0.2430000000000002,
+        "wellformed": 1.0
+      },
+      "22": {
+        "correct": 2,
+        "total": 200,
+        "acc": 0.01,
+        "pos_acc": 0.2180000000000002,
+        "wellformed": 1.0
+      },
+      "23": {
+        "correct": 5,
+        "total": 200,
+        "acc": 0.025,
+        "pos_acc": 0.2230000000000002,
+        "wellformed": 1.0
+      },
+      "24": {
+        "correct": 9,
+        "total": 200,
+        "acc": 0.045,
+        "pos_acc": 0.23000000000000018,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 0.03958333333333333,
+    "train_dist": {
+      "task": "n2",
+      "max_k": 24,
+      "steps": 12000,
+      "n_gen": 8,
+      "ops": "+-",
+      "seed": 42,
+      "seq_len": 192,
+      "max_len": 177,
+      "latent_checksum": "766dc51dfd84a17b",
+      "p_missing": null,
+      "abstain_form": null,
+      "carrier": "blank",
+      "distractors": 0,
+      "train_per_k": null
+    },
+    "params_M": 29.500928,
+    "wall_clock_s": 3986.9780254364014,
+    "steps": 12000,
+    "peak_vram_GiB": 8.227356433868408
+  }
+}

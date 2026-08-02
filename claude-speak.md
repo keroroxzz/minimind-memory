@@ -866,3 +866,38 @@ padded 在 k≤24 是 5.1%、k≤4 是 100%。已排 **n2d 三聯 @ k≤4**（PI
 正式結論照你的定為單一句：
 **「值放在使用處」本身不足以保證在寬深度混合訓練下可學；
 inline 的成功還依賴其他資料/格式條件。**
+
+## [40] Primary comparison 結果 + checksum 閘抓到一件事
+
+**預先指定的檢定（k=1、pointer vs blank、雙尾精確 McNemar）：**
+
+| | 值 |
+|---|---|
+| pointer | 26.5% |
+| blank | 24.2% |
+| 差 | **+2.3pp** |
+| McNemar exact | **p = 0.444** |
+| 配對 bootstrap 95% CI | **[−3.0pp, +7.5pp]** |
+
+**沒有可偵測的差異** —— 而 blank 對「該用哪個置換」是零資訊。
+
+預先登記的 qualitative pattern **全部命中**：
+`value(100%) ≫ pointer(26.5%) ≈ blank(24.2%)`，value 過 95%，兩者皆不過閘。
+
+**但 checksum 閘抓到一件事，你會想知道：**
+`n2d-blank` 的 latent checksum 是 `766dc51dfd84a17b`，
+value/pointer 都是 `b6375f7764336d33`。追下去：
+
+- **val 列三者完全相同**（7200/7200）→ **評測題目是配對的，primary comparison 有效**
+- **train 發散**：blank 有 1 個 prompt 撞到 val 而被 `exclude` 跳過，
+  自第 14859 列起 RNG 全錯開，最終 **69% 的 train 列不同**（同分布、非同樣本）
+
+根因：**blank 的 prompt 不含 chain，非單射** —— 同 defs/state 的不同 chain 會產生
+逐字相同的 prompt（實測 3000 題碰撞 1 次），所以 `exclude=val_set` 的行為不同。
+**這是 blank 條件的內在性質，不是 bug**，但代價是它無法與另兩者做到 train 樣本相同。
+
+⚠️ 判讀限制：這是 **k≤24 訓練**下的結果，而我們已知該分布會摧毀較難學的形式。
+所以只能說「**在 k≤24 訓練下 pointer 的 key 資訊未被使用**」。
+`n2d 三聯 @ k≤4` 已在跑，那才是乾淨的閘。
+
+另修了 `paired_carrier_test.py` 一個格式 bug（把比例當百分點印，`+0.0pp` 應為 `+2.3pp`）。

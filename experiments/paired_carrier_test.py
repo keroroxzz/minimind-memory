@@ -47,7 +47,8 @@ ha = sum(x for x, _ in pairs); hb = sum(y for _, y in pairs)
 b01 = sum(1 for x, y in pairs if x and not y)      # A 對 B 錯
 b10 = sum(1 for x, y in pairs if y and not x)      # B 對 A 錯
 print(f"配對樣本 n={n}  （latent 已驗證一致）")
-print(f"  {a.carrier_a:8s} {ha/n:6.1%}    {a.carrier_b:8s} {hb/n:6.1%}    差 {(ha-hb)/n:+.1f}pp")
+print(f"  {a.carrier_a:8s} {ha/n:6.1%}    {a.carrier_b:8s} {hb/n:6.1%}    "
+      f"差 {(ha - hb) / n * 100:+.1f}pp")
 print(f"  不一致格 b01={b01}（僅 A 對）  b10={b10}（僅 B 對）")
 
 # McNemar 精確檢定（雙尾）：不一致格在 H0 下服從 Binomial(b01+b10, .5)
@@ -63,4 +64,4 @@ else:
 rng = random.Random(0)
 diffs = sorted((sum(pairs[j][0] for j in idx) - sum(pairs[j][1] for j in idx)) / n
                for idx in ([rng.randrange(n) for _ in range(n)] for _ in range(5000)))
-print(f"  配對 bootstrap 95% CI  [{diffs[125]:+.3f}, {diffs[4875]:+.3f}]")
+print(f"  配對 bootstrap 95% CI  [{diffs[125]*100:+.1f}pp, {diffs[4875]*100:+.1f}pp]")
