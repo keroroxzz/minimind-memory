@@ -624,7 +624,10 @@ filler：`k=1` 只有 53.0%（擲硬幣），輔助題（偵測 `求x0=` 並回�
 **1. filler 排除了「任何簡單輔助任務都有用」。**
 它的輔助題被**完全學會**（100%），模型顯然有餘裕，
 但因為它**只需要字面標記偵測、不需要 key 比對**，binding 完全沒跟上。
-→ **curriculum／一般正則化解釋出局。**
+→ 排除的是「**任意一個可學的簡單輔助題都會救 binding**」。
+**不能**排除廣義 curriculum／representation shaping（Codex 修正）。
+更安全的說法：**轉移需要輔助任務與 key matching 共享 task-relevant feature**。
+這支持 specificity，但**尚未證明是 presence 語意而非任何 matching 輔助任務**。
 
 **2. 長哨兵不是我上一節寫的那種反例。**
 它的輔助任務**根本沒被學會**（R_abstain 0%，首 token 只有 15% 先驗）。
@@ -641,12 +644,24 @@ filler：`k=1` 只有 53.0%（擲硬幣），輔助題（偵測 `求x0=` 並回�
 >
 > 三個條件各缺一角，剛好把兩個必要條件都指出來。
 
+⚠️ **這是與現況相容的最小解釋，不是已識別的定律（Codex）。**
+目前只有「缺 (a)」與「缺 (b)」各一格，而且 target length 全程共變。
+交叉格驗證完成前不要當結論用。
+
+另：長哨兵未學會，**也不能確證 free-continuation 是唯一死因** ——
+token prior／output grammar／seed 都還在。seed=7 只裁決穩定性。
+
 ### 仍未分離的一件事
 
 所有成功組的輔助目標都是 **1 token**，所有失敗組都是 **5 token**。
 「單 token bottleneck」與「presence 語意」仍然共變。
 要拆開需要一個**同時需要 key 比對、且多 token、且無自由續寫**的輔助任務 ——
-例如「答出缺的是哪一個 key」。這是目前最該補的一格，但先等 long seed=7。
+**Codex 的設計已實作為 `codekey` 任務並排入佇列：**
+保留 f0..f3，prompt 另給每個 key 一個**每樣本隨機的 5-token 字母 code**；
+缺失時輸出**該缺失 key 對應的 code**。於是 5 個 token 全部要從輸入讀
+（無自由續寫，補 (a)），且必須先做 absent-key 比對才知道抄哪一條（需比對，補 (b)）。
+
+**若它輔助題學得會且救回 A_ans → 單 token bottleneck 被排除。**
 
 ---
 

@@ -445,3 +445,23 @@ filler：`A_ans` **18.0%**（k=1 只有 53.0%，擲硬幣），
 這是最該補的一格，但先等 long seed=7。
 
 請打這個重新定性 —— 我很可能又在事後合理化。
+
+## [21] 三點修正照收，`codekey` 已實作並插到佇列最前
+
+1. `_abstain.hallucination` 在 filler/codekey 沒有幻覺語意 —— 已改成不印，
+   `R_abstain` 也改標為 `R_aux` 並依任務給正確名稱。這是我報表的錯，不只是措辭。
+2. 「排除 curriculum」改成「排除**任意可學的簡單輔助題都會救 binding**」，
+   並補上更安全的說法：轉移需要與 key matching **共享 task-relevant feature**。
+3. (a)+(b) 標成**與現況相容的最小解釋、非已識別定律**，註明只有兩格且
+   target length 全程共變。長哨兵未學會也不能確證 free-continuation 是唯一死因。
+
+你的補格設計已實作為 `codekey`：4 個 key 各配一個每樣本隨機 5-token 字母 code
+（全列在 prompt），缺失時輸出該缺失 key 的 code。範例：
+
+```
+f1:u r n u q f0:r s d m v f3:h g z m w f2:y k v h n ; f1=3 1 2 4 0 f3=4 2 1 0 3
+| x=1 4 0 2 3 f2 f1 f3 求x=          →  y k v h n     （f2 不在記憶區）
+```
+
+佇列改成 `long-s7`（跑中）→ **`codekey`** → `n2×3` → `padded k≤4`。
+我沒有打斷 long-s7，只換掉外層 wrapper。

@@ -332,6 +332,63 @@ def make_n2(k, rng, carrier="pointer"):
     return prompt, " ".join(map(str, st))
 
 
+CODE_ALPHA = "cdeghjklmnpqrstuvwyz"     # 皆為單 token，避開 a/b/f/x 等已被佔用的符號
+
+
+def make_codekey(k, rng, n_present=2, pool=4, p_missing=0.35):
+    """補上缺的那一格（Codex 設計）：需 key 比對 + 多 token + 無自由續寫。
+
+    先前所有成功組的輔助目標都是 1 token、失敗組都是 5 token，
+    「單 token bottleneck」與「presence 語意」完全共變，拆不開。
+
+    這裡每個 key 另外配一個**每樣本隨機的 5-token code**（全部列在 prompt 裡），
+    缺失時要輸出**那個缺失 key 對應的 code**。於是輔助任務：
+      * 5 個 token 全部要從輸入讀 → 無自由續寫捷徑（長哨兵缺的 (a)）
+      * 必須先做 absent-key 比對才知道要抄哪一條 → 需要 key 比對（filler 缺的 (b)）
+
+    若它輔助題學得會**且**救回 A_ans，單 token bottleneck 就被排除。
+    """
+    keys = [f"f{i}" for i in range(pool)]
+    codes, seen_c = {}, set()
+    for i in range(pool):
+        while True:
+            c = tuple(rng.choice(CODE_ALPHA) for _ in range(5))
+            if c not in seen_c:
+                seen_c.add(c); codes[i] = " ".join(c); break
+
+    present = sorted(rng.sample(range(pool), n_present))
+    defs, seen = {}, set()
+    for i in present:
+        while True:
+            q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+            if q != list(range(PERM_N)) and t not in seen:
+                seen.add(t); defs[i] = q; break
+
+    corder = list(range(pool)); rng.shuffle(corder)
+    cblock = " ".join(f"{keys[i]}:{codes[i]}" for i in corder)
+    morder = list(present); rng.shuffle(morder)
+    mblock = " ".join(f"{keys[i]}=" + " ".join(map(str, defs[i])) for i in morder)
+
+    state = list(range(PERM_N)); rng.shuffle(state)
+    absent = [i for i in range(pool) if i not in present]
+    if absent and rng.random() < p_missing:
+        chain = [rng.choice(present) for _ in range(k)]
+        miss = rng.choice(absent)
+        chain[rng.randrange(k)] = miss
+        rng.shuffle(chain)
+        answer = codes[miss]                      # 要先知道誰缺，才抄得對
+    else:
+        chain = [rng.choice(present) for _ in range(k)]
+        st = list(state)
+        for g in chain:
+            st = [st[defs[g][i]] for i in range(PERM_N)]
+        answer = " ".join(map(str, st))
+
+    prompt = cblock + " ; " + mblock + " | x=" + " ".join(map(str, state)) + \
+        "".join(f" {keys[g]}" for g in chain) + " 求x="
+    return prompt, answer
+
+
 def make_filler(k, rng, n_present=2, pool=4, p_filler=0.15):
     """curriculum 對照：把棄答樣本換成同樣簡單、同樣長度、但**不需要 key 比對**的輔助題。
 
@@ -476,6 +533,8 @@ def gen(args):
             abstain=ABSTAIN_LONG if args.abstain_form == "long" else ABSTAIN),
         # matched A/B/C：同前綴同答案，只換每步 carrier（5 token 等長）
         "n2": lambda k, rng: make_n2(k, rng, args.carrier),
+        # 補格：需 key 比對 + 多 token + 無自由續寫
+        "codekey": lambda k, rng: make_codekey(k, rng, args.n_gen, p_missing=args.p_missing),
         # curriculum 對照：簡單輔助題但不需 key 比對
         "filler": lambda k, rng: make_filler(k, rng, args.n_gen, p_filler=args.p_missing),
     }
@@ -624,6 +683,9 @@ def abstain_eval(model, tok, val_rows, max_per_k=200, n_loops=None, throttle=1.0
     rows = [r for k in sorted(by_k) for r in by_k[k][:max_per_k]]
 
     def is_aux(r):
+        # codekey：輔助題的答案是字母 code，本業答案是數字
+        if r["answer"][:1].isalpha():
+            return True
         return r["answer"] in (ABSTAIN, ABSTAIN_LONG) or "求x0=" in r["prompt"]
     ans = [r for r in rows if not is_aux(r)]
     mis = [r for r in rows if is_aux(r)]
@@ -775,14 +837,20 @@ def run(name, args):
         print(f"    {k:>3d} {v['acc']:8.1%} {v['pos_acc']:8.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
 
-    if args.task in ("absent", "filler"):
+    if args.task in ("absent", "filler", "codekey"):
         ab = abstain_eval(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
                           throttle=args.throttle)
         print(f"\n  R4 記憶缺失（可答 {ab['n_answerable']} / 該棄答 {ab['n_missing']}）：")
         print(f"    A_ans        資料齊全時答對     {ab['A_ans']:6.1%}  ← 加了棄答有沒有傷到本業")
-        print(f"    R_abstain    缺資料時正確棄答   {ab['R_abstain']:6.1%}")
+        aux_name = {"absent": "缺資料時正確棄答", "filler": "輔助題(回抄狀態)答對",
+                    "codekey": "缺資料時抄對該 key 的 code"}[args.task]
+        print(f"    R_aux        {aux_name:16s} {ab['R_abstain']:6.1%}")
         print(f"    false_abst   資料齊全卻棄答     {ab['false_abstain']:6.1%}  ← 越低越好")
-        print(f"    halluc       缺資料卻編出合法答 {ab['hallucination']:6.1%}  ← 唯一危險的失敗", flush=True)
+        if args.task == "absent":
+            print(f"    halluc       缺資料卻編出合法答 {ab['hallucination']:6.1%}  ← 唯一危險的失敗", flush=True)
+        else:
+            # filler/codekey 的輔助答案本來就是合法字串，這個欄位沒有幻覺語意
+            print(f"    （halluc 欄位不適用於 {args.task}，已略去）", flush=True)
         per_k["_abstain"] = ab
 
     if args.cf_eval and any("cf_used_prompt" in r for r in d["val_rows"]):
@@ -869,7 +937,7 @@ if __name__ == "__main__":
                     help="absent 任務中「所需定義不在記憶區」的比例；0 = 純對照組")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent", "filler", "n2"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent", "filler", "n2", "codekey"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
