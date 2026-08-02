@@ -341,6 +341,72 @@ runtime 預先完成選擇與解引用後，29M 核心能高效組合每樣本�
 
 ---
 
+## 4.17 有分隔符的 n2 三聯（k≤24）與預先指定的 primary comparison
+
+全部 loop2 / 12000 步 / k≤24 / `--seq-len 192`，三者等長（每步 6 token、
+k=24 皆 177）、共享邊界線索、latent checksum 相同。
+
+| carrier | k=1 | k=2 | k=3 | 整體 |
+|---|---|---|---|---|
+| `value` | **100%** | 19.0% | 6.0% | 7.0% |
+| `pointer` | 24.5% | 7.5% | 3.5% | 3.6% |
+| `blank` | 24.0% | 8.0% | 3.0% | 4.0% |
+
+### primary comparison（§4.10 預先指定：k=1、pointer vs blank、雙尾精確 McNemar）
+
+**primary** —— 官方 val 列，n=300：
+
+| | 值 |
+|---|---|
+| pointer / blank | 20.7% / 25.3% |
+| 差 | −4.7pp（−14/300）|
+| discordants | 33 僅 pointer 對 / 47 僅 blank 對 |
+| McNemar 精確檢定 | **p = 0.146** |
+| 配對 bootstrap 95% CI | **[−10.3pp, +1.0pp]** |
+| eval latent checksum | `892adcd1b6b06273` |
+| checkpoint hash | pointer `c43e20d6ba3a2437` / blank `69c45c8a20b97058` |
+
+**exploratory robustness check** —— 另抽新題 n=400：
++2.3pp、p=0.444、CI [−3.0, +7.5]。
+
+**兩者皆 null 且符號不穩定。** 結論限於
+**「未偵測到 key carrier 的效益」** —— **不做 equivalence／no-effect 宣稱**，
+CI 仍容許小幅效益。
+
+### 預先登記的 qualitative pattern 全部命中
+
+`value ≫ pointer ≈ blank`、value 過 95%、pointer 與 blank 皆不過 binding gate。
+
+### 判讀限制
+
+這是 **k≤24 訓練**下的結果，而 §4.15 已證實該分布會摧毀較難學的交付形式
+（`padded` 在 k≤24 是 5.1%、k≤4 是 100%）。所以只能說
+**「在 k≤24 訓練下未偵測到 pointer 的效益」**。`n2d 三聯 @ k≤4` 才是乾淨的閘。
+
+另：k≤24 這組的 blank 是用舊 harness 跑的（見 §4.18），
+屬 **distribution-matched 而非 sample-identical training**；k≤4 那組才兩者皆滿足。
+
+## 4.18 harness bug：用 render 出來的 prompt 做去重會讓 carrier 改變抽樣
+
+`n2d-blank` 的 train latent checksum 與另兩者不同。追查：
+
+- **val 列三者完全相同**（7200/7200）→ 評測是配對的
+- **train 發散**：blank 有 1 個 prompt 撞到 val 而被 `exclude` 跳過，
+  自第 14859 列起 RNG 全錯開，**69% 的 train 列不同**
+
+我起初把它歸因為「blank 條件的內在性質」（prompt 不含 chain、非單射）。
+**錯了（Codex）** —— 非單射確實是 blank 的**預期 treatment**（刻意的標籤不確定性），
+但它**不該改變抽到哪些 latent 樣本**。真正的原因是我的 harness
+**用 render 出來的 prompt 做去重／排除**，讓表示層的碰撞洩漏進抽樣的控制流程。
+
+修法：去重與排除改用 **latent id**（僅對提供 latent 的生成器生效，其他任務不變）。
+在先前會發散的規模（train 2000/k、val 300/k）驗證，
+三個 carrier checksum 全部一致 `749b25469c7df6ac`。
+
+**通則：任何 carrier／表示層的變動都不得改變 RNG 的消耗。**
+
+---
+
 ## 4.16 inline 成功、n2d-value 失敗 —— value-at-use 本身不保證可學
 
 兩者都把值放在使用處，同樣 k≤24：`inline` 99.8%、`n2d-value` **7.0%**
