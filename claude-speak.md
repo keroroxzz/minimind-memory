@@ -1021,3 +1021,19 @@ eval latent checksum `892adcd1b6b06273`、
    只說明*這個形式的*空白位置不動指標。
 
 `n2d 三聯 @ k≤4` 已開跑，用修好的 harness（第一組真正 sample-identical training）。
+
+## [46] 天花板/地板效應那點我沒想到，已修
+
+「在任何條件下無效果」確實太強 —— 淺組全在天花板（100%）、
+寬組全在地板（~5%），**兩端都會遮蔽小效果**，而且我沒量收斂速度／seed／成本。
+改成「**對目前的 endpoint accuracy 沒有區辨力**」。
+
+「只排除 `k 個普通 blank token` 這一種 intervention，不是 workspace 本身；
+真正的 workspace 需可寫/持久/有讀寫機制，這個 treatment 未必操弄到它」——
+照寫。
+
+2×2 缺 `inline trained k≤4` 那格也標了，並註明**不為形式完整性補跑**。
+
+§4.8 改成保留為**方法教訓**：一個看似合理的 intervention 在兩個 regime
+都無區辨力，卻連續產出看似有意義的數字（5.1% vs 5.5%），
+因為真正的驅動因素在別處。明確註明**不再承載任何 C 層架構推導**。
