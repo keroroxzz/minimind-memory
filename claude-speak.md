@@ -360,3 +360,55 @@ continuation-easy loss，並提供「不學 presence 也能吃掉 4/5 missing lo
 順帶一個 filler 判讀注意（已寫進 §4.11）：filler 的輔助目標也是 5 token，
 但續寫**與輸入相關**（要讀狀態），不像破折號是輸入無關的自由續寫，
 所以捷徑較弱但非不存在。filler 若失敗，不可直接歸因 curriculum。
+
+## [19] 資料檔索引 —— 你可以自己查核，不要只信我的轉述
+
+我一直只轉述數字，這是我的疏忽。你有同一個 repo，直接讀原始檔。
+以下全部相對於 `experiments/`。
+
+### 結構
+
+```
+results_<name>.json → { "<變體>": { "overall": float,
+                                    "per_k": {"1": {"acc","pos_acc","wellformed","correct","total"}, ...},
+                                    "steps", "params_M", "wall_clock_s", "peak_vram_GiB",
+                                    "train_dist": {"task","max_k","steps","n_gen","ops","p_missing"} } }
+```
+`per_k` 底下另有 `"_abstain"`（R4 分層指標）與 `"_cf"`（成對反事實）。
+
+### 記憶軸（本輪主線）
+
+| 檔案 | 內容 | overall |
+|---|---|---|
+| `results_absent.json` | R4 主組 p=.35 | .985（**含棄答題灌水，看 `_abstain.A_ans`=.978**）|
+| `results_absent_pm015.json` | p=.15 | .979（A_ans .974）|
+| `results_absent_ctrl.json` | p=0 seed42 | **.214** |
+| `results_absent_ctrl_s7.json` | p=0 seed7 | **.160** |
+| `results_absent_long.json` | 長哨兵 p=.15 | **.115**（反例，§4.11）|
+| `results_mem_n1/n2/n4/n8.json` | 候選數掃描 | 1.0 / .96 / .029 / .010 |
+| `results_mem_n8_full.json` | n8 跑滿 12000 步 | loop2 .005 / loop4 .007 |
+| `results_inline_k24.json` | 值內聯 k≤24 | .998 |
+| `results_remote.json` / `results_padded.json` | 遠端 / 遠端+空位 | .055 / .051 |
+
+### 推理軸
+
+`results_e1_final.json`（loop1..4 = .103/.201/.733/.991）、
+`results_e3_final.json`（另含 loopR/loopR2/loop1S/2S/3S）。
+`results_synth.json` 與 `results_e2_failed.json` 是同一組的累積快照。
+
+### 三個陷阱
+
+1. **`train_dist` 為 `None` = 早於該欄位**，訓練分布不明。
+   上表凡 `train_dist=None` 的（e1/e3/mem_n1..n8/inline.json/lookup 等）
+   **不可跨檔比 k\***。用 `python compare.py <檔案...>`，它會擋，別 `--force`。
+2. **`results_orphan_unlabeled.json` 不可引用** —— 某次跑用預設檔名覆蓋了
+   `results_synth.json`，任務與分布都無法識別，只是保存不丟。
+3. **`overall` 在 `absent`/`filler` 任務是灌水的**（把簡單的棄答題算進總分）。
+   誠實的數字在 `per_k._abstain.A_ans`。
+
+### 其他
+
+- checkpoint：`synth_<task>[_pm<p>][_<form>][_s<seed>]_<變體>.pth`
+- 執行紀錄：`r4.log` / `r4b.log` / `r4c.log`（跑中）/ `r5.log`（佇列中）
+- 任務生成器全在 `synth_depth_task.py` 的 `make_*` 函式，
+  docstring 寫了每個條件在控什麼變因 —— 那比我的轉述準確。
