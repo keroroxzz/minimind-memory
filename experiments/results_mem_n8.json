@@ -1,0 +1,48 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 2,
+        "total": 200,
+        "acc": 0.01,
+        "pos_acc": 0.2350000000000003,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 1,
+        "total": 200,
+        "acc": 0.005,
+        "pos_acc": 0.1949999999999999,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 4,
+        "total": 200,
+        "acc": 0.02,
+        "pos_acc": 0.21800000000000014,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 1,
+        "total": 200,
+        "acc": 0.005,
+        "pos_acc": 0.16299999999999978,
+        "wellformed": 1.0
+      },
+      "_cf": {
+        "A_full": 0.006666666666666667,
+        "A_mem": 0.013333333333333334,
+        "S_stale": 0.006666666666666667,
+        "C_cf": 0.0,
+        "unused_invariance": 0.13333333333333333,
+        "n_used": 150,
+        "n_unused": 150
+      }
+    },
+    "overall": 0.01,
+    "params_M": 29.500928,
+    "wall_clock_s": 1789.9450371265411,
+    "steps": 6000,
+    "peak_vram_GiB": 3.759467124938965
+  }
+}

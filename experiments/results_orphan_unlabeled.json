@@ -1,0 +1,40 @@
+{
+  "_note": "來源不明的孤兒結果：某次跑用了預設 --out 檔名，覆蓋掉 results_synth.json 的 E1 資料。缺 train_dist（早於該欄位），任務與訓練分布無法識別，僅保留不引用。",
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      }
+    },
+    "overall": 1.0,
+    "params_M": 29.500928,
+    "wall_clock_s": 1788.4031238555908,
+    "steps": 6000,
+    "peak_vram_GiB": 3.759467124938965
+  }
+}
