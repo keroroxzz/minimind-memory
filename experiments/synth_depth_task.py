@@ -281,6 +281,51 @@ def _apply_all(st, perms):
     return st
 
 
+ABSTAIN = "?"
+
+
+def make_absent(k, rng, n_present=2, pool=4, p_missing=0.35):
+    """R4：記憶缺失 —— 需要的定義不在記憶區時，模型應該說「不知道」而非亂編。
+
+    記憶區放 n_present 條定義（取自 pool 個 key），鏈則從整個 pool 取用。
+    若鏈中任何一個 key 不在記憶區 → 目標是 ABSTAIN；否則正常計算。
+
+    用 n_present=2 是因為搜尋容量上限就是 2（§2.6）—— 超過就連能答的都答不出來，
+    那樣測不出「該不該棄答」。
+    """
+    keys = [f"f{i}" for i in range(pool)]
+    present = sorted(rng.sample(range(pool), n_present))
+    defs = {}
+    seen = set()
+    for i in present:
+        while True:
+            q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+            if q != list(range(PERM_N)) and t not in seen:
+                seen.add(t); defs[i] = q; break
+
+    order = list(present); rng.shuffle(order)
+    mem = " ".join(f"{keys[i]}=" + " ".join(map(str, defs[i])) for i in order)
+
+    state = list(range(PERM_N)); rng.shuffle(state)
+    absent = [i for i in range(pool) if i not in present]
+    want_missing = absent and rng.random() < p_missing
+    if want_missing:
+        chain = [rng.choice(present) for _ in range(k)]
+        chain[rng.randrange(k)] = rng.choice(absent)   # 至少一個缺失
+        rng.shuffle(chain)
+        answer = ABSTAIN
+    else:
+        chain = [rng.choice(present) for _ in range(k)]
+        st = list(state)
+        for g in chain:
+            st = [st[defs[g][i]] for i in range(PERM_N)]
+        answer = " ".join(map(str, st))
+
+    prompt = mem + " | x=" + " ".join(map(str, state)) + \
+        "".join(f" {keys[g]}" for g in chain) + " 求x="
+    return prompt, answer
+
+
 def make_perm(k, rng):
     """x=<起始置換> f_i f_j ... 求x=<結果置換>"""
     state = list(range(PERM_N)); rng.shuffle(state)
@@ -345,6 +390,8 @@ def gen(args):
         "remote": lambda k, rng: make_remote(k, rng),
         # remote + 狀態後補 k 個空位：檢驗「序列維度是工作記憶」的假說
         "padded": lambda k, rng: make_padded(k, rng),
+        # R4：需要的定義不在記憶區時，應輸出 ABSTAIN 而非幻覺
+        "absent": lambda k, rng: make_absent(k, rng, args.n_gen, p_missing=args.p_missing),
     }
     make = TASKS[args.task]
 
@@ -465,6 +512,52 @@ def acc_by_k(model, tok, val_rows, max_per_k=200, throttle=1.0, n_loops=None, on
     return {k: {"correct": hit[k], "total": tot[k], "acc": hit[k] / max(tot[k], 1),
                 "pos_acc": pos[k] / max(tot[k], 1), "wellformed": wf[k] / max(tot[k], 1)}
             for k in sorted(tot)}
+
+
+@torch.no_grad()
+def abstain_eval(model, tok, val_rows, max_per_k=200, n_loops=None, throttle=1.0):
+    """R4：記憶缺失時的棄答行為。
+
+    整體正確率在這裡是沒有意義的 —— 它把「該答時答對」和「該棄答時棄答」
+    混成一個數字，而這兩件事的失敗代價完全不同。幻覺（缺資料卻自信地編一個
+    合法答案）是唯一真正危險的那一種。
+    """
+    gkw = {"num_loops": n_loops} if n_loops else {}
+
+    def gen(prompt):
+        ids = tok(tok.bos_token + prompt, add_special_tokens=False,
+                  return_tensors="pt").input_ids.to(DEVICE)
+        out = model.generate(ids, max_new_tokens=6, do_sample=False,
+                             eos_token_id=tok.eos_token_id, **gkw)
+        return tok.decode(out[0][ids.shape[1]:], skip_special_tokens=True).strip()
+
+    from collections import defaultdict
+    by_k = defaultdict(list)
+    for r in val_rows:
+        by_k[r["k"]].append(r)
+    rows = [r for k in sorted(by_k) for r in by_k[k][:max_per_k]]
+
+    ans = [r for r in rows if r["answer"] != ABSTAIN]
+    mis = [r for r in rows if r["answer"] == ABSTAIN]
+    a_hit = a_false = 0
+    for r in ans:
+        t0 = time.time(); g = gen(r["prompt"])
+        if throttle < 1.0:
+            torch.cuda.synchronize(); time.sleep((time.time() - t0) * (1 / throttle - 1))
+        a_hit += (g == r["answer"]); a_false += (g == ABSTAIN)
+    m_hit = m_hall = 0
+    for r in mis:
+        t0 = time.time(); g = gen(r["prompt"])
+        if throttle < 1.0:
+            torch.cuda.synchronize(); time.sleep((time.time() - t0) * (1 / throttle - 1))
+        m_hit += (g == ABSTAIN)
+        # 幻覺 = 缺資料卻吐出一個格式合法的置換（自信地編）
+        pd = g.split()
+        m_hall += (len(pd) == PERM_N and all(x.isdigit() for x in pd))
+    na, nm = max(len(ans), 1), max(len(mis), 1)
+    return {"n_answerable": len(ans), "n_missing": len(mis),
+            "A_ans": a_hit / na, "false_abstain": a_false / na,
+            "R_abstain": m_hit / nm, "hallucination": m_hall / nm}
 
 
 @torch.no_grad()
@@ -594,6 +687,16 @@ def run(name, args):
         print(f"    {k:>3d} {v['acc']:8.1%} {v['pos_acc']:8.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
 
+    if args.task == "absent":
+        ab = abstain_eval(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
+                          throttle=args.throttle)
+        print(f"\n  R4 記憶缺失（可答 {ab['n_answerable']} / 該棄答 {ab['n_missing']}）：")
+        print(f"    A_ans        資料齊全時答對     {ab['A_ans']:6.1%}  ← 加了棄答有沒有傷到本業")
+        print(f"    R_abstain    缺資料時正確棄答   {ab['R_abstain']:6.1%}")
+        print(f"    false_abst   資料齊全卻棄答     {ab['false_abstain']:6.1%}  ← 越低越好")
+        print(f"    halluc       缺資料卻編出合法答 {ab['hallucination']:6.1%}  ← 唯一危險的失敗", flush=True)
+        per_k["_abstain"] = ab
+
     if args.cf_eval and any("cf_used_prompt" in r for r in d["val_rows"]):
         cf = cf_eval(model, tok, d["val_rows"], n=args.cf_n)
         print(f"\n  成對反事實（n={cf['n_used']}）：")
@@ -605,6 +708,12 @@ def run(name, args):
         per_k["_cf"] = cf
 
     tag = f"{args.task}{args.n_gen}" if args.task == "mem" else args.task
+    # 檔名必須帶上會改變這次跑法的每一個變因。第一版只用 task 名，
+    # 結果 absent 的主組與對照組寫到同一個檔，主組權重被靜默覆蓋。
+    if args.task == "absent":
+        tag += f"_pm{args.p_missing:g}"
+    if args.seed != 42:
+        tag += f"_s{args.seed}"
     ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")
     torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ck)
 
@@ -615,6 +724,7 @@ def run(name, args):
                  # 沒有這欄，跨檔比較就會不知不覺比到兩種不同的東西。
                  "train_dist": {"task": args.task, "max_k": MAX_K, "steps": steps,
                                 "n_gen": args.n_gen, "ops": args.ops,
+                                "p_missing": args.p_missing if args.task == "absent" else None,
                                 "train_per_k": None},
                  "params_M": sum(p.numel() for p in model.parameters()) / 1e6,
                  "wall_clock_s": elapsed, "steps": steps,
@@ -657,14 +767,19 @@ if __name__ == "__main__":
     ap.add_argument("--cf-eval", type=int, default=1, help="mem 任務跑成對反事實評測")
     ap.add_argument("--cf-n", type=int, default=200, help="反事實配對數")
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="種子。用來判斷某個結果是機制還是單次最佳化的意外")
+    ap.add_argument("--p-missing", type=float, default=0.35,
+                    help="absent 任務中「所需定義不在記憶區」的比例；0 = 純對照組")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
     a = ap.parse_args()
     MAX_K = a.max_k
+    SEED = a.seed
     # 每個任務寫自己的結果檔，避免不同任務互相覆蓋
     # （先前得手動 cp 出六個快照才不會弄丟）
     RESULTS = os.path.join(HERE, a.out) if a.out else os.path.join(HERE, f"results_{a.task}.json")
