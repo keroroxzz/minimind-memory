@@ -216,6 +216,40 @@ def make_inline(k, rng):
     return " | ".join(parts) + " 求x=", " ".join(map(str, state))
 
 
+def make_remote(k, rng):
+    """條件 D：值已解析，但放在**遠端 memory block**，不在使用處旁邊。
+
+    與 inline 的唯一差別是位置 —— 順序仍然定義套用次序，沒有 key、沒有搜尋。
+    inline 同時改變了「顯式程度／token 頻寬／locality」三件事；
+    這個條件把 locality 單獨拉出來測。
+
+      inline : x=... | p1 | p2 | p3 求x=
+      remote : p1 | p2 | p3 || x=... 求x=
+    """
+    state = list(range(PERM_N)); rng.shuffle(state)
+    perms = []
+    for _ in range(k):
+        q = list(range(PERM_N)); rng.shuffle(q)
+        if q == list(range(PERM_N)):
+            q = [q[1], q[0]] + q[2:]
+        perms.append(q)
+        state = [state[q[i]] for i in range(PERM_N)]
+    block = " | ".join(" ".join(map(str, q)) for q in perms)
+    return block + " || x=" + " ".join(map(str, [*range(PERM_N)][:0]) ) + \
+        " ".join(map(str, _remote_start(perms, state))) + " 求x=", " ".join(map(str, state))
+
+
+def _remote_start(perms, final):
+    """由最終狀態與置換序列反推起始狀態（保持與 inline 相同的資料分佈）。"""
+    st = list(final)
+    for q in reversed(perms):
+        inv = [0] * PERM_N
+        for i, v in enumerate(q):
+            inv[v] = i
+        st = [st[inv[i]] for i in range(PERM_N)]
+    return st
+
+
 def make_perm(k, rng):
     """x=<起始置換> f_i f_j ... 求x=<結果置換>"""
     state = list(range(PERM_N)); rng.shuffle(state)
@@ -276,6 +310,8 @@ def gen(args):
         "lookup": lambda k, rng: make_lookup(k, rng)[:2],
         # runtime 解析完成、運算元內聯：隔離「用」與「找」
         "inline": lambda k, rng: make_inline(k, rng),
+        # 同樣已解析，但放在遠端 block：把 locality 單獨拉出來測
+        "remote": lambda k, rng: make_remote(k, rng),
     }
     make = TASKS[args.task]
 
@@ -590,7 +626,7 @@ if __name__ == "__main__":
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
