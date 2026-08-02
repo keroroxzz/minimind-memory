@@ -287,6 +287,51 @@ ABSTAIN = "?"
 ABSTAIN_LONG = "- - - - -"
 
 
+def make_n2(k, rng, carrier="pointer"):
+    """matched A/B/C：同一批樣本，只換狀態後每步位置上的 carrier。
+
+    Codex 指出先前的 inline/mem/padded 三聯跨組資料分布不同 ——
+    inline 每步是全新隨機置換（k 個不同、高熵），mem 只有 2 個重複使用，
+    padded 的 block 有 k 個值。歸因到 carrier bandwidth 不乾淨。
+
+    這裡三個條件共用完全相同的前綴（2 條定義 + 狀態）、chain、答案與
+    train_dist，唯一差別是狀態後每步位置攜帶什麼：
+
+      value  : "2 3 1 0 4"    ← oracle 展開成該步實際要套用的置換
+      pointer: "a . . . ."    ← 只給 key，值要回頭到 block 裡取
+      blank  : ". . . . ."    ← 什麼都沒有
+
+    三者都**恰好 5 個 token**（`a`/`b` 是單 token），序列長度相同，
+    所以連注意力距離的混淆也一併消掉 —— 只有資訊內容在變。
+    搜尋寬度恆為 2，符合約束 3。
+    """
+    names = ["a", "b"]
+    defs, seen = [], set()
+    while len(defs) < 2:
+        q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+        if q != list(range(PERM_N)) and t not in seen:
+            seen.add(t); defs.append(q)
+    order = [0, 1]; rng.shuffle(order)            # key 與 block 位置不可相關
+    block = " ".join(f"{names[i]}=" + " ".join(map(str, defs[i])) for i in order)
+
+    state = list(range(PERM_N)); rng.shuffle(state)
+    chain = [rng.randrange(2) for _ in range(k)]
+
+    def render(g):
+        if carrier == "value":
+            return " ".join(map(str, defs[g]))
+        if carrier == "pointer":
+            return names[g] + " . . . ."
+        return ". . . . ."
+
+    st = list(state)
+    for g in chain:
+        st = [st[defs[g][i]] for i in range(PERM_N)]
+    prompt = block + " | x=" + " ".join(map(str, state)) + \
+        "".join(" " + render(g) for g in chain) + " 求x="
+    return prompt, " ".join(map(str, st))
+
+
 def make_filler(k, rng, n_present=2, pool=4, p_filler=0.15):
     """curriculum 對照：把棄答樣本換成同樣簡單、同樣長度、但**不需要 key 比對**的輔助題。
 
@@ -429,6 +474,8 @@ def gen(args):
         "absent": lambda k, rng: make_absent(
             k, rng, args.n_gen, p_missing=args.p_missing,
             abstain=ABSTAIN_LONG if args.abstain_form == "long" else ABSTAIN),
+        # matched A/B/C：同前綴同答案，只換每步 carrier（5 token 等長）
+        "n2": lambda k, rng: make_n2(k, rng, args.carrier),
         # curriculum 對照：簡單輔助題但不需 key 比對
         "filler": lambda k, rng: make_filler(k, rng, args.n_gen, p_filler=args.p_missing),
     }
@@ -755,6 +802,8 @@ def run(name, args):
         tag += f"_pm{args.p_missing:g}"
     if args.abstain_form != "short":
         tag += f"_{args.abstain_form}"
+    if args.task == "n2":
+        tag += f"_{args.carrier}"
     if args.seed != 42:
         tag += f"_s{args.seed}"
     ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")
@@ -810,6 +859,8 @@ if __name__ == "__main__":
     ap.add_argument("--cf-eval", type=int, default=1, help="mem 任務跑成對反事實評測")
     ap.add_argument("--cf-n", type=int, default=200, help="反事實配對數")
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
+    ap.add_argument("--carrier", default="pointer", choices=["value", "pointer", "blank"],
+                    help="n2 任務：狀態後每步位置攜帶什麼（三者等長 5 token）")
     ap.add_argument("--abstain-form", default="short", choices=["short", "long"],
                     help="short='?' (1 token)；long='- - - - -' (5 token，與答案等長)")
     ap.add_argument("--seed", type=int, default=42,
@@ -818,7 +869,7 @@ if __name__ == "__main__":
                     help="absent 任務中「所需定義不在記憶區」的比例；0 = 純對照組")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent", "filler"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent", "filler", "n2"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")
