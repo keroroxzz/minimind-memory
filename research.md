@@ -859,11 +859,16 @@ token prior／output grammar／seed 都還在。seed=7 只裁決穩定性。
 
 ### C 層目前剩下的硬約束（2026-08-03 更新）
 
-`padded k≤4` 之後，**JIT delivery 從硬約束移除**。目前站得住的只有三條：
+`padded k≤4` 之後，**JIT delivery 從硬約束移除**。剩下的要**分成兩欄**（Codex）——
+它們的成本結構完全不同：
 
-1. **外部唯一化的 selection**（加倍深度救不回來，§P2b）
-2. **候選數 ≤2**（4 個候選：100% → 4.7%）
-3. **matching-relevant 且可學的輔助目標**（§4.12/§4.14）
+| 欄 | 約束 | 證據 | 成本 |
+|---|---|---|---|
+| **runtime interface** | 外部 selection 應**唯一化**（輸出 top-1）；<br>做不到時，核心的 fallback 容錯上限是**候選 ≤2** | 加倍深度救不回來（loop4 仍 0.8%）；<br>4 個候選 100% → 4.7% | **每次推論**都要付 |
+| **training requirement** | 加入**可學且依賴 address matching** 的輔助目標 | §4.12 四象限、§4.14 codekey 雙高 | **一次性**，非推論成本 |
+
+⚠️ **「外部唯一化」與「候選≤2」不是兩個獨立機制**（Codex）——
+目標是 top-1 輸出，**≤2 只是目前實測的容錯上限**。我先前把同一件事寫成兩條。
 
 **delivery schedule（串流 vs 預載）與 value-vs-pointer 都降回未定**，
 等有分隔符的 n2 三聯與多跳資料相依測試。
