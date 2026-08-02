@@ -171,6 +171,18 @@ Design rules these encode, which matter more than the code:
   correlating it with specific codes. When a task depends on targets being a fixed length, verify
   the *full* target fragment as it actually appears (leading space, boundaries), never the bare
   character. `'? ? ? ? ?'` is 9 tokens for the same reason — the space is its own token.
+- **Never let a dataset builder skip rows silently.** `synth_depth_task.py` used to
+  `continue` past anything longer than `SEQ_LEN`. That does not thin a dataset uniformly — it
+  removes the *deepest* samples first, exactly the end of the range a depth experiment measures,
+  and the only visible symptom is a smaller total. It now counts drops per k and raises. A test
+  run at the old limit dropped 150 rows, every one of them at k=22–24. Any change that lengthens
+  a prompt must re-check the limit.
+- **A matched comparison needs a fingerprint, not a shared seed.** Three conditions built from
+  "the same seed" are only argued to be identical. `make_n2` emits a canonical
+  `(defs, state, chain, answer)` latent that never reaches the model, and the SHA of that stream
+  is stored in `train_dist`. Hashing `(k, answer)` is *not* enough — S₅ has 120 answers, so it is
+  a many-to-one summary. Check the fingerprint changes with seed too: a hash that is accidentally
+  constant also "matches" across conditions.
 - **Weight decay must be grouped.** AdamW decays every parameter each step, but only ~0.4% of the
   105M-row engram table receives gradient — uniform decay drags unvisited rows toward zero.
   Exempt embeddings, norms and the engram table.
