@@ -83,6 +83,8 @@ import string
 MAX_K = 6                       # 由 --max-k 覆寫
 NAMES = string.ascii_lowercase   # 最多支援 k=25
 SEQ_LEN = 160                    # mem 任務：記憶區 ~72 + k=12 的鏈 ~30 + 答案 5
+                                 # 由 --seq-len 覆寫。encode() 會**靜默丟棄**超長樣本，
+                                 # 所以任何加長 prompt 的改動都要一併檢查這個值。
 DEVICE = "cuda"
 SEED = 42
 
@@ -317,12 +319,17 @@ def make_n2(k, rng, carrier="pointer"):
     state = list(range(PERM_N)); rng.shuffle(state)
     chain = [rng.randrange(2) for _ in range(k)]
 
+    # 每組前面必須有分隔符。第一版拿掉分隔符以求等長，結果三個條件的
+    # **切分難度**不同：pointer 的字母標出了每組起點，value 卻是一長串
+    # 無界的數字（k=24 時 120 個數字連在一起），只能靠數位置切。
+    # 實測 value 的 k=1 是 99.5%、k=2 掉到 9.5% —— 懸崖正好在切分開始的地方。
+    # 加上 "|" 之後三者仍等長（各 6 token），但切分線索一致。
     def render(g):
         if carrier == "value":
-            return " ".join(map(str, defs[g]))
+            return "| " + " ".join(map(str, defs[g]))
         if carrier == "pointer":
-            return names[g] + " . . . ."
-        return ". . . . ."
+            return "| " + names[g] + " . . . ."
+        return "| . . . . ."
 
     st = list(state)
     for g in chain:
@@ -937,6 +944,8 @@ if __name__ == "__main__":
     ap.add_argument("--cf-eval", type=int, default=1, help="mem 任務跑成對反事實評測")
     ap.add_argument("--cf-n", type=int, default=200, help="反事實配對數")
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
+    ap.add_argument("--seq-len", type=int, default=160,
+                    help="超過此長度的樣本會被 encode() 靜默丟棄；n2 加了分隔符後 k=24 需要 192")
     ap.add_argument("--carrier", default="pointer", choices=["value", "pointer", "blank"],
                     help="n2 任務：狀態後每步位置攜帶什麼（三者等長 5 token）")
     ap.add_argument("--abstain-form", default="short", choices=["short", "long"],
@@ -954,6 +963,7 @@ if __name__ == "__main__":
     a = ap.parse_args()
     MAX_K = a.max_k
     SEED = a.seed
+    SEQ_LEN = a.seq_len
     # 每個任務寫自己的結果檔，避免不同任務互相覆蓋
     # （先前得手動 cp 出六個快照才不會弄丟）
     RESULTS = os.path.join(HERE, a.out) if a.out else os.path.join(HERE, f"results_{a.task}.json")
