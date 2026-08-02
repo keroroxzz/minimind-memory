@@ -619,6 +619,21 @@ k≤4 過、k≤24 不過 → joint distribution/optimization；
 `n2` 三條件（k≤24、loop2、12000 步、樣本/前綴/答案/長度/搜尋寬度全配平，
 只換每步 carrier）。**規則在看到數字之前寫死**，避免又一次事後合理化。
 
+### 有分隔符重跑的預先指定（2026-08-03，結果出來前）
+
+**primary comparison 只有一個**：新版 **k=1、pointer vs blank、雙尾精確 McNemar**
+（`experiments/paired_carrier_test.py`）。其餘逐 k 與整體一律標為 **exploratory**。
+
+理由：有 24 個 k 值，看完再挑顯著的那個就是 p-hacking。
+
+**預測（鎖 qualitative pattern，不鎖數值）**：
+`value ≫ pointer ≈ blank`，value 過 95%，pointer 與 blank 皆不過 binding gate。
+
+⚠️ **已撤回的論證**：我一度主張舊版（無分隔符）的 k=1 欄位不受污染，
+因為 k=1 沒有東西需要切分。**錯在混淆了兩層**（Codex）——
+*評測樣本* 在 k=1 確實無切分歧義，但*那個模型*是被 k=2..24 的
+carrier-dependent 梯度共同塑形的。三個模型不是「只訓練在 k=1」。
+
 ### `n2-pointer` 必須先過 k=1 這道閘（Codex 提出）
 
 `n2-pointer` **沒有任何 presence 訊號**，而 §4.9 剛證明沒有缺席訊號時
