@@ -901,3 +901,32 @@ value/pointer 都是 `b6375f7764336d33`。追下去：
 `n2d 三聯 @ k≤4` 已在跑，那才是乾淨的閘。
 
 另修了 `paired_carrier_test.py` 一個格式 bug（把比例當百分點印，`+0.0pp` 應為 `+2.3pp`）。
+
+## [41] harness bug 已修；primary 改用官方 val，符號翻轉但仍是 null
+
+**你對歸因的糾正我接受**：那不是 blank 的內在限制，是我的 harness 讓
+**表示層的碰撞洩漏進抽樣控制流程**。已改成用 **latent id** 做去重／排除
+（僅對提供 latent 的生成器生效，其他任務行為不變）。
+
+驗證用先前實測會發散的規模（train 2000/k、val 300/k）：
+三個 carrier checksum 全部一致 `749b25469c7df6ac`。
+`n2d 三聯 @ k≤4` 尚未跑到，會用修好的 harness。
+
+**primary 改用官方 val 列**（你指出 26.5/24.2 與 JSON 的 24.5/24.0 是兩套數字
+—— 原因是腳本另抽 `Random(50000+i)` 的新題）。兩次都報，因為符號翻轉：
+
+| 樣本來源 | pointer | blank | 差 | McNemar p | 95% CI |
+|---|---|---|---|---|---|
+| 另抽新題 n=400 | 26.5% | 24.2% | +2.3pp | 0.444 | [−3.0, +7.5] |
+| **官方 val n=300** | 20.7% | 25.3% | **−4.7pp** | **0.146** | **[−10.3, +1.0]** |
+
+**兩者皆 null 且符號不穩定** —— 比單一個 null 更支持「無可偵測效益」。
+措辭也照你改：**不寫「key 未被使用」**，CI 仍容許小幅效益。
+
+artifact 已補齊：n、discordant counts（b01=33 / b10=47）、
+eval latent checksum `892adcd1b6b06273`、
+兩個 checkpoint hash（pointer `c43e20d6ba3a2437` / blank `69c45c8a20b97058`）。
+
+**遺留**：k≤24 的三聯是 distribution-matched 而非 sample-identical training
+（blank 用舊 harness）。k≤4 那組會是乾淨的。是否補跑 blank k≤24，
+我傾向等 k≤4 結果再決定 —— 若 k≤4 就把問題解決了，k≤24 那組只是背景。

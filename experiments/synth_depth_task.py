@@ -563,12 +563,20 @@ def gen(args):
                 att += 1
                 got = make(k, rng)
                 pr, a = got[0], got[1]
-                lat = got[2] if len(got) > 2 else f"{k}:{a}"
-                if unique and pr in seen:
+                # 去重／排除必須用 **latent id**，不能用 render 出來的 prompt。
+                # 用 prompt 會讓「表示層的碰撞」洩漏進抽樣控制流程：blank 的
+                # prompt 不含 chain，所以同 defs/state 的不同 chain 會逐字相同，
+                # 於是它比 value/pointer 多跳過一次 → RNG 錯開 → 69% 的 train
+                # 列不同。任何 carrier 都不該改變 RNG 的消耗。
+                if len(got) > 2:
+                    key, lat = got[2], got[2]
+                else:
+                    key, lat = pr, f"{k}:{a}"
+                if unique and key in seen:
                     continue
-                if exclude and pr in exclude:
+                if exclude and key in exclude:
                     continue
-                seen.add(pr)
+                seen.add(key)
                 rows.append({"k": k, "prompt": pr, "answer": a, "_latent": lat})
                 made += 1
             if made < n_per_k:
@@ -606,7 +614,8 @@ def gen(args):
         n_u = sum(1 for r in val_rows if "cf_used_prompt" in r)
         n_n = sum(1 for r in val_rows if "cf_unused_prompt" in r)
         print(f"  反事實配對：used {n_u} 對 / unused {n_n} 對")
-    val_set = {r["prompt"] for r in val_rows}
+    # 同理，val_set 也用 latent id
+    val_set = {r.get("_latent") or r["prompt"] for r in val_rows}
     train_rows = build(args.train_per_k, random.Random(SEED), unique=False, exclude=val_set)
     assert not ({r["prompt"] for r in train_rows} & val_set)
 
