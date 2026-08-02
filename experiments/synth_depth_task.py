@@ -332,7 +332,10 @@ def make_n2(k, rng, carrier="pointer"):
     return prompt, " ".join(map(str, st))
 
 
-CODE_ALPHA = "cdeghjklmnpqrstuvwyz"     # 皆為單 token，避開 a/b/f/x 等已被佔用的符號
+# 必須「獨立」與「帶前導空格」兩種情境都是單 token —— `q` 只滿足前者，
+# 帶空格時是 2 個 token，會讓 18% 的輔助答案變成 6 個 token，
+# 把我們正要控制的「目標長度」變因重新引進來。smoke check 抓到的。
+CODE_ALPHA = "cdeghjklmnprstuvwyz"      # 已排除 q；並避開 a/b/f/x 等已被佔用的符號
 
 
 def make_codekey(k, rng, n_present=2, pool=4, p_missing=0.35):
