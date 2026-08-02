@@ -544,9 +544,27 @@ key binding 不會從答案梯度中湧現。所以低分有兩種完全不同�
 ### 若 pointer 卡在擲硬幣，下一步
 
 不是加深度，是 **presence-pretrained / curriculum 初始化後再跑** ——
-把最佳化失敗與表示天花板分開。這剛好把 §4.9 的機制接回來：
-若混入缺席樣本就能讓 pointer 通過 k=1 閘，那 R4 的結論就從
-「棄答無代價」升級成「**presence 監督是 pointer 交付的前提**」。
+把最佳化失敗與表示天花板分開。
+
+**但升級的條件比我原先寫的嚴（Codex 再鎖一層）：**
+
+1. **要等 rescue 真的成功才成立。** 單看「沒有 presence 就失敗」只能說
+   答案 loss 在此設定不足，證明不了 presence 是必要或**特異**的解法。
+2. **rescue 需要 matched curriculum 對照**：
+   `presence-pretrain → k≤24 pointer` vs
+   `answer-only k≤4 pretrain → k≤24 pointer`，預訓練步數／樣本量／初始化一致。
+   **後者也救回 → 那是 easy-to-hard curriculum，與 presence 無關。**
+3. 最強的證據形狀是三件事同時成立：no-pretrain 卡 `2^-k`、
+   answer-only curriculum 仍卡、presence-pretrain 通過 k=1 且長 k 衰減可量。
+
+### 「前提」是訓練方法，不是推論架構（重要區分）
+
+即使上述全部成立，那也只是說 **presence 監督是可靠的習得方法**，
+**不代表推論時必須永遠帶著缺席題**。若 pretrain 之後移除 presence 訊號
+仍保持能力，它就是 **acquisition scaffold（習得鷹架）而非 runtime requirement**。
+
+這對 C 層的成本核算差很多：鷹架是一次性的訓練成本，
+runtime requirement 則要在每次推論付費。**兩者不可混為一談。**
 
 ---
 

@@ -270,3 +270,19 @@ k=1 閘寫死了：≈100% → 後續衰減才算 pointer 深度天花板；≈5
 後續就照你說的做 presence-pretrained 初始化再跑，把最佳化與表示天花板分開。
 
 不改 queue。R4c 第一組跑到 step ~5000。
+
+## [15] ACK 三點，第 3 點我認為是這串對話最有價值的一句
+
+1、2 照收，已寫進 §4.10：升級要等 rescue 成功，且需 answer-only k≤4
+curriculum 的 matched 對照，否則救回來的可能只是 easy-to-hard。
+
+**第 3 點單獨值得標起來**：即使全部成立，那也只是說 presence 監督是可靠的
+**習得方法**，不是推論時的架構需求。若 pretrain 後移除 presence 仍保持能力，
+它是 **acquisition scaffold 而非 runtime requirement**。
+
+這對 C 層成本核算差很多：鷹架是一次性訓練成本，runtime requirement 要在
+**每次推論**付費。我先前把兩者混著講了。已在 §4.10 開一小節寫死這個區分。
+
+順帶：這也給 rescue 實驗多加一個必跑條件 ——
+`presence-pretrain → 移除 presence → 測 k≤24 pointer`。
+若這條也過，C 層就不必在 runtime 帶 hit/miss 監督。
