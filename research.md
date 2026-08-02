@@ -1089,68 +1089,92 @@ R7 是本專案自己加的。四層架構加上每圈檢索很容易讓單 toke
 
 ---
 
-## 6. 目標系統：四層
+## 6. 目標系統：閉環（2026-08-03 由使用者定案）
 
-> ⚠️ **2026-08-03：本節的「規格」與「尚未確定」清單已過期。**
-> 以 §4.15–4.18 為準。具體：
-> - 「符號的間接性強迫線性深度／明確值允許樹狀規約」**已撤回**
->   （複雜度類別的過度宣稱，且樹狀規約是猜測非觀測）
-> - 「交付值不交付符號」降級為「selected value 是高深度的最佳介面，
->   pointer 是低頻寬選項」（§4.17 的措辭）
-> - 「值是否必須放在使用處旁邊」**已答**：`padded k≤4` 100%，
->   預先載入在淺分布完全可行（§4.15）
-> - 「一次取回全部 vs 逐圈按需」——**JIT delivery 已從硬約束移除**（§4.15）
->
-> **目前仍站得住的硬約束只有兩欄**（§4.15 末）：
-> runtime interface = 外部 selection 應唯一化（fallback 容錯 ≤2 候選）；
-> training requirement = 可學且依賴 address matching 的輔助目標。
+**取代先前的「線性四層」。** 舊版把 Working Memory 與 Controller 各當成一層，
+並假設模型會顯式產生 `Read/Write/Update/Delete`；三者都已被否定。
 
+### 形狀：3 個模組 + 1 個共享暫態
 
 ```
-Input
-  ↓
-Query Encoder
-  ↓
-Memory Retrieval ──────────┐
-  ↓                        │
-Recurrent Reasoning Core   │  固定參數量，不承擔世界知識
-  ↕ Working Memory         │  單次推論期間的工作區
-  ↕ ──────────────────── Long-Term Dynamic Memory
-  ↓                          可獨立擴容、可增刪改、可版本化
-Answer / Action / Memory Write
-        ↑
-    Controller（初期用確定性規則即可）
+        ┌──────────────────────────────┐
+        ↓                              │
+   [active workspace]                  │   ← 共享暫態，不是可訓練的層
+        ↓  consolidate                 │
+   [latent store]  ←── 可擴容/版本化    │
+        ↓  retrieve → select → deliver │
+   [reasoning core] ───────────────────┘
+        ↓
+     answer / action
 ```
 
-**A. Reasoning Core** — 輸入 `(x, w_t, r_t)`，輸出 `(w_{t+1}, q_{t+1}, a_t, h_t)`：
-更新後的工作狀態、下一次記憶查詢、暫定答案、停止分數。固定參數量。
+閉環：`event → active workspace → consolidate → latent store
+→ retrieve/select → synthesize/deliver → active workspace → core`
 
-**B. Working Memory** — 部分結果、已完成步驟、未解子目標、當前計畫、已讀記憶摘要。
-遞迴推理能否穩定的關鍵。
+**記憶是持續循環的，不是一次性的前饋管線。** 這是與舊版最大的結構差異。
 
-**C. Long-Term Dynamic Memory** — 明確介面 `Read(q) / Write(k,v) / Update(k,v') / Delete(k)`。
+### 三個模組的職責
 
-**規格（由 §2.6 的實測導出，不是設計偏好）：**
+| 模組 | 只負責 | 不負責 |
+|---|---|---|
+| **Reasoning Core** | 在**當下手上的值**做組合／推理，產生下一個 query、暫定答案、狀態 | 搜尋、選擇、世界知識 |
+| **Memory Interface** | 把候選**唯一化**、報 support/confidence、決定讀寫、把 latent 轉成 core 能用的 carrier/KV | 儲存本身 |
+| **Latent Store** | 持久的 address／content／metadata、物理 commit | 任何策略判斷 |
 
-1. **交付「值」，不交付「待解析的符號」** —— 值內聯時 loop2 的 k\* >24，
-   符號需從權重回想時只有 4.83。符號的間接性強迫線性深度，明確值允許 log 深度的樹狀規約。
-2. **選擇必須在核心外面做完** —— 核心無法邊搜尋邊計算（k=1 就失敗）。
-3. **候選收斂到 2 以內** —— 4 個候選時正確率從 100% 掉到 4.7%。
-   語意檢索的 top-k 不能只做到「相關」，得做到近乎唯一；否則就走 exact-key 路線。
+**Controller 不是第四個模組** —— 它是 Memory Interface 的政策面。
 
-**尚未確定**（P2b 只證明了「KV lookup + oracle 式 eager substitution 有效」，
-值如何從 KV store 運送進核心仍是開放的）：
+### Active Workspace：共享暫態，不是層
 
-- 值是否必須放在**使用處旁邊**（inline 是最有利位置）
-- 放在遠端 memory block 是否仍維持 k\* >24
-- 五個 token 能否壓成一個 memory slot
-- 是否需要專用 cross-attention
-- 一次取回全部值 vs 逐圈按需取回
+**具體就是 loop 之間攜帶的 hidden state**，加上 recent KV 與取回的 carrier。
+**沒有「訓練 Working Memory 層」這回事。**
 
-**不可以只是把更多 token 塞進 context window** —— 理由不只是成本，而是**能力邊界**：
-把候選丟進 context 讓核心自己找，它就是做不到，跟給多少算力無關。
+實測支持不另加機制：跨迴圈狀態通道（E3）在 loop2 是 +5.9pp，
+但在 **loop3 從 73.2% 掉到 41.2%**。所以舊版寫的
+「Working Memory 是遞迴推理能否穩定的關鍵」**與資料矛盾**，已刪。
 
-**D. Controller** — 何時重新檢索、哪些進工作區、是否寫入、是否繼續、衝突如何處理。
+### 記憶的增刪改是 backend commit，不是語言動作
+
+**模型不吐 `WRITE` / `SEARCH` / `DELETE` 指令。** 實體 CRUD 由 Memory
+Interface 依政策執行。訓練期可以加 matching／support 輔助目標（§4.12/§4.14），
+但那是輔助損失，不是模型要學會說的話。
+
+（tokenizer 已有 `<tool_call>` token，但這條路線**目前不走**。）
+
+### 「動態」的三個意思，全部都要
+
+1. **推論時可寫入** —— runtime 期間新增/更新，當場就能用
+2. **離線可換模組** —— 記憶可獨立訓練、版本化、整包抽換，不重訓 backbone
+3. **可獨立擴容** —— 容量可遠超 backbone 參數量而不動 backbone
+
+### 哪些有實測支撐，哪些是設計選擇
+
+**有支撐（29M 合成測試，非普遍定律）：**
+
+- recurrence 用近乎零參數換深度，多圈不退化（E1/E2b）
+- oracle 式外部選擇 + 顯式值 → loop2 在 k≤24 達 99.8%
+- 核心自行在 4/8 個候選中 search+compose 會崩；≤2 在此設定可行
+  → **「外部唯一化、≤2 fallback」是此規模此分布的工程邊界**
+- matching-relevant 且可學的輔助目標可改善 binding（§4.12/§4.14）
+- `padded k≤4` = 100% → **預先載入在淺分布表示可行**；**不支持 JIT 必要**
+
+**純設計選擇／未測：**
+position-neutral latent、consolidation/merge/utility、無標籤 write policy、
+KV synthesizer、semantic/ANN retrieval、source/time metadata、
+million-scale 規模、自然語言遷移、support head 是否與 selector 共用、
+active workspace 的最佳形式、value vs pointer、batch vs per-hop delivery、
+是否需要專用 cross-attention。
+
+⚠️ **「Core 不承擔世界知識」目前是訓練目標，不是已證事實。**
+
+### 舊版已刪除的內容（不要復活）
+
+- 「四層」圖與 A/B/C/D 固定分層
+- 未實作的 core I/O 契約 `(x,w_t,r_t) → (w_{t+1},q_{t+1},a_t,h_t)`
+- 「B 是遞迴穩定的關鍵」（**與 E3 矛盾**）
+- 顯式 `Read/Write/Update/Delete` 作為模型介面
+- 「符號強迫線性深度／明確值允許樹狀規約」（複雜度過度宣稱 + 猜測當結論）
+- 「值是否必須放在使用處旁／remote 是否可行／一次取回 vs 逐圈按需」的舊問法
+- 「不能只是塞 context、跟算力無關」這種絕對句
 
 ---
 
