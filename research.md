@@ -644,8 +644,14 @@ support 計算 —— §4.9 的缺失可靠度仍然依賴它。
 
 即使機制是 code geometry 而非「偵測缺席」本身，對 C 層的指示是清楚的：
 
-> **presence 監督必須以「單一集中的二元決策」交付**（或一個獨立的 binary
-> presence head），**不能做成模型可以部分預測的序列。**
+> presence 監督以「**單一集中的二元決策**」交付（或獨立的 binary presence head）
+> 是**目前最可靠的候選介面**。
+
+**措辭刻意不寫「必須」（Codex）**：binary head／加權 `?`／masked padding
+三者都還沒比較過，也沒有證明序列式 support 原理上不可學。
+工程上 binary support head 仍是最乾淨的終點 ——
+它消除 autoregressive continuation shortcut，
+又直接產出 C 層需要的 calibrated support scalar。
 
 ### 待跑
 
@@ -660,8 +666,18 @@ support 計算 —— §4.9 的缺失可靠度仍然依賴它。
 filler 的輔助目標是 5 個數字（回抄狀態），乍看有同樣的捷徑問題，
 但**結構不同**：破折號的續寫與輸入無關，filler 的續寫要讀狀態、
 且仍須知道這是 filler 題。**捷徑較弱但非不存在**（首 token 一旦定案，
-其餘可能靠自洽跟上）。所以 filler 若失敗，不可直接歸因 curriculum ——
-要先排除它也踩到同一個 code geometry。
+其餘可能靠自洽跟上）。**Codex 修正**：filler 的 5 個 state token 幾乎都要看輸入
+（置換各位無法由前一個輸出推得），所以它**不是純 token-length 對照**，
+測的是「一般 input-conditioned 簡單任務能否塑形」。
+
+### 預先鎖定的四種讀法（結果出來前）
+
+| 結果 | 結論 |
+|---|---|
+| long seed=7 **也敗** | code-geometry 反例**可重現** |
+| **filler 成功** | presence-specific **撤回**（是一般 curriculum/表示效應）|
+| **filler 也敗** | `?` bottleneck 與 presence semantics 仍糾纏，**不能選邊** |
+| long seed=7 **成功** | 高變異，**所有機制宣稱降級** |
 
 ---
 
