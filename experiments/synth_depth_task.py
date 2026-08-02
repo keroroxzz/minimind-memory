@@ -282,9 +282,44 @@ def _apply_all(st, perms):
 
 
 ABSTAIN = "?"
+# 長度匹配的哨兵：與 "0 1 2 3 4" 同為 5 個 token（"? ? ? ? ?" 反而是 9 個，
+# 空格自成一 token）。用來排除「棄答只是把 loss 尺度改小」這個替代解釋。
+ABSTAIN_LONG = "- - - - -"
 
 
-def make_absent(k, rng, n_present=2, pool=4, p_missing=0.35):
+def make_filler(k, rng, n_present=2, pool=4, p_filler=0.15):
+    """curriculum 對照：把棄答樣本換成同樣簡單、同樣長度、但**不需要 key 比對**的輔助題。
+
+    輔助題用 `求x0=` 標記，答案就是原狀態（什麼都不套用）。它跟棄答題一樣容易、
+    一樣是 5 個 token、一樣只需偵測一個字面標記 —— 唯一的差別是它不逼模型比對 key。
+
+    若這樣也能救回 A_ans，那 R4 的效果來自「多了一個簡單輔助任務」而非
+    「偵測缺席」，presence-induced binding 就不成立。
+    """
+    keys = [f"f{i}" for i in range(pool)]
+    present = sorted(rng.sample(range(pool), n_present))
+    defs, seen = {}, set()
+    for i in present:
+        while True:
+            q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
+            if q != list(range(PERM_N)) and t not in seen:
+                seen.add(t); defs[i] = q; break
+    order = list(present); rng.shuffle(order)
+    mem = " ".join(f"{keys[i]}=" + " ".join(map(str, defs[i])) for i in order)
+
+    state = list(range(PERM_N)); rng.shuffle(state)
+    chain = [rng.choice(present) for _ in range(k)]     # 永遠全部在場
+    body = mem + " | x=" + " ".join(map(str, state)) + "".join(f" {keys[g]}" for g in chain)
+
+    if rng.random() < p_filler:
+        return body + " 求x0=", " ".join(map(str, state))
+    st = list(state)
+    for g in chain:
+        st = [st[defs[g][i]] for i in range(PERM_N)]
+    return body + " 求x=", " ".join(map(str, st))
+
+
+def make_absent(k, rng, n_present=2, pool=4, p_missing=0.35, abstain=ABSTAIN):
     """R4：記憶缺失 —— 需要的定義不在記憶區時，模型應該說「不知道」而非亂編。
 
     記憶區放 n_present 條定義（取自 pool 個 key），鏈則從整個 pool 取用。
@@ -313,7 +348,7 @@ def make_absent(k, rng, n_present=2, pool=4, p_missing=0.35):
         chain = [rng.choice(present) for _ in range(k)]
         chain[rng.randrange(k)] = rng.choice(absent)   # 至少一個缺失
         rng.shuffle(chain)
-        answer = ABSTAIN
+        answer = abstain
     else:
         chain = [rng.choice(present) for _ in range(k)]
         st = list(state)
@@ -391,7 +426,11 @@ def gen(args):
         # remote + 狀態後補 k 個空位：檢驗「序列維度是工作記憶」的假說
         "padded": lambda k, rng: make_padded(k, rng),
         # R4：需要的定義不在記憶區時，應輸出 ABSTAIN 而非幻覺
-        "absent": lambda k, rng: make_absent(k, rng, args.n_gen, p_missing=args.p_missing),
+        "absent": lambda k, rng: make_absent(
+            k, rng, args.n_gen, p_missing=args.p_missing,
+            abstain=ABSTAIN_LONG if args.abstain_form == "long" else ABSTAIN),
+        # curriculum 對照：簡單輔助題但不需 key 比對
+        "filler": lambda k, rng: make_filler(k, rng, args.n_gen, p_filler=args.p_missing),
     }
     make = TASKS[args.task]
 
@@ -537,20 +576,22 @@ def abstain_eval(model, tok, val_rows, max_per_k=200, n_loops=None, throttle=1.0
         by_k[r["k"]].append(r)
     rows = [r for k in sorted(by_k) for r in by_k[k][:max_per_k]]
 
-    ans = [r for r in rows if r["answer"] != ABSTAIN]
-    mis = [r for r in rows if r["answer"] == ABSTAIN]
+    def is_aux(r):
+        return r["answer"] in (ABSTAIN, ABSTAIN_LONG) or "求x0=" in r["prompt"]
+    ans = [r for r in rows if not is_aux(r)]
+    mis = [r for r in rows if is_aux(r)]
     a_hit = a_false = 0
     for r in ans:
         t0 = time.time(); g = gen(r["prompt"])
         if throttle < 1.0:
             torch.cuda.synchronize(); time.sleep((time.time() - t0) * (1 / throttle - 1))
-        a_hit += (g == r["answer"]); a_false += (g == ABSTAIN)
+        a_hit += (g == r["answer"]); a_false += (g in (ABSTAIN, ABSTAIN_LONG))
     m_hit = m_hall = 0
     for r in mis:
         t0 = time.time(); g = gen(r["prompt"])
         if throttle < 1.0:
             torch.cuda.synchronize(); time.sleep((time.time() - t0) * (1 / throttle - 1))
-        m_hit += (g == ABSTAIN)
+        m_hit += (g == r["answer"])
         # 幻覺 = 缺資料卻吐出一個格式合法的置換（自信地編）
         pd = g.split()
         m_hall += (len(pd) == PERM_N and all(x.isdigit() for x in pd))
@@ -687,7 +728,7 @@ def run(name, args):
         print(f"    {k:>3d} {v['acc']:8.1%} {v['pos_acc']:8.1%} {v['wellformed']:8.1%}")
     print(f"  整體 {overall:.1%}   {elapsed/60:.1f} min", flush=True)
 
-    if args.task == "absent":
+    if args.task in ("absent", "filler"):
         ab = abstain_eval(model, tok, d["val_rows"], max_per_k=args.eval_per_k,
                           throttle=args.throttle)
         print(f"\n  R4 記憶缺失（可答 {ab['n_answerable']} / 該棄答 {ab['n_missing']}）：")
@@ -710,8 +751,10 @@ def run(name, args):
     tag = f"{args.task}{args.n_gen}" if args.task == "mem" else args.task
     # 檔名必須帶上會改變這次跑法的每一個變因。第一版只用 task 名，
     # 結果 absent 的主組與對照組寫到同一個檔，主組權重被靜默覆蓋。
-    if args.task == "absent":
+    if args.task in ("absent", "filler"):
         tag += f"_pm{args.p_missing:g}"
+    if args.abstain_form != "short":
+        tag += f"_{args.abstain_form}"
     if args.seed != 42:
         tag += f"_s{args.seed}"
     ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")
@@ -767,13 +810,15 @@ if __name__ == "__main__":
     ap.add_argument("--cf-eval", type=int, default=1, help="mem 任務跑成對反事實評測")
     ap.add_argument("--cf-n", type=int, default=200, help="反事實配對數")
     ap.add_argument("--n-gen", type=int, default=N_GEN, help="記憶區中的定義數（1=不需搜尋）")
+    ap.add_argument("--abstain-form", default="short", choices=["short", "long"],
+                    help="short='?' (1 token)；long='- - - - -' (5 token，與答案等長)")
     ap.add_argument("--seed", type=int, default=42,
                     help="種子。用來判斷某個結果是機制還是單次最佳化的意外")
     ap.add_argument("--p-missing", type=float, default=0.35,
                     help="absent 任務中「所需定義不在記憶區」的比例；0 = 純對照組")
     ap.add_argument("--distractors", type=int, default=0, help="記憶區中未被使用的干擾定義數")
     ap.add_argument("--out", default=None, help="結果檔名，預設 results_<task>.json")
-    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent"],
+    ap.add_argument("--task", default="perm", choices=["perm", "chain", "mem", "lookup", "inline", "remote", "padded", "absent", "filler"],
                     help='perm=置換合成(預設，真正量深度)；chain=數值鏈(已知有缺陷)')
     ap.add_argument("--throttle", type=float, default=1.0,
                     help="GPU duty cycle 上限，例如 0.4 代表算 40%% 休 60%%")

@@ -442,13 +442,23 @@ loss ≈ 0.43 的同一個平台，是穩定吸引子而非最佳化意外。
 
 ### 機制解讀，以及它的界線
 
-判斷「這個 key 在不在記憶區」**強制精確的名稱比對**；一旦那個電路存在，
-「選對定義」就是免費的副產品。反過來，只靠最終答案的梯度，
-模型找到一個穩定的偷懶解拿部分分數。
+判斷「這個 key 在不在記憶區」**強制精確的名稱比對**，而那個比對能力
+**可供** binding 使用；只靠最終答案的梯度，模型則找到一個穩定的偷懶解拿部分分數。
+
+**用詞刻意保守。** 先前寫成「一旦那個*電路*存在」是內部實作的宣稱，
+但**只看輸入輸出無法識別 shared circuit 與共享表示** —— 兩種內部實作
+可以產生完全相同的行為（Codex 指出）。行為實驗最多給出 transfer/interference
+證據。要真正分開需要 causal intervention：找出 presence 的 match 方向，
+對可答題做 activation ablation/patch，若同一個局部訊號同時控制 `?` 與
+value routing，才是 shared circuit 的強證據。**probe 只能證明可讀，不能證明有用。**
 
 **還不能宣稱的是為什麼。** 至少四個替代解釋一個都沒排除
 （Codex 提出）：shared circuit、共享表示、curriculum 效應、
-純 loss/token-length shaping。其中最該優先打的是最後一個 ——
+純 loss/token-length shaping。後兩者 R4c 正在打（長哨兵 / filler）；
+前兩者行為上不可識別，最乾淨的近似是 **2×2 transfer 設計** ——
+presence 與 answer 用「同 key 詞彙 / 不相交詞彙」×「同 matching 規則 /
+不同規則（exact identity vs alias mapping）」。只在同規則時轉移才支持共享
+matcher；跨規則仍轉移比較像一般表示或 curriculum。其中最該優先打的是最後一個 ——
 `?` 是 1 個 token、正確答案是 5 個數字，兩類目標的 loss 尺度差很多，
 而它是唯一一個「機制根本不存在、純粹是優化幾何」的解釋。
 測法：把 ABSTAIN 換成 5-token 哨兵序列。
