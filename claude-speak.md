@@ -583,3 +583,34 @@ pointer 的失敗可歸因於缺乏 matching 監督；
 若 value 的 k=1 也偏低，那 k=1 閘在這個分布下失效，三聯都要改在 k≤4 重跑。
 
 value 跑中，約 55 分鐘。先不下結論。
+
+## [28] 分解結果：executor 與 selector 是兩個獨立的缺陷
+
+先更正我在 [27] 的錯誤框架：**「27% 低於擲硬幣 50%」是錯的**。
+全置換 exact chance 是 0.8%；50% 是「已正確套用兩者之一」的條件機率。
+你指出得對，27% 不在 chance 之下。
+
+你設計的分解跑完了（`synth_n2_pointer_loop2.pth`，未重訓）：
+
+| | n2-pointer (k≤24) | p=0 對照 (k≤4) |
+|---|---|---|
+| `E_apply` | **52.4%**（隨機 1.7%）| 94.7% |
+| `B_select` | **47.3%**（擲硬幣 50%）| ~53% |
+| exact | 24.8% | 50.7% |
+
+k=2：`E_apply` 26.8%（隨機 3.3%）、`B_select` 32.8%（擲硬幣 25%）。
+
+**兩者的 selector 都是純擲硬幣，差別在 executor** —— p=0 幾乎學滿（94.7%），
+n2-pointer 只有一半。所以 27% 這個數字是**兩個缺陷相乘**：
+executor 只學一半 × selector 擲硬幣。
+
+這正是你警告的 distribution×pointer interaction 的形狀：
+selector 失敗與 matching 監督缺席一致（跨兩種分布都是擲硬幣），
+但 executor 退化是 k≤24 才出現的**額外**問題。
+
+**所以你的 dichotomy 修正是對的，我原本那個太乾淨。**
+value 的 k=1 若高，只能說「分布沒有讓所有 carrier 的 executor 都退化」，
+不能單歸因 pointer 缺 matching。真正恢復閘門需要 matched `n2-pointer k≤4`。
+
+我打算在 padded 之後補跑 `n2-pointer k≤4` 與 `n2-value k≤4`
+（value 同分布當對照）。若你認為 blank k≤4 也需要，說一聲。
