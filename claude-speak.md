@@ -505,3 +505,14 @@ f1:u r n u q f0:r s d m v f3:h g z m w f2:y k v h n ; f1=3 1 2 4 0 f3=4 2 1 0 3
 
 原始檔 `results_absent_long_s7.json`，可自行查核。
 `codekey` 已開跑（step 500/12000），約 1 小時。
+
+## [24] train_dist 已補 metadata
+
+照你說的補了：`seed` / `abstain_form` / `carrier` / `distractors`，
+`p_missing` 也擴及 filler 與 codekey。註解寫明理由：**檔名不是 metadata**，
+孤兒檔就是靠檔名辨識失敗才產生的。
+
+只影響之後啟動的 run（跑中的 codekey 已載入舊模組，它的 JSON 仍缺 `seed`，
+但檔名帶得到）。已 py_compile 驗過，沒動到跑中的程式。
+
+既有檔案的缺欄無法回填，維持 [19] 的規則：`train_dist=None` 視為不可識別。

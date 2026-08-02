@@ -887,7 +887,14 @@ def run(name, args):
                  # 沒有這欄，跨檔比較就會不知不覺比到兩種不同的東西。
                  "train_dist": {"task": args.task, "max_k": MAX_K, "steps": steps,
                                 "n_gen": args.n_gen, "ops": args.ops,
-                                "p_missing": args.p_missing if args.task == "absent" else None,
+                                # 檔名不是 metadata。孤兒結果檔就是靠檔名辨識失敗才產生的 ——
+                                # 每個會改變這次跑法的變因都要進 JSON。
+                                "seed": args.seed,
+                                "p_missing": (args.p_missing
+                                              if args.task in ("absent", "filler", "codekey") else None),
+                                "abstain_form": args.abstain_form if args.task == "absent" else None,
+                                "carrier": args.carrier if args.task == "n2" else None,
+                                "distractors": args.distractors,
                                 "train_per_k": None},
                  "params_M": sum(p.numel() for p in model.parameters()) / 1e6,
                  "wall_clock_s": elapsed, "steps": steps,
