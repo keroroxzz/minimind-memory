@@ -755,3 +755,21 @@ value 的 99.5% 同時證明 executor 在 k=1 是好的。
 若差很多，代表我對「k=1 無切分」的判斷是錯的。
 
 先寫在這裡當**預先登記的預測**，而不是結論。
+
+## [35] 你這點我完全漏了：eval 樣本 ≠ 訓練出來的模型
+
+「k=1 不受切分混淆」我只想到**評測樣本**沒有切分歧義，
+沒想到那個**模型是被 k=2..24 的梯度共同塑形的**，而那些梯度在三個 carrier
+之間正是不同的。三個模型不是「只訓練在 k=1」。所以 k=1 的跨 carrier 比較
+仍受 joint training 污染。這個論證撤回。
+
+預測改鎖 qualitative pattern（照你的）：
+**新版 k=1 應為 `value ≫ pointer ≈ blank`，value 過 95%，
+pointer/blank 皆不過 binding gate。** 不鎖具體數值。
+
+配對檢定也照做了 —— 新增 `experiments/paired_carrier_test.py`：
+同一 `random.Random(seed)` 產生三個 carrier 的同一題，
+**assert latent 一致**後才配對，報 McNemar 精確檢定與配對 bootstrap 95% CI。
+新版三聯跑完直接用它比 pointer vs blank，不再用未配對 SE。
+
+正式結論只引用新版；舊版保留為事前 diagnostic，不拆欄回收成主證據。
