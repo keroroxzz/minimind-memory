@@ -603,22 +603,42 @@ def gen(args):
     train_rows = build(args.train_per_k, random.Random(SEED), unique=False, exclude=val_set)
     assert not ({r["prompt"] for r in train_rows} & val_set)
 
+    from collections import defaultdict
+    dropped = defaultdict(int); kept = defaultdict(int); maxlen = 0
+
     def encode(rows):
+        nonlocal maxlen
         ids, plen, tlen, ks = [], [], [], []
         for r in rows:
             p = tok(tok.bos_token + r["prompt"], add_special_tokens=False)["input_ids"]
             a = tok(r["answer"] + tok.eos_token, add_special_tokens=False)["input_ids"]
             t = len(p) + len(a)
+            maxlen = max(maxlen, t)
             if t > SEQ_LEN:
+                # 靜默丟棄會依 k 選擇性移除樣本 —— 深樣本先被砍掉，
+                # 正好是我們想量的那一端。這裡改成硬失敗。
+                dropped[r["k"]] += 1
                 continue
+            kept[r["k"]] += 1
             ids.append(p + a + [tok.pad_token_id] * (SEQ_LEN - t))
             plen.append(len(p)); tlen.append(t); ks.append(r["k"])
         return (torch.tensor(ids, dtype=torch.int16), torch.tensor(plen, dtype=torch.int16),
                 torch.tensor(tlen, dtype=torch.int16), torch.tensor(ks, dtype=torch.int8))
 
     tr = encode(train_rows); va = encode(val_rows)
-    torch.save({"train": tr, "val": va, "val_rows": val_rows,
-                "seq_len": SEQ_LEN, "pad_token_id": tok.pad_token_id}, DATA)
+    if dropped:
+        det = "  ".join(f"k={k}:{v}" for k, v in sorted(dropped.items()))
+        raise SystemExit(f"❌ {sum(dropped.values())} 筆超過 SEQ_LEN={SEQ_LEN}"
+                         f"（實測最長 {maxlen}），依 k 分布：{det}\n"
+                         f"   丟棄會選擇性移除深樣本，用 --seq-len {maxlen + 8} 重跑。")
+    # 底層樣本的指紋：答案由 defs/state/chain 決定，與 carrier 無關。
+    # 三個 carrier 的 checksum 相同，才證明是同一批樣本而非只是同分布。
+    import hashlib
+    latent = hashlib.sha256("\n".join(f"{r['k']}:{r['answer']}"
+                                      for r in train_rows).encode()).hexdigest()[:16]
+    print(f"   最長樣本 {maxlen}/{SEQ_LEN} tokens；latent checksum {latent}")
+    torch.save({"train": tr, "val": va, "val_rows": val_rows, "latent_checksum": latent,
+                "max_len": maxlen, "seq_len": SEQ_LEN, "pad_token_id": tok.pad_token_id}, DATA)
     print(f"✅ {DATA}")
     print(f"   train {tr[0].shape[0]} 條 / val {va[0].shape[0]} 條，k=1..{MAX_K}")
     print(f"   隨機基準 = 1.0%（答案 100 類）")
@@ -897,6 +917,8 @@ def run(name, args):
                                 # 檔名不是 metadata。孤兒結果檔就是靠檔名辨識失敗才產生的 ——
                                 # 每個會改變這次跑法的變因都要進 JSON。
                                 "seed": args.seed,
+                                "seq_len": d.get("seq_len"), "max_len": d.get("max_len"),
+                                "latent_checksum": d.get("latent_checksum"),
                                 "p_missing": (args.p_missing
                                               if args.task in ("absent", "filler", "codekey") else None),
                                 "abstain_form": args.abstain_form if args.task == "absent" else None,
