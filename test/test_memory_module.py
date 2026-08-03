@@ -53,6 +53,9 @@ def test_bit_compatible_when_disabled():
         a = m(ids).logits
         b = m(ids).logits
     check("同輸入兩次前向逐位元相同", torch.equal(a, b))
+    # ⚠️ 下面這條目前是**同義反覆**（Codex 指出）：它只證明「建立一個尚未接線的
+    #    物件不影響輸出」。真正的 bit-compat 要在接進 model 之後，
+    #    用 config-off + 舊 checkpoint 做逐位元比對。接線完成後補。
     # 建立記憶模組但不交付 —— 不得改變 core 的輸出
     store = LatentStore()
     store.commit([MemoryEntry("f0", perm_to_latent([1, 0, 2, 3, 4]))])
@@ -110,7 +113,18 @@ def test_empty_result_is_explicit():
     check("缺項回 None", entries[1] is None and entries[0] is not None)
     check("support 標出缺項", support.tolist() == [1.0, 0.0, 1.0])
     check("有序且可重複（表達 composition chain）",
-          len(entries) == 3 and entries[0] is entries[2])
+          len(entries) == 3 and latent_to_perm(entries[0].latent) == latent_to_perm(entries[2].latent))
+
+
+def test_read_is_a_real_snapshot():
+    print("\nread() 必須是真 snapshot —— 呼叫端改副本不得污染 store")
+    store = LatentStore()
+    store.commit([MemoryEntry("f0", perm_to_latent([0, 1, 2, 3, 4]), {"src": "a"})])
+    e = store.read(["f0"])[0]
+    e.latent.zero_(); e.metadata["src"] = "TAMPERED"
+    again = store.read(["f0"])[0]
+    check("就地改 latent 不影響 store", latent_to_perm(again.latent) == [0, 1, 2, 3, 4])
+    check("就地改 metadata 不影響 store", again.metadata["src"] == "a")
 
 
 # ---------------------------------------------------------------- invariant 6
@@ -141,6 +155,43 @@ def test_delivery_interchangeable():
 
 # ---------------------------------------------------------------- 梯度邊界
 
+def test_synthetic_kv_full_forward():
+    """shape-only 測不出 blocker：cache 條目數是 layers × num_loops。
+
+    先前 adapter 只產生 8 個，loop2 需要 16 —— 第二圈會索引越界，
+    而只檢查 shape 的測試完全看不到。這裡跑**完整的 core forward**。
+    """
+    print("\nSyntheticKV 必須能通過完整的 core forward（不只 shape）")
+    torch.manual_seed(0)
+    for n_loops in (1, 2):
+        cfg = dict(ARCH); cfg["num_loops"] = n_loops
+        m = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **cfg)).eval()
+        ad = SyntheticKVAdapter(8, 2, 64, num_loops=n_loops)
+        lat = torch.stack([perm_to_latent([1, 0, 2, 3, 4])]).unsqueeze(0).expand(2, -1, -1)
+        kv = SyntheticKVDelivery(ad).apply(
+            ActiveWorkspace(kv=None), lat, torch.ones(2, 1, dtype=torch.bool)).kv
+        check(f"num_loops={n_loops}：產生 {len(kv)} 個 cache 條目（需 {8*n_loops}）",
+              len(kv) == 8 * n_loops)
+        ids = torch.randint(0, 6400, (2, 5))
+        try:
+            with torch.no_grad():
+                out = m(ids, past_key_values=kv, use_cache=True)
+            ok, why = out.logits.shape == (2, 5, 6400), ""
+        except Exception as ex:
+            ok, why = False, f"{type(ex).__name__}: {ex}"
+        check(f"num_loops={n_loops}：完整 forward 通過", ok, why)
+
+
+def test_delivery_is_nn_module():
+    print("\nDelivery 必須是 nn.Module —— 否則 adapter 進不了 state_dict/optimizer/.to()")
+    d1 = LatentSlotsDelivery(LatentSlotAdapter(512))
+    d2 = SyntheticKVDelivery(SyntheticKVAdapter(8, 2, 64))
+    check("LatentSlotsDelivery 是 nn.Module", isinstance(d1, torch.nn.Module))
+    check("SyntheticKVDelivery 是 nn.Module", isinstance(d2, torch.nn.Module))
+    check("adapter 參數出現在 state_dict", any("adapter" in k for k in d1.state_dict()))
+    check("adapter 參數可被 optimizer 看到", len(list(d1.parameters())) > 0)
+
+
 def test_gradient_boundaries():
     print("\n梯度邊界（規格 §3）：唯一可學的是 delivery")
     store = LatentStore()
@@ -167,7 +218,10 @@ if __name__ == "__main__":
     test_capacity_does_not_change_core()
     test_update_visible_and_commit_detaches()
     test_empty_result_is_explicit()
+    test_read_is_a_real_snapshot()
     test_delivery_interchangeable()
+    test_delivery_is_nn_module()
+    test_synthetic_kv_full_forward()
     test_gradient_boundaries()
     print("\n" + "=" * 60)
     print(f"  通過 {_pass} / 失敗 {_fail}")

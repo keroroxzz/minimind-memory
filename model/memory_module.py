@@ -70,8 +70,18 @@ class LatentStore:
             )
 
     def read(self, addresses):
-        """snapshot 語意：回傳當下的值，查不到回 None（不是靜默回垃圾）。"""
-        return [self._entries.get(a) for a in addresses]
+        """**真正的 snapshot**：回傳 detach-clone 的副本，查不到回 None。
+
+        先前回傳內部 entry 的引用，呼叫端就地改 latent/metadata 會破壞 store ——
+        那不是 snapshot（Codex 指出）。
+        """
+        out = []
+        for a in addresses:
+            e = self._entries.get(a)
+            out.append(None if e is None else MemoryEntry(
+                address=e.address, latent=e.latent.detach().clone(),
+                metadata=dict(e.metadata), version=e.version))
+        return out
 
     def __len__(self):
         return len(self._entries)
@@ -101,7 +111,9 @@ class OracleMemoryInterface:
 # --------------------------------------------------------------------------- Delivery
 
 class Delivery(Protocol):
-    def apply(self, ws: ActiveWorkspace) -> ActiveWorkspace: ...
+    is_latent_path: bool
+    def apply(self, ws: ActiveWorkspace, latents: torch.Tensor,
+              mask: torch.Tensor) -> ActiveWorkspace: ...
 
 
 def _stack_latents(entries, device, dtype):
@@ -131,31 +143,57 @@ class LatentSlotAdapter(nn.Module):
 
 
 class SyntheticKVAdapter(nn.Module):
-    """latent (25,) → 每層的合成 K/V，直接插進 past_key_values。
+    """latent (25,) → 每層的合成 K/V，插進 past_key_values。
 
-    **不套 RoPE** —— latent 依定義是 position-neutral 的，
-    合成條目不對應任何序列位置。這是設計選擇，不是實測結論。
+    **K 必須套 RoPE（Codex 修正）。** `position-neutral` 描述的是 *store 裡的 latent*，
+    不代表 delivery 時的 key 不使用位置 —— native cache 存的是 **已 RoPE** 的 K。
+    裸插無 RoPE 的 K 等於冒充 native cache 卻活在另一個空間。
+    做法：給 memory slot 固定的 **virtual prefix positions 0..k-1**，
+    用與該層相同的旋轉套上去；真實 token 的位置由 `past_len` 自然後移。
+
+    （若日後真要 positionless，需另開 memory-attention/cross-attn 路徑。）
+
+    **初始化用標準 Linear init（Codex 修正）**：先前縮小最後一層是為了
+    「起始不淹沒真實 KV」，但那會讓回傳到前層的梯度也變小，
+    而且 K/V 進 softmax 後即使接近 0 仍佔分母，**本來就不是 no-op**。
+    尺度對齊改用 `scale`（由 L0 實測的 native K/V RMS 設定），
+    而 small-batch overfit 是防止假失敗的閘。
     """
 
     def __init__(self, n_layers: int, n_kv_heads: int, head_dim: int,
-                 latent_dim: int = LATENT_DIM, width: int = 256):
+                 latent_dim: int = LATENT_DIM, width: int = 256,
+                 num_loops: int = 1, rope_base: float = 1e6, scale: float = 1.0):
         super().__init__()
         self.n_layers, self.n_kv_heads, self.head_dim = n_layers, n_kv_heads, head_dim
+        self.num_loops, self.scale = num_loops, scale
         out = n_layers * 2 * n_kv_heads * head_dim
         self.net = nn.Sequential(
             nn.Linear(latent_dim, width), nn.GELU(), nn.Linear(width, out),
-        )
-        # 最後一層縮小初始化：合成條目起始時對 attention 的擾動小，
-        # 避免一開始就淹沒真實 KV
-        nn.init.normal_(self.net[-1].weight, std=0.02 / math.sqrt(width))
-        nn.init.zeros_(self.net[-1].bias)
+        )   # 標準初始化，不動
+
+        inv = 1.0 / (rope_base ** (torch.arange(0, head_dim, 2).float() / head_dim))
+        self.register_buffer("_inv_freq", inv, persistent=False)
+
+    def _rope(self, k, positions):
+        """對 (B, S, n_kv, hd) 的 K 套上 virtual prefix positions 的旋轉。"""
+        ang = positions[:, None].float() * self._inv_freq[None, :]      # (S, hd/2)
+        cos, sin = torch.cat([ang.cos()] * 2, -1), torch.cat([ang.sin()] * 2, -1)
+        cos, sin = cos[None, :, None, :].to(k.dtype), sin[None, :, None, :].to(k.dtype)
+        half = k.shape[-1] // 2
+        rot = torch.cat((-k[..., half:], k[..., :half]), dim=-1)
+        return k * cos + rot * sin
 
     def forward(self, latents):                      # (B, k, 25)
         B, k, _ = latents.shape
-        o = self.net(latents)
-        o = o.view(B, k, self.n_layers, 2, self.n_kv_heads, self.head_dim)
-        # -> per-layer (K, V)，各為 (B, k, n_kv_heads, head_dim)
-        return [(o[:, :, l, 0], o[:, :, l, 1]) for l in range(self.n_layers)]
+        o = self.net(latents).view(B, k, self.n_layers, 2, self.n_kv_heads, self.head_dim)
+        o = o * self.scale
+        pos = torch.arange(k, device=latents.device)
+        per_layer = [(self._rope(o[:, :, l, 0], pos), o[:, :, l, 1])
+                     for l in range(self.n_layers)]
+        # cache 條目數是 layers × num_loops（model 以 past_kv_idx 跨 loop 遞增索引）。
+        # 只給 n_layers 個在 num_loops>1 時會越界 —— shape-only 測試看不出來。
+        # G1 的選擇：同一批 per-layer KV **重複到每一圈**。
+        return per_layer * self.num_loops
 
 
 # --------------------------------------------------------------------------- 三種交付
@@ -169,27 +207,35 @@ class InlineTokensDelivery:
     is_latent_path = False
 
 
-class LatentSlotsDelivery:
+class LatentSlotsDelivery(nn.Module):
+    """必須是 `nn.Module`（Codex 指出）——
+    否則 adapter 不會進 `state_dict` / optimizer / `.to(device)`。"""
     is_latent_path = True
 
     def __init__(self, adapter: LatentSlotAdapter):
+        super().__init__()
         self.adapter = adapter
 
     def apply(self, ws: ActiveWorkspace, latents, mask) -> ActiveWorkspace:
         carriers = self.adapter(latents)
+        carriers = carriers * mask.unsqueeze(-1).to(carriers.dtype)   # 缺項歸零
         return ActiveWorkspace(hidden=ws.hidden, kv=ws.kv,
                                carriers=carriers, carrier_mask=mask)
 
 
-class SyntheticKVDelivery:
+class SyntheticKVDelivery(nn.Module):
     is_latent_path = True
 
     def __init__(self, adapter: SyntheticKVAdapter):
+        super().__init__()
         self.adapter = adapter
 
     def apply(self, ws: ActiveWorkspace, latents, mask) -> ActiveWorkspace:
+        # mask 先前被完全忽略。G1 的 selection 是 oracle 且必須全 support，
+        # 這裡明確 assert，不做靜默的部分交付。
+        assert bool(mask.all()), "SyntheticKV 在 G1 要求全 support；缺項需另行實作遮罩"
         synth = self.adapter(latents)
-        if ws.kv is None:
+        if ws.kv is None or all(x is None for x in ws.kv):
             kv = synth
         else:
             kv = [(torch.cat([sk, k], dim=1), torch.cat([sv, v], dim=1))

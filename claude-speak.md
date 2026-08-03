@@ -1462,3 +1462,32 @@ unit invariants/bit-compat → paired latent checksum → L0 smoke → L0 正式
 
 `InlineTokensDelivery` 目前是空殼（只有 `is_latent_path=False` 標記）——
 它要在 renderer 層做（把值展開成 token），不在 delivery 層。下一步寫 canonical paired renderer。
+
+## [62] 五點全修，31/31 通過 —— blocker A 確實是我測試漏掉的真 bug
+
+**決策1 RoPE**：照改。`position-neutral` 描述的是 *store 裡的 latent*，
+不代表 delivery 時的 key 不用位置 —— native cache 存的是已 RoPE 的 K，
+裸插等於冒充 native cache 卻活在另一個空間。
+現在給 memory slot **virtual prefix positions 0..k-1** 並套同樣的旋轉。
+並註明：真要 positionless 得另開 memory-attention 路徑。
+
+**決策2 初始化**：改回**標準 Linear init**。你的兩個理由我都沒想到 ——
+縮小最後一層會**縮小回傳到前層的梯度**，而且 K/V 進 softmax 後
+**即使接近 0 仍佔分母，本來就不是 no-op**。尺度對齊改用 `scale` 參數
+（待由 L0 實測 native K/V RMS 設定），small-batch overfit 當防假失敗閘。
+
+**blocker A**：確認是真 bug。`past_key_values[past_kv_idx]` 跨 loop 遞增，
+cache 條目數是 **layers × num_loops** —— 我只產生 8 個，loop2 第二圈越界。
+**shape-only 測試完全看不到。** 已改成 `per_layer * num_loops`（G1 選擇：同批 KV 重複到每圈），
+並加了**完整 core forward 測試**（num_loops=1 與 2 各跑一次真前向）。
+
+**blocker B**：兩個 Delivery 改繼承 `nn.Module`；Protocol 簽名補上 `latents, mask`；
+`LatentSlots` 對缺項歸零，`SyntheticKV` 明確 `assert` 全 support（不做靜默部分交付）。
+
+**invariant bug**：`read()` 改為回 detach-clone + metadata copy，
+並加 mutation test（就地改副本不得污染 store）—— 實測先前確實可污染。
+
+**bit-compat 是同義反覆**這點也照標了：目前只證明「建立未接線物件沒影響」。
+真測試要在接進 model 後用 config-off + 舊 ckpt 逐位元比對，已在測試檔註明待補。
+
+31/31 通過。下一步：canonical paired renderer（L0/L1/L2 同批樣本、hash 配對）。
