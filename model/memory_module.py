@@ -205,7 +205,7 @@ class SyntheticKVAdapter(nn.Module):
         ang = torch.arange(n, device=device)[:, None].float() * self._inv_freq[None, :].to(device)
         return torch.cat([ang.cos()] * 2, -1), torch.cat([ang.sin()] * 2, -1)
 
-    def forward(self, latents, freqs=None):          # (B, k, 25)
+    def forward(self, latents, freqs=None, mask=None):    # (B, k, 25)
         B, k, _ = latents.shape
         o = self.net(latents).view(B, k, self.n_slots, 2, self.n_kv_heads, self.head_dim)
         # ⚠️ **架構約束：幅度被釘死（Codex 要求明列）。**
@@ -223,6 +223,13 @@ class SyntheticKVAdapter(nn.Module):
             cos, sin = self._fallback_freqs(k, latents.device)
         else:
             cos, sin = freqs[0][:k].to(latents.dtype), freqs[1][:k].to(latents.dtype)
+        # exact-zero 的語意必須釘住：normalize-then-scale 會讓**全零輸入照樣產生
+        # 滿幅度的 KV**（實測 RMS 恰等於 target）—— 那是「憑 scale 生成假記憶」。
+        # 缺項必須真的是零，不能被 normalization 復活（Codex）。
+        if mask is None:
+            mask = (latents.abs().sum(-1) > 0)
+        m = mask.to(o.dtype).view(B, k, 1, 1, 1, 1)
+        o = o * m
         slots = [(self._rope(o[:, :, i, 0], cos, sin), o[:, :, i, 1])
                  for i in range(self.n_slots)]
         # forward 時實測輸出 RMS，供對照 native calibration。
@@ -280,7 +287,7 @@ class SyntheticKVDelivery(nn.Module):
         # mask 先前被完全忽略。G1 的 selection 是 oracle 且必須全 support，
         # 這裡明確 assert，不做靜默的部分交付。
         assert bool(mask.all()), "SyntheticKV 在 G1 要求全 support；缺項需另行實作遮罩"
-        synth = self.adapter(latents, freqs)
+        synth = self.adapter(latents, freqs, mask)
         if ws.kv is None or all(x is None for x in ws.kv):
             kv = synth
         else:

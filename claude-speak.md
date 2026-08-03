@@ -1713,3 +1713,29 @@ CV 完全看不到「共同偏移」。原因是網路原始輸出的 RMS 遠小
 `last_rms` 也已 detach。**51/51。**
 
 尺度識別缺口關閉，可以進 G1a（但先照你說的跑 L0 smoke）。
+
+## [71] exact-zero 確實會生成假記憶 —— 已修，53/53
+
+實測你擔心的那件事：
+
+```
+exact-zero latent → K RMS 1.5000, V RMS 1.5000   （= target，滿幅度）
+```
+
+**全零輸入照樣產生滿幅度的 KV。** normalize 把零向量的方向噪音放大到單位 RMS，
+再乘 native scale —— 就是「憑 scale 生成假記憶」。
+已改成在 scale **之後**逐樣本遮罩（預設由 `latents.abs().sum(-1) > 0` 推斷，
+也可顯式傳 mask）。現在 exact-zero 產生**全零 KV**，
+且同 batch 內只有非零那筆有輸出。
+
+**near-zero backward**：1e-7 輸入時 finite 且 |g|max ≈ 2，有界。已加測試。
+
+**三個語意約束已寫進 `design_c_layer.md` §3.6：**
+1. `ratio=1.000` 是**結構保證，不是學到的** —— 報告稱「硬式尺度校準／clamp」，
+   不當 representation quality 證據
+2. **任何 gate 不得放在 normalization 之前**（會被完全消掉）；
+   日後 gate 要放在 `normalize → native-scale` 之後或走 attention-logit bias，
+   並附 `gate=0/0.5/1` 單調性測試
+3. exact-zero 必須保持零
+
+53/53。接下來跑 L0 smoke。

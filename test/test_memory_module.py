@@ -251,10 +251,20 @@ def test_per_position_scale_and_runtime_rms():
     print(f"     ratio_V  loop0 mean {r[:8].mean():.3f}   loop1 mean {r[8:].mean():.3f}")
     # 幅度被釘死是架構約束 —— near-zero 輸入不得產生 NaN/Inf
     z = ad(torch.zeros(2, 3, LATENT_DIM))
-    check("near-zero latent 不產生 NaN/Inf（epsilon 有效）",
-          all(torch.isfinite(t).all() for kv in z for t in kv))
-    check("near-zero 時 RMS 仍貼齊 native scale（幅度由 scale 決定，非輸入）",
-          0.5 <= float(ad.last_rms["ratio_V"].min()) <= float(ad.last_rms["ratio_V"].max()) <= 2.0)
+    check("exact-zero latent 不產生 NaN/Inf", all(torch.isfinite(t).all() for kv in z for t in kv))
+    # normalize-then-scale 會讓全零輸入產生**滿幅度** KV（實測 RMS = target）——
+    # 那是憑 scale 生成假記憶。缺項必須真的是零（Codex）。
+    check("**exact-zero latent 產生全零 KV**（不得憑 scale 生成假記憶）",
+          all(float(t.abs().max()) == 0.0 for kv in z for t in kv))
+    half = ad(torch.stack([torch.zeros(3, LATENT_DIM),
+                           perm_to_latent([1, 0, 2, 3, 4]).view(1, -1).expand(3, -1)]))
+    check("同 batch 內只有非零那筆有輸出（逐樣本遮罩）",
+          float(half[0][0][0].abs().max()) == 0.0 and float(half[0][0][1].abs().max()) > 0)
+    e = torch.full((2, 3, LATENT_DIM), 1e-7, requires_grad=True)
+    o2 = ad(e)
+    sum(kk.pow(2).mean() + vv.pow(2).mean() for kk, vv in o2).backward()
+    check(f"near-zero(1e-7) backward 有限且有界（|g|max {e.grad.abs().max():.2e}）",
+          bool(torch.isfinite(e.grad).all()) and float(e.grad.abs().max()) < 1e3)
 
 
 def test_synthetic_kv_backward():

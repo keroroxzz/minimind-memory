@@ -134,6 +134,29 @@ oracle 對 chain 的每一步解出**有序的 k-entry list（元素可重複）
 ⚠️ **不可用歷史 `inline` ckpt 偷代。** 若 G1b 改從 base 開始，
 **必須另行命名並設 matched control**。
 
+## 3.6 幅度校準是硬約束，不是學出來的（G1a 前必須守住）
+
+`SyntheticKVAdapter` 用 **normalize-then-scale**：先把每個 slot 正規化到單位 RMS，
+再乘上該位置實測的 native scale（`layers × loops` 組，K/V 分開）。
+
+⚠️ **`ratio = 1.000` 是這個結構的保證，不是 synthesizer 學到了 native magnitude
+（Codex）。** 報告時要稱**硬式尺度校準／clamp**，
+**不可**當成 representation quality 的證據。成敗只由任務結果與梯度／ablation 判斷。
+
+### 三個由此衍生的語意約束
+
+1. **幅度通道被移除。** 模型不能用「這條記憶比較強」表達任何東西。
+2. **任何 gate 都不能放在 normalization 之前。**
+   write/read strength、confidence、query gate 若在 normalize 之前以純量乘 carrier，
+   **會被 normalization 完全消掉**。日後加 gate 必須放在
+   `normalize → native-scale` **之後**，或走獨立的 attention-logit bias/mask，
+   並附 `gate = 0 / 0.5 / 1` 的單調性測試。
+3. **exact-zero 必須保持零。** 實測 normalize-then-scale 會讓全零輸入
+   **產生滿幅度的 KV**（RMS 恰等於 target）—— 那是**憑 scale 生成假記憶**。
+   已改為在 scale 之後逐樣本遮罩；缺項真的是零。
+
+near-zero 的 backward 也已驗為有限且有界（1e-7 輸入時 |g|max ≈ 2）。
+
 ## 4. Invariants（要有測試）
 
 1. **關閉記憶時與現有模型 bit-compatible** —— 舊 checkpoint 載入後輸出逐位元相同
