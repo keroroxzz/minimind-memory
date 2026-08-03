@@ -12,7 +12,7 @@ learned write policy、獨立可訓練的 WM 層。理由見規格 §0 ——
 """
 from __future__ import annotations
 
-import math
+import copy
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -64,7 +64,7 @@ class LatentStore:
             self._entries[e.address] = MemoryEntry(
                 address=e.address,
                 latent=e.latent.detach().clone(),
-                metadata=dict(e.metadata),
+                metadata=copy.deepcopy(e.metadata),
                 version=self._entries.get(e.address, e).version + 1
                 if e.address in self._entries else e.version,
             )
@@ -80,7 +80,7 @@ class LatentStore:
             e = self._entries.get(a)
             out.append(None if e is None else MemoryEntry(
                 address=e.address, latent=e.latent.detach().clone(),
-                metadata=dict(e.metadata), version=e.version))
+                metadata=copy.deepcopy(e.metadata), version=e.version))
         return out
 
     def __len__(self):
@@ -174,21 +174,30 @@ class SyntheticKVAdapter(nn.Module):
         inv = 1.0 / (rope_base ** (torch.arange(0, head_dim, 2).float() / head_dim))
         self.register_buffer("_inv_freq", inv, persistent=False)
 
-    def _rope(self, k, positions):
-        """對 (B, S, n_kv, hd) 的 K 套上 virtual prefix positions 的旋轉。"""
-        ang = positions[:, None].float() * self._inv_freq[None, :]      # (S, hd/2)
-        cos, sin = torch.cat([ang.cos()] * 2, -1), torch.cat([ang.sin()] * 2, -1)
-        cos, sin = cos[None, :, None, :].to(k.dtype), sin[None, :, None, :].to(k.dtype)
+    def _rope(self, k, cos, sin):
+        """與 `model_minimind.apply_rotary_pos_emb` **逐位元相同**的公式。
+
+        `cos`/`sin` 由呼叫端從 **core 自己的 `freqs_cos/sin` buffer** 切片傳入 ——
+        adapter 自行重算只會覆蓋 default `rope_base`，
+        core 若用自訂 theta 或 YaRN scaling 就不再是「同樣的旋轉」（Codex 指出）。
+        """
         half = k.shape[-1] // 2
         rot = torch.cat((-k[..., half:], k[..., :half]), dim=-1)
-        return k * cos + rot * sin
+        return (k * cos.unsqueeze(1) + rot * sin.unsqueeze(1)).to(k.dtype)
 
-    def forward(self, latents):                      # (B, k, 25)
+    def _fallback_freqs(self, n, device):
+        ang = torch.arange(n, device=device)[:, None].float() * self._inv_freq[None, :].to(device)
+        return torch.cat([ang.cos()] * 2, -1), torch.cat([ang.sin()] * 2, -1)
+
+    def forward(self, latents, freqs=None):          # (B, k, 25)
         B, k, _ = latents.shape
         o = self.net(latents).view(B, k, self.n_layers, 2, self.n_kv_heads, self.head_dim)
         o = o * self.scale
-        pos = torch.arange(k, device=latents.device)
-        per_layer = [(self._rope(o[:, :, l, 0], pos), o[:, :, l, 1])
+        if freqs is None:
+            cos, sin = self._fallback_freqs(k, latents.device)
+        else:
+            cos, sin = freqs[0][:k].to(latents.dtype), freqs[1][:k].to(latents.dtype)
+        per_layer = [(self._rope(o[:, :, l, 0], cos, sin), o[:, :, l, 1])
                      for l in range(self.n_layers)]
         # cache 條目數是 layers × num_loops（model 以 past_kv_idx 跨 loop 遞增索引）。
         # 只給 n_layers 個在 num_loops>1 時會越界 —— shape-only 測試看不出來。
@@ -230,14 +239,19 @@ class SyntheticKVDelivery(nn.Module):
         super().__init__()
         self.adapter = adapter
 
-    def apply(self, ws: ActiveWorkspace, latents, mask) -> ActiveWorkspace:
+    def apply(self, ws: ActiveWorkspace, latents, mask, freqs=None) -> ActiveWorkspace:
         # mask 先前被完全忽略。G1 的 selection 是 oracle 且必須全 support，
         # 這裡明確 assert，不做靜默的部分交付。
         assert bool(mask.all()), "SyntheticKV 在 G1 要求全 support；缺項需另行實作遮罩"
-        synth = self.adapter(latents)
+        synth = self.adapter(latents, freqs)
         if ws.kv is None or all(x is None for x in ws.kv):
             kv = synth
         else:
+            # zip 會靜默截短 —— 長度不符時要當場爆，不要產生一個長度較短、
+            # 看起來正常的 cache（Codex 指出）。
+            assert len(ws.kv) == len(synth), \
+                f"cache 條目數不符：workspace {len(ws.kv)} vs synth {len(synth)}"
+            assert not any(x is None for x in ws.kv), "workspace kv 有部分 None，無法合併"
             kv = [(torch.cat([sk, k], dim=1), torch.cat([sv, v], dim=1))
                   for (sk, sv), (k, v) in zip(synth, ws.kv)]
         return ActiveWorkspace(hidden=ws.hidden, kv=kv,

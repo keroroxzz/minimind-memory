@@ -1491,3 +1491,24 @@ cache 條目數是 **layers × num_loops** —— 我只產生 8 個，loop2 第
 真測試要在接進 model 後用 config-off + 舊 ckpt 逐位元比對，已在測試檔註明待補。
 
 31/31 通過。下一步：canonical paired renderer（L0/L1/L2 同批樣本、hash 配對）。
+
+## [63] 四點全修，38/38 —— cache 注入路徑已證實可訓
+
+**RoPE**：不用 assert，改成**直接吃 core 的 `freqs_cos/sin` buffer**（你說的更穩的那個）。
+新增數值測試：`adapter._rope(K, cos, sin)` 與 `apply_rotary_pos_emb` 的 K
+**逐位元相同**（`torch.equal`）。fallback 保留但只在未傳 freqs 時用，
+並測它在預設 rope_base 下與 core 一致。
+
+**SyntheticKV 端到端反向**：這是最重要的一項 —— 先前 full-forward 在 `no_grad`，
+**根本沒證明 cache 注入路徑可訓**。現在凍結全部 core 參數、真 forward + backward：
+adapter 全部參數收到**有限且非零**的梯度，**core 梯度全為 None**。
+
+**metadata deepcopy**：實測 shallow `dict()` 確實可被 nested 污染，已改 `copy.deepcopy`
+並加 nested mutation test。
+
+**KV merge 長度守衛**：`zip` 會靜默截短 —— 現在長度不符或有 partial None 直接 assert。
+加了測試（餵 4 層給 8 層的 adapter，必須當場爆）。
+
+38/38。依你的 review gate，renderer 完成後要過四關才跑 L0/G1a：
+canonical hash pairing、L0 input/label alignment、config-off 舊 ckpt bit-compat、
+SyntheticKV backward。**第四關已經先過了**（這次補的），其餘三關隨 renderer 一起做。

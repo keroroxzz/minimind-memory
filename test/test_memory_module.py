@@ -182,6 +182,72 @@ def test_synthetic_kv_full_forward():
         check(f"num_loops={n_loops}：完整 forward 通過", ok, why)
 
 
+def test_rope_matches_core_exactly():
+    """adapter 的旋轉必須與 core 的 `apply_rotary_pos_emb` 逐位元相同。
+
+    adapter 自行重算只覆蓋 default rope_base；core 若用自訂 theta / YaRN，
+    「同樣的旋轉」就不成立（Codex）。所以正解是**吃 core 的 freqs buffer**。
+    """
+    print("\nRoPE 必須與 core 逐位元一致（不是自己重算一份近似的）")
+    from model.model_minimind import apply_rotary_pos_emb
+    torch.manual_seed(0)
+    m = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **ARCH))
+    ad = SyntheticKVAdapter(8, 2, 64, num_loops=1)
+    k = torch.randn(2, 3, 2, 64)
+    cos, sin = m.model.freqs_cos[:3], m.model.freqs_sin[:3]
+    mine = ad._rope(k, cos, sin)
+    _, theirs = apply_rotary_pos_emb(k.clone(), k.clone(), cos, sin, cos, sin)
+    check("吃 core freqs 時與 apply_rotary_pos_emb 逐位元相同", torch.equal(mine, theirs))
+    fb_cos, fb_sin = ad._fallback_freqs(3, k.device)
+    check("fallback 與 core 預設 freqs 數值一致（rope_base 相同時）",
+          torch.allclose(fb_cos, cos, atol=1e-5))
+
+
+def test_synthetic_kv_backward():
+    """cache 注入路徑必須真的可訓 —— 先前梯度測試只覆蓋 LatentSlotAdapter。"""
+    print("\nSyntheticKV 端到端反向：core 凍結、只有 adapter 收梯度")
+    torch.manual_seed(0)
+    m = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **ARCH))
+    for p_ in m.parameters():
+        p_.requires_grad_(False)
+    ad = SyntheticKVAdapter(8, 2, 64, num_loops=ARCH["num_loops"])
+    lat = perm_to_latent([1, 0, 2, 3, 4]).view(1, 1, -1).expand(2, 2, -1)
+    kv = SyntheticKVDelivery(ad).apply(
+        ActiveWorkspace(kv=None), lat, torch.ones(2, 2, dtype=torch.bool),
+        freqs=(m.model.freqs_cos, m.model.freqs_sin)).kv
+    ids = torch.randint(0, 6400, (2, 5))
+    out = m(ids, past_key_values=kv, use_cache=True)
+    out.logits.float().pow(2).mean().backward()
+    gs = [p_.grad for p_ in ad.parameters()]
+    check("adapter 全部參數收到梯度", all(g is not None for g in gs))
+    check("梯度為有限值且非全零",
+          all(torch.isfinite(g).all() for g in gs) and any(g.abs().sum() > 0 for g in gs))
+    check("core 參數完全沒有梯度（凍結）", all(p_.grad is None for p_ in m.parameters()))
+
+
+def test_nested_metadata_snapshot():
+    print("\nmetadata 是 nested 時也不可污染 store（shallow copy 不夠）")
+    store = LatentStore()
+    store.commit([MemoryEntry("f0", perm_to_latent([0, 1, 2, 3, 4]), {"tags": {"a": 1}})])
+    e = store.read(["f0"])[0]
+    e.metadata["tags"]["a"] = 999
+    check("改 nested metadata 不影響 store", store.read(["f0"])[0].metadata["tags"]["a"] == 1)
+
+
+def test_kv_merge_length_guard():
+    print("\nKV 合併前必須檢查長度，zip 會靜默截短")
+    ad = SyntheticKVAdapter(8, 2, 64, num_loops=1)
+    d = SyntheticKVDelivery(ad)
+    lat = perm_to_latent([1, 0, 2, 3, 4]).view(1, 1, -1)
+    short = [(torch.randn(1, 2, 2, 64), torch.randn(1, 2, 2, 64))] * 4    # 只有 4 層
+    try:
+        d.apply(ActiveWorkspace(kv=short), lat, torch.ones(1, 1, dtype=torch.bool))
+        ok = False
+    except AssertionError:
+        ok = True
+    check("長度不符時當場 assert 失敗，不靜默截短", ok)
+
+
 def test_delivery_is_nn_module():
     print("\nDelivery 必須是 nn.Module —— 否則 adapter 進不了 state_dict/optimizer/.to()")
     d1 = LatentSlotsDelivery(LatentSlotAdapter(512))
@@ -220,8 +286,12 @@ if __name__ == "__main__":
     test_empty_result_is_explicit()
     test_read_is_a_real_snapshot()
     test_delivery_interchangeable()
+    test_nested_metadata_snapshot()
     test_delivery_is_nn_module()
+    test_kv_merge_length_guard()
+    test_rope_matches_core_exactly()
     test_synthetic_kv_full_forward()
+    test_synthetic_kv_backward()
     test_gradient_boundaries()
     print("\n" + "=" * 60)
     print(f"  通過 {_pass} / 失敗 {_fail}")
