@@ -742,6 +742,52 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 ---
 
+## 4.21 預先登記：codekey rescue（測 non-presence generality）
+
+**設計**：`codekey p=.15 @ k≤4` pretrain → **與 §4.20 seed42 兩臂完全相同的下游**
+（`absent p=0 @ k≤24`，資料決定性重生、逐字相同）。三臂可直接比較。
+
+### 非對稱解讀，但範圍要精確（Codex）
+
+| 結果 | 可宣稱 |
+|---|---|
+| **成功** | **至少一個非 `?`／非短標籤的 matching auxiliary 能跨格式 transfer** |
+| **失敗** | **只證此 codekey→absent transfer 未成功**。因 domain shift（codekey 的 prompt 多一個 code block，pretrain 與下游格式不同），**不能反駁 broader matching-scaffold 假說** |
+
+⚠️ 失敗**不是丟掉**，是**限制它的反證範圍**。
+
+### primary（結果出來前登記）
+
+同一批官方 val 列，**codekey-rescue vs answer-only control 的配對 overall accuracy**：
+
+- **要求 95% CI 差值 > 0**
+- **且 k=1 ≥ 95%**（binding gate）
+
+另報 **presence-normalized rescue fraction**：
+
+```
+R = (A_codekey − A_ctrl) / (A_presence − A_ctrl)
+```
+
+| R | 讀法 |
+|---|---|
+| ≥ 0.8 | 強 transfer |
+| 0.2 – 0.8 | 部分 transfer |
+| ≤ 0.2 | 弱／無實用 rescue |
+
+⚠️ **這些門檻是工程判讀，不是自然定律。**
+
+### secondary
+
+逐 k、k=24、codekey vs presence 的直接比較。
+**但「必須追平 96.5%」不是成功條件。**
+
+若 primary 成功 → 結論可從 presence/absence family 推廣到
+**matching-relevant acquisition**。
+若失敗 → **停止追加解釋性 job**，記為 domain-transfer open。
+
+---
+
 ## 4.20 rescue 成功：binding 是鷹架，棄答校準不是
 
 **設計**（§4.10/§4.19 預先登記，含 Codex 要求的 matched curriculum 對照）：
