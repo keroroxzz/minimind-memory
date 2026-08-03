@@ -44,6 +44,20 @@ class CanonicalSample:
                               sort_keys=True)
             self.sample_id = hashlib.sha256(core.encode()).hexdigest()[:16]
 
+    @property
+    def delivery_id(self) -> str:
+        """**model 真正看得到的東西**的指紋。
+
+        `sample_id` 包含未被用到的 defs、key 名字、present 順序 ——
+        那些在 oracle 展開之後根本不出現，所以兩個不同的 `sample_id`
+        可能 render 成**完全相同**的 `(state, 有序 selected perms, answer)`（Codex 指出）。
+        跨 split 的排除必須用這個，不是 `sample_id`。
+        """
+        core = json.dumps({"k": self.k, "state": self.state,
+                           "perms": [self.defs[g] for g in self.chain],
+                           "answer": self.answer}, sort_keys=True)
+        return hashlib.sha256(core.encode()).hexdigest()[:16]
+
 
 def make_canonical(k, rng, n_present=2):
     """產生一個 canonical 樣本。與 `synth_depth_task.make_absent(p_missing=0)` 同構。"""
@@ -128,8 +142,16 @@ def resolve_chain(s: CanonicalSample):
 
 # ----------------------------------------------------------------------- 資料集
 
-def build_dataset(max_k, n_per_k, seed):
+def build_dataset(max_k, n_per_k, seed, exclude=None):
+    """去重與跨 split 排除都用 **`delivery_id`**。
+
+    - 不可用 render 出來的字串：render 形式會影響抽樣（§4.18 的同一個病）
+    - 不可用 `sample_id`：它含 model 看不到的欄位（未用到的 defs、key 名字、
+      present 順序），實測 train/val 的 `sample_id` 交集為 0 但
+      **`delivery_id` 交集為 1** —— 那是真的重疊（Codex 預測到的）
+    """
     rng = random.Random(seed)
+    exclude = set(exclude or ())
     out = []
     for k in range(1, max_k + 1):
         seen = set()
@@ -137,14 +159,30 @@ def build_dataset(max_k, n_per_k, seed):
         while made < n_per_k and attempts < n_per_k * 50:
             attempts += 1
             s = make_canonical(k, rng)
-            if s.sample_id in seen:          # 用 sample_id 去重，不用 render 出來的字串 ——
-                continue                     # 否則 render 形式會影響抽樣（先前踩過）
-            seen.add(s.sample_id); out.append(s); made += 1
+            did = s.delivery_id
+            if did in seen or did in exclude:
+                continue
+            seen.add(did); out.append(s); made += 1
     return out
 
 
 def pairing_checksum(samples):
     return hashlib.sha256("\n".join(s.sample_id for s in samples).encode()).hexdigest()[:16]
+
+
+def encode(tok, prompt, answer, seq_len):
+    """tokenize 並產生 labels：**只有 answer(+EOS) 進 loss**，prompt 全部 ignore。
+
+    renderer 的字串正確不代表 encode 正確 —— 這一層要單獨驗（Codex）。
+    """
+    p = tok(tok.bos_token + prompt, add_special_tokens=False)["input_ids"]
+    a = tok(answer + tok.eos_token, add_special_tokens=False)["input_ids"]
+    ids = p + a
+    if len(ids) > seq_len:
+        return None
+    labels = [-100] * len(p) + a
+    pad = seq_len - len(ids)
+    return (ids + [tok.pad_token_id] * pad, labels + [-100] * pad, len(p), len(ids))
 
 
 if __name__ == "__main__":
@@ -236,12 +274,72 @@ if __name__ == "__main__":
     # 關卡 4：train/val 的 canonical ID 必須不相交
     print("\n關卡 4：train / val 的 canonical ID 不相交")
     tr = build_dataset(max_k=4, n_per_k=50, seed=42)
-    va = build_dataset(max_k=4, n_per_k=20, seed=42 + 999)
+    va = build_dataset(max_k=4, n_per_k=20, seed=42 + 999,
+                       exclude={x.delivery_id for x in tr})   # val 明確排除 train
     inter = {s.sample_id for s in tr} & {s.sample_id for s in va}
     print(f"  {'✅' if not inter else '❌'} 交集 {len(inter)} 個"
           f"（train {len(tr)} / val {len(va)}）")
     print(f"     train checksum {pairing_checksum(tr)}   val checksum {pairing_checksum(va)}")
     ok &= not inter
+
+    # 關卡 5：**實際 tokenizer** 的長度，不是 whitespace 欄位數
+    print("\n關卡 5：用正式 tokenizer 驗長度（先前只數了空白分隔的欄位）")
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(os.path.join(os.path.dirname(__file__), "..", "model"))
+    SEQ = 192
+    mism, maxlen, dropped = [], 0, {}
+    for s in ds:
+        e0 = encode(tok, render_L0(s)[0], render_L0(s)[1], SEQ)
+        e1 = encode(tok, render_latent(s)[0], render_latent(s)[1], SEQ)
+        if e0 is None or e1 is None:
+            dropped[s.k] = dropped.get(s.k, 0) + 1
+            continue
+        maxlen = max(maxlen, e0[3], e1[3])
+        if e0[2] != e1[2] or e0[3] != e1[3]:
+            mism.append((s.sample_id, e0[2], e1[2]))
+    print(f"  {'✅' if not mism else '❌'} L0 與 latent 的 **實際 token 數**逐題相同"
+          f"{'' if not mism else f'  例：{mism[0]}'}")
+    ok &= not mism
+    print(f"  {'✅' if not dropped else '❌'} 無樣本超長被丟棄（max_len {maxlen}/{SEQ}）"
+          f"{'' if not dropped else f'  依 k：{dropped}'}")
+    ok &= not dropped
+    ids0 = tok(render_L0(ds[0])[0], add_special_tokens=False).input_ids
+    ids1 = tok(render_latent(ds[0])[0], add_special_tokens=False).input_ids
+    diff = [i for i, (x, y) in enumerate(zip(ids0, ids1)) if x != y]
+    print(f"  {'✅' if len(diff) == ds[0].k * PERM_N else '❌'} 相異 token 恰為 "
+          f"k×{PERM_N}={ds[0].k * PERM_N} 個（value span ↔ placeholder 對齊），實測 {len(diff)}")
+    ok &= (len(diff) == ds[0].k * PERM_N)
+
+    # 關卡 6：delivery_id 才是 model 可見的重疊判準
+    print("\n關卡 6：跨 split 以 delivery_id 排除（sample_id 不夠）")
+    dup_sid_diff_did = len({s.sample_id for s in ds}) - len({s.delivery_id for s in ds})
+    print(f"     ds 內 sample_id {len({s.sample_id for s in ds})} 個 → "
+          f"delivery_id {len({s.delivery_id for s in ds})} 個（多對一 {dup_sid_diff_did}）")
+    inter_d = {s.delivery_id for s in tr} & {s.delivery_id for s in va}
+    print(f"  {'✅' if not inter_d else '❌'} train/val 的 delivery_id 交集 {len(inter_d)} 個")
+    ok &= not inter_d
+    r_tr = {(render_L0(s)[0], render_L0(s)[1]) for s in tr}
+    r_va = {(render_L0(s)[0], render_L0(s)[1]) for s in va}
+    print(f"  {'✅' if not (r_tr & r_va) else '❌'} 直接比對 (L0 prompt, answer) 交集 "
+          f"{len(r_tr & r_va)} 個")
+    ok &= not (r_tr & r_va)
+
+    # 關卡 7：loss masking
+    print("\n關卡 7：labels 只含 answer(+EOS)")
+    bad_lbl = []
+    for s in ds[:200]:
+        for render in (render_L0, render_latent):
+            pr, an = render(s)
+            ids, labels, plen, tlen = encode(tok, pr, an, SEQ)
+            kept = [i for i, l in enumerate(labels) if l != -100]
+            if kept != list(range(plen, tlen)):
+                bad_lbl.append((s.sample_id, "非 ignore 的位置不等於 answer 區間")); break
+            dec = tok.decode([labels[i] for i in kept], skip_special_tokens=True).strip()
+            if dec != an:
+                bad_lbl.append((s.sample_id, f"decode={dec!r} != {an!r}")); break
+    print(f"  {'✅' if not bad_lbl else '❌'} 由 labels 反解逐題等於 answer，"
+          f"prompt/value/placeholder 全不進 loss{'' if not bad_lbl else f'  例：{bad_lbl[0]}'}")
+    ok &= not bad_lbl
 
     ex = ds[2]
     print(f"\n範例（k={ex.k}, id={ex.sample_id}）")

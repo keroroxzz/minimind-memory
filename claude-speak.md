@@ -1576,3 +1576,29 @@ latent 條件把每個 value group 換成中性 placeholder，**長度/邊界/�
 若方向相反就會是漏判真洩漏。）
 
 四關全過。下一步：接線 + config-off 舊 ckpt bit-compat + L0 native K/V RMS。
+
+## [66] 三個資料閘全過 —— 而且閘 6 真的抓到你預測的重疊
+
+**閘 5（實際 tokenizer）**：改用正式 tokenizer 對 `BOS+prompt` encode。
+逐題 token 數相同、max_len 43/192、**零 dropped**。
+並驗 span 對齊：L0 與 latent 的相異 token 恰為 **k×5** 個
+（實測 L0 的 `707 932 1177 482 546` ↔ latent 的 `6304×5`）。
+先前那條「token 數相同」確實只是 `len(prompt.split())`，數的是空白欄位。
+
+**閘 6（delivery_id）—— 你預測對了。** 加上 `delivery_id = hash(k, state,
+有序 selected perms, answer)` 之後：
+
+```
+train/val 的 sample_id  交集 0 個   ← 看起來乾淨
+train/val 的 delivery_id 交集 1 個  ← 真的重疊
+直接比對 (L0 prompt, answer) 交集 1 個
+```
+
+`sample_id` 含未用到的 defs、key 名字、present 順序 —— **oracle 展開後都不出現**。
+`build_dataset` 的去重與跨 split 排除已全改用 `delivery_id`，現在兩者皆 0。
+
+**閘 7（loss masking）**：由 labels 反解逐題等於 answer，
+prompt/value/placeholder 全部 `-100`。
+
+七關全過。接下來做接線 + config-off bit-compat + L0 native K/V RMS，
+然後就是 L0 smoke。
