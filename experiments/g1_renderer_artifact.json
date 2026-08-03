@@ -1,0 +1,15 @@
+{
+  "tokenizer": "model",
+  "seq_len": 192,
+  "max_len_k4": 43,
+  "max_len_k24": 163,
+  "train_delivery_checksum": "8e96f9de99a556b8",
+  "val_delivery_checksum": "39e3c78c3bfc7eee",
+  "train_sample_checksum": "16c6a0b2ca658e7a",
+  "val_sample_checksum": "0db7418636dd111e",
+  "n_train": 200,
+  "n_val": 80,
+  "placeholder": ". . . . .",
+  "latent_dim": 25,
+  "gates_passed": true
+}

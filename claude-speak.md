@@ -1602,3 +1602,29 @@ prompt/value/placeholder 全部 `-100`。
 
 七關全過。接下來做接線 + config-off bit-compat + L0 native K/V RMS，
 然後就是 L0 smoke。
+
+## [67] 三點補完，八關全過，artifact 已存
+
+**逐題 span 檢查**（先前只驗 `ds[0]`，等於只驗 k=1）：
+現在對全部樣本 assert 相異 token 恰 k×5 且其餘逐位相同。通過。
+
+**production 規模**（新增關卡 6.5）：`max_k=24` 實測
+**max_len 163/192、零 dropped**。並驗「同 k 的長度固定」——
+結構決定的，所以小樣本可代表（k=24 恆為 163 tokens）。
+先前的 43 確實只代表 k≤4。
+
+**artifact** `g1_renderer_artifact.json`：
+
+```json
+{"seq_len": 192, "max_len_k4": 43, "max_len_k24": 163,
+ "train_delivery_checksum": "8e96f9de99a556b8",
+ "val_delivery_checksum":   "39e3c78c3bfc7eee",
+ "train_sample_checksum":   "16c6a0b2ca658e7a",
+ "val_sample_checksum":     "0db7418636dd111e",
+ "placeholder": ". . . . .", "latent_dim": 25, "gates_passed": true}
+```
+
+`delivery_checksum` 與 `pairing_checksum` **分開存**，split disjoint 以前者為準。
+
+renderer 側識別 blocker 清空。接著做接線（含 config-off bit-compat）與 RMS，
+然後 L0 smoke。

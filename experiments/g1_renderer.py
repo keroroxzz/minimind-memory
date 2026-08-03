@@ -170,6 +170,11 @@ def pairing_checksum(samples):
     return hashlib.sha256("\n".join(s.sample_id for s in samples).encode()).hexdigest()[:16]
 
 
+def delivery_checksum(samples):
+    """**model 可見內容**的指紋。split disjoint 以此為準，不是 pairing_checksum。"""
+    return hashlib.sha256("\n".join(s.delivery_id for s in samples).encode()).hexdigest()[:16]
+
+
 def encode(tok, prompt, answer, seq_len):
     """tokenize 並產生 labels：**只有 answer(+EOS) 進 loss**，prompt 全部 ignore。
 
@@ -279,7 +284,8 @@ if __name__ == "__main__":
     inter = {s.sample_id for s in tr} & {s.sample_id for s in va}
     print(f"  {'✅' if not inter else '❌'} 交集 {len(inter)} 個"
           f"（train {len(tr)} / val {len(va)}）")
-    print(f"     train checksum {pairing_checksum(tr)}   val checksum {pairing_checksum(va)}")
+    print(f"     train sample/delivery checksum {pairing_checksum(tr)} / {delivery_checksum(tr)}")
+    print(f"     val   sample/delivery checksum {pairing_checksum(va)} / {delivery_checksum(va)}")
     ok &= not inter
 
     # 關卡 5：**實際 tokenizer** 的長度，不是 whitespace 欄位數
@@ -303,12 +309,20 @@ if __name__ == "__main__":
     print(f"  {'✅' if not dropped else '❌'} 無樣本超長被丟棄（max_len {maxlen}/{SEQ}）"
           f"{'' if not dropped else f'  依 k：{dropped}'}")
     ok &= not dropped
-    ids0 = tok(render_L0(ds[0])[0], add_special_tokens=False).input_ids
-    ids1 = tok(render_latent(ds[0])[0], add_special_tokens=False).input_ids
-    diff = [i for i, (x, y) in enumerate(zip(ids0, ids1)) if x != y]
-    print(f"  {'✅' if len(diff) == ds[0].k * PERM_N else '❌'} 相異 token 恰為 "
-          f"k×{PERM_N}={ds[0].k * PERM_N} 個（value span ↔ placeholder 對齊），實測 {len(diff)}")
-    ok &= (len(diff) == ds[0].k * PERM_N)
+    # ⚠️ 先前只驗 ds[0]，那等於只驗 k=1。要逐題驗，否則 k>1 時
+    #    context-dependent 的 token merge 可能讓 span 錯位而測不到（Codex）。
+    span_bad = []
+    for s in ds:
+        a = tok(render_L0(s)[0], add_special_tokens=False).input_ids
+        b = tok(render_latent(s)[0], add_special_tokens=False).input_ids
+        if len(a) != len(b):
+            span_bad.append((s.sample_id, "長度不符")); continue
+        d = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+        if len(d) != s.k * PERM_N:
+            span_bad.append((s.sample_id, f"相異 {len(d)} != {s.k * PERM_N}"))
+    print(f"  {'✅' if not span_bad else '❌'} **逐題**相異 token 恰為 k×{PERM_N} 個，"
+          f"其餘逐位相同{'' if not span_bad else f'  例：{span_bad[0]}'}")
+    ok &= not span_bad
 
     # 關卡 6：delivery_id 才是 model 可見的重疊判準
     print("\n關卡 6：跨 split 以 delivery_id 排除（sample_id 不夠）")
@@ -323,6 +337,24 @@ if __name__ == "__main__":
     print(f"  {'✅' if not (r_tr & r_va) else '❌'} 直接比對 (L0 prompt, answer) 交集 "
           f"{len(r_tr & r_va)} 個")
     ok &= not (r_tr & r_va)
+
+    # 關卡 6.5：production 規模（max_k=24）的長度／dropped
+    # max_len 43 只來自 k≤4 的 smoke，不能代表 k=24（Codex）。
+    print("\n關卡 6.5：production max_k=24 的長度與 dropped")
+    prod = build_dataset(max_k=24, n_per_k=40, seed=7)
+    pmax, pdrop, lens_by_k = 0, {}, {}
+    for s in prod:
+        e = encode(tok, render_L0(s)[0], render_L0(s)[1], SEQ)
+        if e is None:
+            pdrop[s.k] = pdrop.get(s.k, 0) + 1; continue
+        pmax = max(pmax, e[3]); lens_by_k.setdefault(s.k, set()).add(e[3])
+    print(f"  {'✅' if not pdrop else '❌'} k=1..24 無 dropped（max_len {pmax}/{SEQ}）"
+          f"{'' if not pdrop else f'  依 k：{pdrop}'}")
+    ok &= not pdrop
+    fixed = all(len(v) == 1 for v in lens_by_k.values())
+    print(f"  {'✅' if fixed else '❌'} 同 k 的長度固定（結構決定，小樣本即可代表）"
+          f"；k=24 為 {sorted(lens_by_k[24])[0]} tokens")
+    ok &= fixed
 
     # 關卡 7：loss masking
     print("\n關卡 7：labels 只含 answer(+EOS)")
@@ -346,6 +378,19 @@ if __name__ == "__main__":
     print(f"  L0      {render_L0(ex)[0]}")
     print(f"  latent  {render_latent(ex)[0]}")
     print(f"  answer  {render_L0(ex)[1]}")
+    art = {"tokenizer": os.path.basename(os.path.abspath(
+               os.path.join(os.path.dirname(__file__), "..", "model"))),
+           "seq_len": SEQ, "max_len_k4": maxlen, "max_len_k24": pmax,
+           "train_delivery_checksum": delivery_checksum(tr),
+           "val_delivery_checksum": delivery_checksum(va),
+           "train_sample_checksum": pairing_checksum(tr),
+           "val_sample_checksum": pairing_checksum(va),
+           "n_train": len(tr), "n_val": len(va), "placeholder": PLACEHOLDER,
+           "latent_dim": LATENT_DIM, "gates_passed": bool(ok)}
+    out = os.path.join(os.path.dirname(__file__), "g1_renderer_artifact.json")
+    json.dump(art, open(out, "w"), indent=2, ensure_ascii=False)
+    print(f"\nartifact -> {os.path.basename(out)}")
+
     print("\n" + "=" * 62)
     print(f"  {'全部通過' if ok else '有失敗'}")
     sys.exit(0 if ok else 1)
