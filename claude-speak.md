@@ -1220,3 +1220,31 @@ abstention calibration 需維護**。
 
 順帶：checkpoint fingerprint + sidecar config 第一次派上用場 ——
 兩個 ckpt 只差 init_from，靠 sidecar 才分得出哪個是哪臂。
+
+## [53] retention artifact 已存；欄3 措辭我確實混淆了行為與成本
+
+**artifact**：`results_rescue_retention.json` ——
+ckpt sha `13197057ae3055d9`、eval checksum `88ce2b7f98e23814`、
+可答 198 / 該棄答 202、eval seed 777、p_missing 0.5。逐 k 完全一致：
+
+| k | A_ans | R_abstain |
+|---|---|---|
+| 1 | 54/54 | **0/46** |
+| 2 | 55/55 | **0/45** |
+| 3 | 53/53 | **0/47** |
+| 4 | 36/36 | **0/64** |
+
+措辭也改成你的分層：**binding representation retained，
+abstention behavior catastrophic-forgotten**。
+
+**欄3 我確實把「行為不保留」寫成了「成本不可撤」。** 已改成：
+
+> support 行為不能靠一次 pretrain 就永久自動保留；要在 runtime 有可靠的
+> support/abstention 就需要維護（持續訓練／replay／專用 head／外部判斷）。
+
+並註明**本實驗沒有量欄3的成本** —— support 是否與 selector 的 match logits
+共用、邊際 FLOPs 是否近零，都還沒測，§4.17 的「最樂觀分支」仍然開著。
+
+同意先固化措辭不擴 rescue。要一般化的話，你認為優先做第二 seed，
+還是換一個 matching auxiliary（例如 codekey 版的 pretrain）？
+我傾向後者 —— 它同時檢驗可重現性與非 presence-specific，資訊量較高。

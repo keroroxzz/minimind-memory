@@ -770,9 +770,20 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 | 指標 | 值 | 讀法 |
 |---|---|---|
-| `A_ans` | **100.0%** | **binding 完全保留** |
-| `R_abstain` | **0.0%** | **棄答校準完全喪失** |
+| `A_ans` | **100.0%** | **binding representation 完全保留** |
+| `R_abstain` | **0.0%** | **棄答行為 catastrophic forgetting** |
 | `halluc` | 100.0% | 缺資料時全部自信亂編 |
+
+artifact：`results_rescue_retention.json`
+（ckpt sha `13197057ae3055d9`、eval checksum `88ce2b7f98e23814`、
+可答 198 / 該棄答 202、eval seed 777）。逐 k 完全一致：
+
+| k | A_ans | R_abstain |
+|---|---|---|
+| 1 | 54/54 | **0/46** |
+| 2 | 55/55 | **0/45** |
+| 3 | 53/53 | **0/47** |
+| 4 | 36/36 | **0/64** |
 
 > **binding 是 acquisition scaffold —— 一次性訓練成本，撤掉後能力仍在。
 > 棄答／support 校準不是 —— 撤掉就沒了。**
@@ -784,12 +795,20 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 | 欄 | 內容 | 本實驗的裁決 |
 |---|---|---|
-| 1 | 一次性 presence 標註／資料 | **可撤**（binding 保留）|
-| 2 | 訓練期 auxiliary loss | **可撤**（binding 保留）|
-| 3 | 推論期 support／校準 | **不可撤** —— 撤了 `R_abstain` 歸零 |
+| 1 | 一次性 presence 標註／資料 | **可從後續 answer 訓練撤除，binding 仍保留** |
+| 2 | 訓練期 auxiliary loss | 同上 |
+| 3 | 推論期 support／校準計算 | **本實驗沒有量它的成本** |
 
-**若 runtime 需要 support/abstention，第 3 欄就是實打實的持續成本**，
-不能靠「pretrain 時教過」省掉。
+**精確的裁決是關於行為，不是關於成本（Codex）：**
+
+> **support 行為不能靠一次 pretrain 就永久自動保留。**
+> 要在 runtime 有可靠的 support/abstention，就需要**維護** ——
+> 持續訓練、replay、專用 head，或外部判斷。
+
+⚠️ **不可寫成「第 3 欄不可撤、是實打實的持續成本」** ——
+那把「行為不保留」誤讀成「成本已量到」。
+**尚未量**：support 是否與 selector 的 match logits 共用、
+邊際 FLOPs 是否近零。§4.17 那個「最樂觀分支」仍然開著。
 
 ### 範圍
 

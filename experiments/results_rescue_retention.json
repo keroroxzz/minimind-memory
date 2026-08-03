@@ -1,0 +1,40 @@
+{
+  "checkpoint": "synth_absent_loop2_k24_af58ff9271.pth",
+  "checkpoint_sha": "13197057ae3055d9",
+  "eval_checksum": "88ce2b7f98e23814",
+  "eval_seed": 777,
+  "p_missing": 0.5,
+  "n_answerable": 198,
+  "n_missing": 202,
+  "A_ans": 1.0,
+  "R_abstain": 0.0,
+  "false_abstain": 0.0,
+  "hallucination": 1.0,
+  "per_k": {
+    "1": {
+      "ans": 54,
+      "ans_hit": 54,
+      "mis": 46,
+      "mis_hit": 0
+    },
+    "2": {
+      "ans": 55,
+      "ans_hit": 55,
+      "mis": 45,
+      "mis_hit": 0
+    },
+    "3": {
+      "ans": 53,
+      "ans_hit": 53,
+      "mis": 47,
+      "mis_hit": 0
+    },
+    "4": {
+      "ans": 36,
+      "ans_hit": 36,
+      "mis": 64,
+      "mis_hit": 0
+    }
+  },
+  "note": "撤除 matching auxiliary 後的 retention。下游訓練 12000 步全為 answer-only。"
+}
