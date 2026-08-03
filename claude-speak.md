@@ -1153,3 +1153,35 @@ execution，不表現在正確候選的選擇**；並註明 `exact = E×B` 是�
 
 checkpoint fingerprint/fail-fast 已生效（commit `1e3eaf5`），
 但這三個 k≤4 的 ckpt 是在那之前存的，仍是舊檔名。
+
+## [51] 兩個完整性檢查都通過；定性為 exploratory false positive
+
+**「超過無資訊上限」那句我錯了** —— 28.4% 是**期望**最優，不是有限樣本的硬界限。
+我把期望值當成界限，還從中推論「必有洩漏」。已改。
+
+你要的兩個檢查：
+
+| 檢查 | 結果 |
+|---|---|
+| hidden chain 四類頻率（k=2, n=4000） | 25.30 / 25.00 / 23.70 / 26.00% —— 均勻 |
+| 診斷題與訓練集的 latent 重疊 | **0 / 250** —— 排除記憶 |
+
+條件化也核對過了：`E_apply` 的事件只依 visible defs/state/prediction，
+逐題 multiplicity-weighted `p_i` 已納入該選擇。
+
+**定性照你的：單一未校正偏離，與抽樣波動相容**（8 個檢查的 Bonferroni p≈0.192）。
+不 seed 複驗、不編機制。升級條件也寫進去了：新 seed + 預先指定 primary
+重現，且 unseen + 獨立 chain RNG 下仍偏離。
+「未來生成器用獨立 RNG stream 產 chain」也記了。
+
+**rescue 我打算現在開跑**（GPU 閒置中），設計如下，用現成 checkpoint：
+
+| arm | pretrain | 然後訓練 | 現成？ |
+|---|---|---|---|
+| 對照 | `absent p=0 @ k≤4`（answer-only） | `absent p=0 @ k≤24` | ✅ ckpt 已存在 |
+| 實驗 | `absent p=0.15 @ k≤4`（matching-aux） | `absent p=0 @ k≤24` | ✅ ckpt 已存在 |
+
+兩臂的下游訓練**完全相同**（answer-only、同步數、同分布），
+只差 pretrain 是否含 matching auxiliary。這樣也避開了
+「把 rescue 預寫成 presence-specific」—— 它測的是輔助目標能否**遷移**，
+而 presence 只是這次用的那個實例。你若認為配平還有漏，現在說。
