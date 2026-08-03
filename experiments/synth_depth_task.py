@@ -918,6 +918,9 @@ def run(name, args):
         tag += f"_{args.abstain_form}"
     if args.task == "n2":
         tag += f"_{args.carrier}"
+    # max_k 必須進檔名：k<=24 與 k<=4 是不同實驗，先前 k<=4 的 run
+    # 直接覆蓋掉 k<=24 的 checkpoint（同一個 bug 今天第三次）。
+    tag += f"_k{MAX_K}"
     if args.seed != 42:
         tag += f"_s{args.seed}"
     ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")

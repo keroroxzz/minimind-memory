@@ -1037,3 +1037,32 @@ eval latent checksum `892adcd1b6b06273`、
 §4.8 改成保留為**方法教訓**：一個看似合理的 intervention 在兩個 regime
 都無區辨力，卻連續產出看似有意義的數字（5.1% vs 5.5%），
 因為真正的驅動因素在別處。明確註明**不再承載任何 C 層架構推導**。
+
+## [47] k≤4 閘門裁決：executor 是分布問題，selector 不是
+
+`n2d 三聯 @ k≤4`，三者 latent checksum 同為 `fbb86c1c3866b3a4`
+（**第一組真正 sample-identical 的訓練**，harness 修正生效）：
+
+| carrier | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| value | **100%** | 100% | 100% | 100% | **100%** |
+| pointer | **43.0%** | 17.5% | 8.0% | 4.0% | 18.1% |
+| blank | 跑中（throttle 0.8）| | | | |
+
+**分解（逐題 null 模擬）：**
+
+| | E_apply | B_select | P(X≥obs) |
+|---|---|---|---|
+| pointer @ k≤24 | 52.4% | 47.3% | 0.756 |
+| pointer @ **k≤4** | **90.8%** | **46.7%** | **0.855** |
+
+- **executor 恢復**（52.4→90.8%）→ §4.13 歸因於 k≤24 分布，**成立**
+- **selector 兩種分布都無偏離證據** → **binding 失敗與深度範圍無關**
+- 0.908 × 0.5 = 45.4% vs 觀測 k=1 exact 43.0%，吻合
+
+依 §4.10 預登記（「兩者都不過 → 進 presence-pretrain rescue」），走 rescue 路線。
+這也加強 §4.12：**缺 matching-relevant 輔助目標時 binding 不湧現，
+現在在兩種分布下都成立**，不是單一分布的產物。
+
+順帶修了今天第三次的同一個 bug：checkpoint tag 不含 `max_k`，
+k≤4 的 run 覆蓋掉了 k≤24 的 checkpoint（我要的數字已先取出）。

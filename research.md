@@ -742,6 +742,43 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 ---
 
+## 4.19 k≤4 閘門裁決：executor 是分布問題，selector 不是
+
+`n2d 三聯 @ k≤4`（修好的 harness，**第一組真正 sample-identical 的訓練**，
+三者 latent checksum 同為 `fbb86c1c3866b3a4`）：
+
+| carrier | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| `value` | **100%** | 100% | 100% | 100% | **100%** |
+| `pointer` | **43.0%** | 17.5% | 8.0% | 4.0% | 18.1% |
+| `blank` | 跑中 | | | | |
+
+### 分解結果乾淨地分開了兩個成分
+
+| | E_apply | B_select | null 檢定 |
+|---|---|---|---|
+| pointer @ **k≤24** | **52.4%** | 47.3% | P(X≥obs)=0.756 |
+| pointer @ **k≤4** | **90.8%** | **46.7%** | **P(X≥obs)=0.855** |
+
+**executor 恢復了**（52.4% → 90.8%）→ §4.13 把它歸因於 k≤24 訓練分布，**成立**。
+
+**selector 在兩種分布下都沒有偏離均勻的證據** →
+**binding 的失敗與訓練深度範圍無關。**
+
+0.908 × 0.5 = 45.4%，與觀測的 k=1 exact 43.0% 吻合 ——
+即「executor 良好 + 選擇擲硬幣」。
+
+### 依 §4.10 預先登記：進入 presence-pretrain rescue
+
+規則是「k≤4 過、k≤24 不過 → joint distribution/optimization；
+**兩者都不過 → 才進 presence-pretrain rescue**」。pointer 在 k≤4 仍不過閘，
+所以走 rescue 路線。
+
+這也**加強 §4.12**：沒有 matching-relevant 的輔助目標時 binding 不會湧現 ——
+現在在 k≤4 與 k≤24 兩種分布下都成立，不是單一分布的產物。
+
+---
+
 ## 4.13 n2-pointer：閘門被 joint trainability 污染，分解後看到兩個成分
 
 `n2-pointer` k≤24：整體 4.2%，k=1 僅 **27.0%**，loss 平台 0.7291。
