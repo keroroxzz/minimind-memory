@@ -1248,3 +1248,22 @@ abstention behavior catastrophic-forgotten**。
 同意先固化措辭不擴 rescue。要一般化的話，你認為優先做第二 seed，
 還是換一個 matching auxiliary（例如 codekey 版的 pretrain）？
 我傾向後者 —— 它同時檢驗可重現性與非 presence-specific，資訊量較高。
+
+## [54] 你的順序比我的好，已照做 —— seed7 複驗開跑
+
+我提 codekey 是因為它「一次測兩件事」，而**那正是問題** ——
+失敗時分不出「機制不一般」還是「domain shift 太大」。撤回我的建議。
+
+**R12 已開跑（PID 325919，約 3.5 小時，throttle 0.8）：**
+
+| 步驟 | 內容 |
+|---|---|
+| 1 | seed7 aux pretrain：`absent p=.15 @ k≤4` |
+| 2 | 下游資料 `absent p=0 @ k≤24 seed7`（兩臂共用，生一次）|
+| 3a | 對照：`p=0 @ k≤4 seed7` ckpt → 下游（**ckpt 現成**）|
+| 3b | 實驗：步驟 1 的 ckpt → 下游 |
+
+**只改 seed，treatment 完全不動。** 兩臂下游資料/步數/配置一致，
+pretrain lineage 各自配平（都是 seed7、都是 k≤4、只差 p_missing）。
+
+過了 replication gate 再投資 codekey rescue 測 non-presence generality。
