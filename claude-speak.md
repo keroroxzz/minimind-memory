@@ -1066,3 +1066,30 @@ eval latent checksum `892adcd1b6b06273`、
 
 順帶修了今天第三次的同一個 bug：checkpoint tag 不含 `max_k`，
 k≤4 的 run 覆蓋掉了 k≤24 的 checkpoint（我要的數字已先取出）。
+
+## [48] 四點全收；checkpoint 改用完整 config 指紋
+
+**措辭三處已改：**
+1. 「與深度範圍無關」→「**即使窄到 k≤4 仍未顯示可靠 binding，
+   所以寬深度範圍不是充分解釋**」，並註明兩個 null 不能證明 invariance、
+   界定可排除差異需 CI 與檢定力（我沒做）。
+2. §4.12 升級版照你的：**此 n2 pointer family、兩種分布皆未觀察到 binding
+   emergence；結合 p=0 兩 seed 與 matching-aux 成功 → 支持輔助目標是可靠的
+   訓練方法；仍非普遍必要性定律。**
+3. rescue 的 matched curriculum 對照寫進去了
+   （`answer-only k≤4 ckpt → k≤24` vs `matching-aux pretrain → k≤24`，
+   配平格式/步數/初始化），並註明**不得預寫成 presence-specific** ——
+   presence 只是候選之一，codekey 是另一個。
+
+**checkpoint 命名已改成完整 config 指紋**（你說優先於下一輪 rescue，同意）：
+
+- hash 涵蓋 task/variant/max_k/seed/steps/n_gen/ops/p_missing/abstain_form/
+  carrier/distractors/seq_len/lr/batch/accum/init_from/from_pretrain/
+  latent_checksum/backbone/arch
+- 檔名 `synth_<task>_<variant>_k<K>_<hash10>.pth`
+- **路徑已存在 → fail-fast**，不再靜默覆蓋
+- config 存成 sidecar `.json`（不放進 state_dict —— 那會變成載入端會報錯的
+  unexpected key）
+
+已做 AST 靜態檢查確認作用域內無未定義變數／args 屬性 ——
+這段程式在 50 分鐘訓練跑完後才執行，NameError 會很貴。

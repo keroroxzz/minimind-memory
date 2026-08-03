@@ -763,7 +763,11 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 **executor 恢復了**（52.4% → 90.8%）→ §4.13 把它歸因於 k≤24 訓練分布，**成立**。
 
 **selector 在兩種分布下都沒有偏離均勻的證據** →
-**binding 的失敗與訓練深度範圍無關。**
+**即使窄到 k≤4 仍未顯示可靠的 binding，所以寬深度範圍不是 binding 失敗的
+充分解釋。**
+
+⚠️ **不可寫成「與深度範圍無關」（Codex）**：兩個 null 不能證明 invariance，
+要界定「可排除多大的差異」需要 CI 與檢定力分析，這裡都沒做。
 
 0.908 × 0.5 = 45.4%，與觀測的 k=1 exact 43.0% 吻合 ——
 即「executor 良好 + 選擇擲硬幣」。
@@ -771,11 +775,27 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 ### 依 §4.10 預先登記：進入 presence-pretrain rescue
 
 規則是「k≤4 過、k≤24 不過 → joint distribution/optimization；
-**兩者都不過 → 才進 presence-pretrain rescue**」。pointer 在 k≤4 仍不過閘，
-所以走 rescue 路線。
+**兩者都不過 → 才進 rescue**」。pointer 在 k≤4 仍不過閘，所以走 rescue 路線。
 
-這也**加強 §4.12**：沒有 matching-relevant 的輔助目標時 binding 不會湧現 ——
-現在在 k≤4 與 k≤24 兩種分布下都成立，不是單一分布的產物。
+**rescue 必須保留 matched curriculum 對照（§4.10 已登記）：**
+
+| arm | 內容 |
+|---|---|
+| 對照 | `answer-only k≤4 ckpt → k≤24`（**checkpoint 現成**）|
+| 實驗 | `matching-aux pretrain → k≤24` |
+
+格式／步數／初始化配平。後者也回來 → **是 easy-to-hard curriculum，與輔助目標無關**。
+
+⚠️ **不要把 rescue 預寫成 presence-specific** —— presence 只是輔助目標的
+**一個候選**，`codekey` 是另一個（§4.14），而兩者都涉及缺席偵測這件事
+本身還沒分離（§4.14 末）。
+
+這也**加強 §4.12**，但升級後的措辭要精確（Codex）：
+
+> 在**此 n2 pointer family**，只靠答案 loss，**寬與窄兩種分布都未觀察到
+> binding emergence**。結合 `p=0` 兩顆種子與 matching-aux 的成功，
+> 支持**輔助目標是一個可靠的訓練方法**。
+> **仍不是普遍必要性定律。**
 
 ---
 

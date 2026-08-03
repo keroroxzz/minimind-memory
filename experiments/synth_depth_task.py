@@ -909,22 +909,31 @@ def run(name, args):
         print(f"    unused  改無關條目輸出不變   {cf['unused_invariance']:6.1%}", flush=True)
         per_k["_cf"] = cf
 
-    tag = f"{args.task}{args.n_gen}" if args.task == "mem" else args.task
-    # 檔名必須帶上會改變這次跑法的每一個變因。第一版只用 task 名，
-    # 結果 absent 的主組與對照組寫到同一個檔，主組權重被靜默覆蓋。
-    if args.task in ("absent", "filler"):
-        tag += f"_pm{args.p_missing:g}"
-    if args.abstain_form != "short":
-        tag += f"_{args.abstain_form}"
-    if args.task == "n2":
-        tag += f"_{args.carrier}"
-    # max_k 必須進檔名：k<=24 與 k<=4 是不同實驗，先前 k<=4 的 run
-    # 直接覆蓋掉 k<=24 的 checkpoint（同一個 bug 今天第三次）。
-    tag += f"_k{MAX_K}"
-    if args.seed != 42:
-        tag += f"_s{args.seed}"
-    ck = os.path.join(HERE, f"synth_{tag}_{name.replace('+','_')}.pth")
+    # checkpoint 命名：不再手補單欄。手補漏掉一欄，後跑的就靜默覆蓋前一個 ——
+    # 今天發生三次（task 名、p_missing/seed、max_k）。改用**完整 config 指紋**：
+    # 任何會改變這次跑法的參數進 hash，路徑已存在則 fail-fast。
+    cfg = {"task": args.task, "variant": name, "max_k": MAX_K, "seed": args.seed,
+           "steps": steps, "n_gen": args.n_gen, "ops": args.ops,
+           "p_missing": args.p_missing, "abstain_form": args.abstain_form,
+           "carrier": args.carrier, "distractors": args.distractors,
+           "seq_len": SEQ_LEN, "lr": args.lr, "batch": args.batch_size,
+           "accum": args.accum, "init_from": args.init_from,
+           "from_pretrain": args.from_pretrain,
+           "latent_checksum": d.get("latent_checksum"),
+           "backbone": BACKBONE, "arch": CONFIGS[name]}
+    import hashlib
+    cfg_hash = hashlib.sha256(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest()[:10]
+    readable = f"{args.task}_{name}_k{MAX_K}"
+    ck = os.path.join(HERE, f"synth_{readable}_{cfg_hash}.pth")
+    if os.path.exists(ck):
+        raise SystemExit(f"❌ checkpoint 已存在：{os.path.basename(ck)}\n"
+                         f"   同一組 config 已經跑過。要重跑請先手動刪除，"
+                         f"   不會靜默覆蓋。")
     torch.save({k: v.cpu() for k, v in model.state_dict().items()}, ck)
+    # config 存成 sidecar，不放進 state_dict —— 放進去會變成 load_state_dict
+    # 的 unexpected key，而載入端是對 unexpected 直接報錯的。
+    json.dump(cfg, open(ck[:-4] + ".json", "w"), indent=2, ensure_ascii=False, default=str)
+    print(f"  checkpoint {os.path.basename(ck)}", flush=True)
 
     res = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
     res[name] = {"per_k": {str(k): v for k, v in per_k.items()}, "overall": overall,
