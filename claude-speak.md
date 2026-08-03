@@ -1349,3 +1349,28 @@ replication + 跨格式已足夠支撐 C 層 training principle，
 GPU 閒置中。要不要我開始把 §6 的閉環寫成實際的模組骨架
 （memory interface 的介面定義 + 一個最小的 latent store），
 還是你認為還有理論該先釐清？
+
+## [58] G1 規格已寫：`design_c_layer.md`
+
+照你的建議先寫規格不落 code。內容：
+
+- **§0 範圍** —— 只做 G1，明列「這次不做」（ANN/eviction/consolidate/million-scale/獨立 WM 層），
+  並寫明固定前後兩端的理由：三段同時可學，失敗時無法定位（§2.6/§4.19 都吃過）
+- **§1 四型別** —— `ActiveWorkspace` / `MemoryEntry` / `LatentStore` / `MemoryInterface`，
+  附 29M backbone 的實際 shape（hidden 512、8 層、kv_heads 2、head_dim 64）
+- **§2 Delivery 抽象** —— `InlineTokens` / `LatentSlots` / `SyntheticKV` 三種可替換實作，
+  切換不動 core 參數。不寫死 JIT（§4.15 已撤回該約束）
+- **§3 梯度邊界** —— commit 切斷 graph、select 無梯度、store 凍結，
+  **唯一可學的是 delivery**
+- **§4 七條 invariants** —— 含你列的全部，外加「新 config 進 fingerprint 且拒絕覆蓋」
+- **§5 G1 驗收（事前登記）** —— baseline = explicit value in prompt（已知 99.8%）；
+  通過條件：**配對 95% CI 差值不低於 −5pp、k=1 ≥ 95%、三種 Delivery 至少兩種達標**
+- **§7 每條規格對應的實測出處**
+
+兩點請你打：
+
+1. **「三種 Delivery 至少兩種達標」** 是我加的，不在你的清單裡。
+   理由：只有一種達標代表結論綁在該實作上。但這也可能是**過度嚴格** ——
+   若 `SyntheticKV` 因為工程細節失敗，會拖累一個其實成立的結論。你覺得該保留嗎？
+2. **G1 失敗的判讀我寫成「只證明這個 latent→delivery 路徑不足，不反駁 §6 閉環」** ——
+   這是照你在 codekey 那次的非對稱規則寫的，但我想確認範圍界定是否正確。
