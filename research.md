@@ -1472,6 +1472,11 @@ core 由 L0 explicit-value 訓練而來、**G1a 全程凍結 core**。
 SyntheticKV fail**。k=1 = 92.0% 未達 95% 的 sanity gate，整體 34.8% 遠低於
 L0 的 −5pp 容差。
 
+⚠️ **不可寫成「34.8% 就是前綴位置的問題」（Codex）** ——
+前綴位置與**非 contextual 的內容合成**兩個因素在此混淆。
+teacher in-place（零學習 100%）只證明**替代介面可行**，
+內容生成能力要靠 ladder 第 2b/3 階才分解得出來。
+
 **失敗形狀值得記**：`SyntheticKV` 在 k=1 已達 92%，但**每加一步掉約一半**；
 而 `LatentSlots` 連 k=1 都只有 8.3%。**兩者是不同的失敗模式** ——
 KV 能交付單步，撐不住組合。

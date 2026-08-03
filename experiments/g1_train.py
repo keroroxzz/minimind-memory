@@ -51,7 +51,7 @@ def build_tensors(tok, samples, seq_len, render):
 
 def make_delivery(kind, n_slots_layers, num_loops, art_path):
     """建立 delivery。SyntheticKV 的 scale 用 artifact 裡實測的逐位置 native RMS。"""
-    if kind == "inline":
+    if kind in ("inline", "moveonly"):
         return InlineLatentAdapter(BACKBONE["hidden_size"]).to(DEVICE)
     if kind == "slots":
         return LatentSlotsDelivery(LatentSlotAdapter(BACKBONE["hidden_size"])).to(DEVICE)
@@ -62,11 +62,38 @@ def make_delivery(kind, n_slots_layers, num_loops, art_path):
         num_loops=num_loops, scale_k=art["per_entry_K"], scale_v=art["per_entry_V"])).to(DEVICE)
 
 
+def _moveonly_override(delivery, model, latents, pos, T):
+    """adapter 的 5×hidden → **各層凍結的** input_layernorm/k_proj/v_proj/k_norm/RoPE
+    → 同位置 K/V。逐算子與 native 等價（誤差 <1e-4）已單獨驗過。
+    `q_norm` 只屬於 query，**不施加於 K**；V 不過 RoPE。
+    """
+    from model.model_minimind import apply_rotary_pos_emb
+    H = BACKBONE["hidden_size"]
+    nkv = BACKBONE["num_key_value_heads"]
+    hd = H // BACKBONE["num_attention_heads"]
+    span = delivery(latents).reshape(latents.shape[0], -1, H)
+    cos, sin = model.model.freqs_cos[:T], model.model.freqs_sin[:T]
+    c, s2 = cos[pos], sin[pos]
+    out = []
+    nl = BACKBONE["num_hidden_layers"]
+    for slot in range(nl * ARCH["num_loops"]):
+        at = model.model.layers[slot % nl].self_attn
+        h = model.model.layers[slot % nl].input_layernorm(span)
+        k = at.k_norm(at.k_proj(h).view(span.shape[0], -1, nkv, hd))
+        v = at.v_proj(h).view(span.shape[0], -1, nkv, hd)
+        _, k = apply_rotary_pos_emb(k.clone(), k, c, s2, c, s2)
+        out.append((pos, k, v))
+    return out
+
+
 def deliver(delivery, kind, model, latents, mask, ids=None, pos=None):
     """回傳要餵進 forward 的 kwargs。latents (B,k,25)。
 
     `inline` 需要 `ids`（該批的 token 序列）與 `pos`（value span 的位置，k×5）。
     """
+    if kind == "moveonly":
+        return {"kv_override": _moveonly_override(delivery, model, latents, pos,
+                                                  ids.shape[1])}, 0
     if kind == "inline":
         e = model.model.embed_tokens(ids)                      # (B,T,H)
         span = delivery(latents).reshape(latents.shape[0], -1, BACKBONE["hidden_size"])
@@ -119,7 +146,7 @@ def evaluate(model, tok, samples, render, num_loops, throttle=1.0, max_per_k=100
         if delivery is not None:
             lat = R.resolve_chain(s).unsqueeze(0).to(DEVICE)
             ids_, pos_ = None, None
-            if kind == "inline":
+            if kind in ("inline", "moveonly"):
                 from g1_oracle_inline import value_positions
                 a_, b_, pos_ = value_positions(tok, s)
                 ids_ = b_.unsqueeze(0).to(DEVICE); pos_ = pos_.to(DEVICE)
@@ -137,7 +164,10 @@ def evaluate(model, tok, samples, render, num_loops, throttle=1.0, max_per_k=100
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="L0", choices=["L0", "G1a", "G1b"])
-    ap.add_argument("--delivery", default="slots", choices=["slots", "kv", "inline"])
+    ap.add_argument("--delivery", default="slots",
+                    choices=["slots", "kv", "inline", "moveonly"])
+    ap.add_argument("--adapter-from", default=None,
+                    help="從既有 checkpoint 載入 adapter（2b 微調用）")
     ap.add_argument("--smoke", action="store_true", help="小規模，只驗 pipeline 學得動")
     ap.add_argument("--max-k", type=int, default=4)
     ap.add_argument("--train-per-k", type=int, default=5000)
@@ -187,6 +217,11 @@ def main():
         delivery = make_delivery(a.delivery, BACKBONE["num_hidden_layers"],
                                  ARCH["num_loops"],
                                  os.path.join(HERE, "g1_renderer_artifact.json"))
+        if a.adapter_from:                        # 2b：從既有 adapter checkpoint 起跑
+            blob = torch.load(os.path.join(HERE, a.adapter_from), map_location="cpu")["delivery"]
+            blob = {k.replace("adapter.", ""): v for k, v in blob.items()}
+            delivery.load_state_dict(blob)
+            print(f"  adapter 由 {a.adapter_from} 載入")
         if a.stage == "G1a":
             for p_ in model.parameters():
                 p_.requires_grad_(False)          # plug-compatibility：core 凍結
@@ -224,7 +259,7 @@ def main():
     lat_by_k = {k: torch.stack([R.resolve_chain(tr[i]) for i in idx]) for k, idx in by_k.items()} \
         if not is_l0 else {}
     pos_by_k = {}
-    if not is_l0 and a.delivery == "inline":
+    if not is_l0 and a.delivery in ("inline", "moveonly"):
         from g1_oracle_inline import value_positions
         for k, idx in by_k.items():                   # 同 k 的結構相同 → 位置相同
             pos_by_k[k] = value_positions(tok, tr[idx[0]])[2].to(DEVICE)
@@ -266,8 +301,8 @@ def main():
             with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=DEVICE == "cuda"):
                 if not is_l0:
                     kw, plen = deliver(delivery, a.delivery, model, lat, mask,
-                                       ids=x if a.delivery == "inline" else None,
-                                       pos=pos_k if a.delivery == "inline" else None)
+                                       ids=x if a.delivery in ("inline", "moveonly") else None,
+                                       pos=pos_k if a.delivery in ("inline", "moveonly") else None)
                 logits = model(x, **kw).logits
                 if not is_l0:
                     logits = logits[:, plen:] if a.delivery == "slots" else logits
