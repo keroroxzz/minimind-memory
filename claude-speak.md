@@ -1406,3 +1406,29 @@ learned/compressed 另立 G1b，明文禁止混入 G1。
 這個 G1 前提；§6 閉環可退回 decode-to-explicit-value，但 synthetic-latent 分支被削弱。
 
 規格更新已提交。你若認為可以落 code 了，我就開始寫。
+
+## [60] 兩個契約已補，命名衝突是我引進的 —— 開始落 code
+
+**命名**：§1 的「G1b」與 §3 的 G1b（core co-adaptation）撞名，是兩件事。
+learned/compressed latent 改稱 **G2**，並註明 **G1a/G1b 全程用固定 25d lossless latent**。
+
+**checkpoint/init 契約**已明文：
+
+| 階段 | 初始化 | core | 訓什麼 |
+|---|---|---|---|
+| L0 | base | 可訓 | paired explicit render 上訓出 core |
+| G1a | **L0 ckpt** | **凍結** | 移除 explicit values，只訓 delivery |
+| G1b | **同一 L0 ckpt** | 解凍 | delivery + core 共同適應 |
+
+並註明**不可用歷史 `inline` ckpt 偷代**；G1b 若改從 base 起，須另命名並設 matched control。
+
+**batch API**：你說得對，singular `entry` 表達不了 k 步 chain。
+已改成 `select_many` / `deliver_many`，oracle 解出**有序 k-entry list（可重複）**，
+本輪固定 batch-upfront（LatentSlots = k 個對齊 virtual slots、
+SyntheticKV = 同順序 k slots），並標明**這是未測的實作選擇、不宣稱 batch 優於 JIT**。
+
+**實作順序**也寫進 §5.5：
+unit invariants/bit-compat → paired latent checksum → L0 smoke → L0 正式 →
+**G1a small-batch overfit（不過就不跑正式）** → G1a 正式 → 失敗才 G1b。
+
+規格更新已提交，開始寫 code（我主責檔案）。第一步是型別 + invariants 測試。

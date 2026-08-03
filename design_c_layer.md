@@ -44,9 +44,11 @@ LatentStore                        # 只管持久化與物理 commit，無策略
     # 模型不吐 CRUD；這是 backend 介面（§6）
 
 MemoryInterface                    # Controller 是它的政策面，不另算一層
-    query(workspace)      -> (addresses, support)
-    select(candidates)    -> (entry | None, support: float)   # 必須唯一化
-    deliver(entry, workspace) -> Delivery
+    query(workspace)       -> (addresses, support)
+    select_many(chain)     -> (list[MemoryEntry | None], support: (k,))
+    deliver_many(entries, workspace) -> Delivery
+    # 必須是 *_many：單數 entry 的 API 表達不了 k 步的 composition chain。
+    # oracle 把 chain 解成**有序的 k 條目 list（可重複）**。
 ```
 
 ### latent 的定義（G1 必須先固定，否則失敗無法歸因）
@@ -61,7 +63,10 @@ S₅ 置換 → 5×5 permutation matrix → flatten → (25,) one-hot
 
 ⚠️ **不可在 G1 用 learned／compressed latent。** 若 latent 本身會丟資訊，
 失敗就分不清是「latent 丟了資訊」還是「delivery 沒學會」。
-**learned/compressed latent 另立 G1b，不得混入 G1。**
+**learned/compressed latent 另立 `G2`，不得混入 G1。**
+
+（先前這裡寫「另立 G1b」與 §3 的 G1b（core co-adaptation）撞名 ——
+那是兩件不同的事。**G1a/G1b 全程都用固定的 25d lossless latent。**）
 
 ## 2. Delivery 保持抽象
 
@@ -104,6 +109,30 @@ class Delivery(Protocol):
 指 **architecture 與 parameter count 不變**。
 **weights 是否凍結由階段決定**：G1a 凍結、G1b 不凍結。
 先前文字把兩者混用。
+
+### batch shape 與交付順序
+
+oracle 對 chain 的每一步解出**有序的 k-entry list（元素可重複）**。
+本輪固定用 **batch-upfront delivery**：
+
+| 實作 | 形狀 |
+|---|---|
+| `LatentSlots` | k 個對齊的 virtual slots |
+| `SyntheticKV` | 同順序的 k 個 slots |
+
+⚠️ 這是**未測的實作選擇，不宣稱 batch 優於 JIT**（§4.15 已撤回 JIT 必要性）。
+選它只是因為 singular API 無法表達 composition chain。
+
+## 3.5 checkpoint / init 契約（訓練前必須先固定）
+
+| 階段 | 從哪裡初始化 | core | 訓什麼 |
+|---|---|---|---|
+| **L0** | base（或 pretrain）| 可訓 | 在 **paired explicit render** 上訓出 core |
+| **G1a** | **L0 的 ckpt** | **凍結** | 移除 explicit values，只訓 delivery |
+| **G1b** | **同一個 L0 ckpt** | 解凍 | delivery + core 共同適應 |
+
+⚠️ **不可用歷史 `inline` ckpt 偷代。** 若 G1b 改從 base 開始，
+**必須另行命名並設 matched control**。
 
 ## 4. Invariants（要有測試）
 
@@ -164,6 +193,15 @@ prompt/latent 分布不同。正確做法：
 
 此時 §6 的閉環仍可退回「解碼成 explicit value 再交付」，
 但 **synthetic-latent 分支被實質削弱**。
+
+## 5.5 實作順序（每一步都過 config fingerprint / fail-fast）
+
+1. unit invariants + bit-compat
+2. paired latent checksum
+3. L0 small smoke → L0 正式 baseline
+4. **G1a small-batch overfit**（不過就不必跑正式）
+5. G1a 正式
+6. **僅在 G1a 失敗時** → G1b
 
 ## 6. 分工
 
