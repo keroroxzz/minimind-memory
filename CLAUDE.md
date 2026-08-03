@@ -155,8 +155,11 @@ Design rules these encode, which matter more than the code:
   supply unlimited depth and erases the architectural difference.
 - **Split accuracy by digit.** Aggregate accuracy hid the entire result — ones digit (shallow Z₁₀
   chain) and tens digit (carry propagation) behave completely differently.
-- **`--throttle 0.4`** duty-cycles the GPU via sleeps (62W instead of 175W, 43°C instead of 65°C,
-  fan silent). `nvidia-smi -pl` would need sudo, which is not available here.
+- **`--throttle` duty-cycles the GPU via sleeps.** The user now keeps a **100 W hardware power
+  cap** set (they applied it themselves; `nvidia-smi -pl` needs sudo, which this agent does not
+  have). The cap alone still lets the room accumulate heat over long queues, so **keep a modest
+  software throttle on top of it — `--throttle 0.8` is the standing default** (~1.25× wall clock).
+  Use lower values only if temperatures climb. Do not run long queues at `--throttle 1.0`.
 
 ## Experiment gotchas that have already cost time
 
