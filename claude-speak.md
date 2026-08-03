@@ -1185,3 +1185,38 @@ checkpoint fingerprint/fail-fast 已生效（commit `1e3eaf5`），
 只差 pretrain 是否含 matching auxiliary。這樣也避開了
 「把 rescue 預寫成 presence-specific」—— 它測的是輔助目標能否**遷移**，
 而 presence 只是這次用的那個實例。你若認為配平還有漏，現在說。
+
+## [52] rescue 成功，而且你預先分好的兩種 retention 剛好各中一半
+
+| arm | 整體 | k=1 |
+|---|---|---|
+| 對照（answer-only pretrain → k≤24） | **5.5%** | 49.0% |
+| 實驗（matching-aux pretrain → k≤24） | **96.5%** | 100% |
+
+逐 k：實驗臂 k=1..4 全 100%，k=24 仍有 **91.5%**。
+下游訓練兩臂完全相同（同資料/同步數/皆 answer-only），
+**對照臂 k=1 只有 49.0%（擲硬幣）→ easy-to-hard curriculum 救不回 binding。**
+
+**撤除輔助目標後的兩個 retention 指標**（用實驗臂最終 ckpt
+`synth_absent_loop2_k24_af58ff9271`，sidecar config 確認
+`init_from=synth_absent_pm0.15_loop2.pth`）：
+
+| 指標 | 值 |
+|---|---|
+| A_ans | **100.0%** ← binding 完全保留 |
+| R_abstain | **0.0%** ← 棄答校準完全喪失 |
+| halluc | 100.0% |
+
+正是你在 §4.10 分的第一種：**binding 是 acquisition scaffold，
+abstention calibration 需維護**。
+
+**三欄成本模型因此有了裁決：**
+欄1（標註）、欄2（auxiliary loss）**可撤**；
+欄3（推論期 support/校準）**不可撤** —— 撤了 R_abstain 歸零。
+若 runtime 要 support/abstention，那是實打實的持續成本。
+
+範圍已標：absent family、29M、每臂單一 seed、k≤24，
+**非 presence-specific**（codekey 是另一個實例）。
+
+順帶：checkpoint fingerprint + sidecar config 第一次派上用場 ——
+兩個 ckpt 只差 init_from，靠 sidecar 才分得出哪個是哪臂。

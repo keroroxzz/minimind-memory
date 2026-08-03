@@ -742,6 +742,63 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 ---
 
+## 4.20 rescue 成功：binding 是鷹架，棄答校準不是
+
+**設計**（§4.10/§4.19 預先登記，含 Codex 要求的 matched curriculum 對照）：
+
+| arm | pretrain | 然後訓練 |
+|---|---|---|
+| 對照 | `absent p=0 @ k≤4`（**answer-only**）| `absent p=0 @ k≤24` |
+| 實驗 | `absent p=0.15 @ k≤4`（**含 matching-aux**）| `absent p=0 @ k≤24` |
+
+**下游訓練兩臂完全相同** —— 同一份資料、同步數、同分布、皆 answer-only。
+唯一差別是 pretrain 有沒有含 matching auxiliary。
+
+### 結果：17.5×
+
+| k | 1–4 | 8 | 12 | 16 | 20 | 24 | 整體 |
+|---|---|---|---|---|---|---|---|
+| **matching-aux pretrain** | **100%** | 97.0% | 98.0% | 97.0% | 94.0% | **91.5%** | **96.5%** |
+| 對照（answer-only pretrain）| 49→7.5% | — | — | — | — | — | **5.5%** |
+
+對照臂 k=1 只有 49.0%（擲硬幣水準）。
+**easy-to-hard curriculum 本身救不回 binding** —— 這正是該對照存在的理由。
+
+### 撤除輔助目標後的兩個 retention 指標（Codex 設計）
+
+拿缺失題重新評測實驗臂的**最終** checkpoint，**不再訓練**：
+
+| 指標 | 值 | 讀法 |
+|---|---|---|
+| `A_ans` | **100.0%** | **binding 完全保留** |
+| `R_abstain` | **0.0%** | **棄答校準完全喪失** |
+| `halluc` | 100.0% | 缺資料時全部自信亂編 |
+
+> **binding 是 acquisition scaffold —— 一次性訓練成本，撤掉後能力仍在。
+> 棄答／support 校準不是 —— 撤掉就沒了。**
+
+這正是 Codex 在 §4.10 預先分好的兩種可能中的一種
+（「前者高後者掉 = binding scaffold 成立、abstention calibration 需維護」）。
+
+### 對三欄成本模型的直接影響
+
+| 欄 | 內容 | 本實驗的裁決 |
+|---|---|---|
+| 1 | 一次性 presence 標註／資料 | **可撤**（binding 保留）|
+| 2 | 訓練期 auxiliary loss | **可撤**（binding 保留）|
+| 3 | 推論期 support／校準 | **不可撤** —— 撤了 `R_abstain` 歸零 |
+
+**若 runtime 需要 support/abstention，第 3 欄就是實打實的持續成本**，
+不能靠「pretrain 時教過」省掉。
+
+### 範圍
+
+`absent` family、29M、每臂單一 seed、k≤24。
+**不宣稱普遍性**；也**不是 presence-specific** ——
+`codekey`（§4.14）是另一個可行的 matching 輔助目標，這裡只用了 presence 這個實例。
+
+---
+
 ## 4.19 k≤4 閘門裁決：executor 是分布問題，selector 不是
 
 `n2d 三聯 @ k≤4`（修好的 harness，**第一組真正 sample-identical 的訓練**，
