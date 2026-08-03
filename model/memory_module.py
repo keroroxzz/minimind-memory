@@ -142,6 +142,31 @@ class LatentSlotAdapter(nn.Module):
         return self.net(latents)
 
 
+class InlineLatentAdapter(nn.Module):
+    """latent (25,) → **5 個 embedding**，塞回原本 value 所在的那 5 個位置。
+
+    這是 Codex 設計的 ladder 中間階：
+      `OracleInlineEmbedding`（零參數，同位置換原生 embedding）→ 已驗 100%
+      → **本類**（learned，同位置）
+      → prefix / KV（learned，異位置）→ 實測 3.3% / 21.7%
+
+    若本類通過而 prefix/KV 不過，才支持「交付**位置**」假說；
+    若本類也不過，問題就在「latent 能否被表達成 core 可用的 embedding」。
+    """
+
+    def __init__(self, hidden_size: int, span: int = PERM_N,
+                 latent_dim: int = LATENT_DIM, width: int = 512):
+        super().__init__()
+        self.span, self.hidden = span, hidden_size
+        self.net = nn.Sequential(
+            nn.Linear(latent_dim, width), nn.GELU(), nn.Linear(width, span * hidden_size),
+        )
+
+    def forward(self, latents):                  # (B, k, 25) -> (B, k, span, H)
+        B, k, _ = latents.shape
+        return self.net(latents).view(B, k, self.span, self.hidden)
+
+
 class SyntheticKVAdapter(nn.Module):
     """latent (25,) → 每層的合成 K/V，插進 past_key_values。
 

@@ -1,0 +1,51 @@
+{
+  "stage": "L0",
+  "arch": {
+    "use_engram": false,
+    "use_dense_attention": false,
+    "num_loops": 2,
+    "use_looped_transformer": true,
+    "loop_adapter": "shared",
+    "loop_input_injection": true,
+    "loop_index_embed": true
+  },
+  "backbone": {
+    "hidden_size": 512,
+    "num_hidden_layers": 8,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "vocab_size": 6400,
+    "max_position_embeddings": 1024
+  },
+  "max_k": 4,
+  "steps": 1200,
+  "lr": 0.0003,
+  "bs": 64,
+  "seed": 42,
+  "seq_len": 192,
+  "train_per_k": 800,
+  "init_from": "ckpt_vanilla.pth",
+  "smoke": true,
+  "delivery_checksum": "ee42ed3c22c7bfc0",
+  "per_k": {
+    "1": {
+      "acc": 1.0,
+      "n": 60
+    },
+    "2": {
+      "acc": 1.0,
+      "n": 60
+    },
+    "3": {
+      "acc": 0.9666666666666667,
+      "n": 60
+    },
+    "4": {
+      "acc": 0.75,
+      "n": 60
+    }
+  },
+  "overall": 0.9291666666666667,
+  "wall_clock_s": 437.834312915802,
+  "checkpoint": "g1_L0_smoke_d206169c43.pth"
+}

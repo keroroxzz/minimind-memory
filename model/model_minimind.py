@@ -782,14 +782,19 @@ class MiniMindModel(nn.Module):
         total_layers = len(self.layers) * num_loops
         past_key_values = past_key_values or [None] * total_layers
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
-        hidden_states = self.dropout(self.embed_tokens(input_ids))
+        # `inputs_embeds` 讓呼叫端直接給 embedding —— C 層的同位置替換
+        # （OracleInlineEmbedding / InlineLatent）需要它。None 時走原路徑，逐位元相同。
+        _emb = kwargs.get('inputs_embeds')
+        hidden_states = self.dropout(_emb if _emb is not None else self.embed_tokens(input_ids))
 
         # --- C 層：memory carrier 前綴（LatentSlots delivery，見 design_c_layer.md）---
         # `memory_carriers` 為 None 時**完全不進這條路徑**，輸出與改動前逐位元相同。
         # 交付的 carrier 佔用 prefix 位置，真實 token 的 RoPE 位置隨之後移 ——
         # 與 SyntheticKV 的 virtual prefix 語意一致。
         n_carriers = 0
-        if kwargs.get('memory_carriers') is not None:
+        # 只在 prefill（沒有 cache）時前綴。增量解碼時 carrier 已經在 cache 裡，
+        # 再前綴一次會重複，而且會讓呼叫端的 past_len 多算 —— 兩條 latent 路徑都會中。
+        if kwargs.get('memory_carriers') is not None and past_key_values[0] is None:
             mc = kwargs['memory_carriers'].to(hidden_states.dtype)
             n_carriers = mc.shape[1]
             hidden_states = torch.cat([mc, hidden_states], dim=1)

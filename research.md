@@ -1440,6 +1440,71 @@ filler 的輔助目標是 5 個數字（回抄狀態），乍看有同樣的捷�
 
 ---
 
+## 4.23 G1 第一批結果：latent 可交付，但**位置**是目前的門檻
+
+全部 loop2（`use_looped_transformer=True`）、同一批固定 train/eval ID、
+core 由 L0 explicit-value 訓練而來、**G1a 全程凍結 core**。
+
+| 條件 | 交付位置 | 可學參數 | 整體 |
+|---|---|---|---|
+| **L0**（值直接在 prompt）| — | core | **100%** |
+| **oracle_inline**（同位置、原生 embedding）| 同位置 | **0** | **100%** |
+| **InlineLatent**（同位置、learned latent）| 同位置 | 1.33M | **100%** |
+| SyntheticKV（learned）| KV cache | 1.06M | 21.7%<sup>†</sup> |
+| LatentSlots（learned）| 前綴 token | 0.14M | 3.3%<sup>†</sup> |
+| latent_raw（無交付）| — | — | **1.2%**（下限）|
+
+<sup>†</sup> 1200 步 pilot。SyntheticKV 的 fresh-6000 為事前登記的裁決跑。
+
+### 里程碑要分開記，不可互相填空（Codex）
+
+| 里程碑 | 狀態 |
+|---|---|
+| **預先登記的 L1**（`LatentSlots` 或 `SyntheticKV` 任一過）| **pending** — 等 SyntheticKV fresh-6000 |
+| **`L1-inline`**（diagnostic / exploratory）| **pass** |
+
+⚠️ **不可把 `InlineLatent` 追認為原 L1。** §5.5 已操作性寫死是那兩條路徑，
+而 InlineLatent 是**看見兩者失敗後才新增**的診斷路徑 ——
+現在改門檻就是 outcome-dependent redefinition。
+
+⚠️ **也不可降格成「單純的上界」。** 上界是 `oracle_inline`（零參數）。
+learned `InlineLatent` 是真實的 **post-hoc interface discovery + confirmatory
+replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
+
+### 目前能宣稱與不能宣稱的
+
+**已有存在性證據：**
+- latent 的**內容表示**（25 維 lossless）足以承載值
+- **凍結 core 的消費**：learned adapter 可把 latent 完整交付給沒有動過的 core
+- 交付的是 **embedding 而非 token** —— 「記憶必須以文字進入 context」不成立
+
+**尚未成立：**
+- **position-independent delivery**（prefix / 目前的 cache 介面未達標）
+- **KV synthesis**
+- **持久 pool / retrieve / write 的閉環**
+
+**因此不可因 inline 100% 就把整個 C 層或 §6 閉環升級。**
+
+### 一個未控制的混淆（必留）
+
+三條 learned 路徑的參數量不同（inline 1.33M / kv 1.06M / slots 0.14M），
+所以**不是純位置的單變因比較**。
+`oracle_inline`（0 參數）100% 排除了替換實作問題，
+`InlineLatent` 100% 證明該路徑可行並強力支持位置假說，
+但**「差異全由位置造成」仍需 capacity-matched / move-only 對照**。
+
+### 後續的預先登記
+
+- **KV fresh-6000 通過** → 原 L1 依事前門檻成立
+- **不過** → 原 L1 維持 fail，並把 **in-place KV replacement**
+  （在每層把 placeholder 那些**既有位置**的 K/V 換成 latent 合成的，
+  位置/mask/token 骨架不變）預先登記為**新的介面實驗**。
+  它若通過，建立**新版里程碑 `L1-v2`，不可回填舊 L1。**
+- **不解凍 core**（G1b）—— 解凍會把「core 願不願讀新位置」與
+  「carrier 能否表達值」混在一起。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

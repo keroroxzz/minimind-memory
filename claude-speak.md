@@ -1739,3 +1739,154 @@ exact-zero latent → K RMS 1.5000, V RMS 1.5000   （= target，滿幅度）
 3. exact-zero 必須保持零
 
 53/53。接下來跑 L0 smoke。
+
+## [72] L0 通過、G1a 兩條路徑 overfit 都沒過 —— 需要你的判讀
+
+**L0（explicit-value positive control）**
+
+| | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| L0 smoke（1200 步）| 100% | 100% | 96.7% | 75.0% | 92.9% |
+| **L0 正式（6000 步）** | **100%** | **100%** | **100%** | **100%** | **100%** |
+
+core / renderer / pipeline 都乾淨。ckpt `g1_L0_b5d9b10c5b.pth`。
+
+**G1a overfit（core 完全凍結，可訓參數 core 0.000M / delivery 0.138M）**
+
+| carrier | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| LatentSlots | 8.3% | 3.3% | 0.0% | 1.7% | **3.3%** |
+| **SyntheticKV** | **70.0%** | 13.3% | 1.7% | 1.7% | **21.7%** |
+
+**slots 的失敗不是接線 bug**，已診斷：
+- adapter 梯度全非零，|g|max=2.05
+- 換 carrier 內容 → logits max|Δ| = 14.78
+- 有無 carrier → logits max|Δ| = 14.26
+- 但 loss 從 0.918 → 0.905，**幾乎沒動**
+
+我的讀法（可能錯，請打）：凍結的 core 在 L0 上學到的是「去看**值所在的那些位置**」，
+而 slots 把 carrier 放在**前綴**，adapter 只能決定 carrier 說什麼、
+不能讓 core 去看它。kv 注入的是 native cache 位置，所以好很多。
+
+**三個我想請你裁決的點：**
+
+1. **k=1 = 70% 這個中間值怎麼讀？** 不是隨機（0.8%）、也不是成功。
+   是「部分可用但不可靠」，還是有別的診斷該先做（例如逐位置 attention mass、
+   或把 latent 直接餵成 L0 那些位置的 embedding 當上界對照）？
+2. **依 §5.5 兩條都沒過 → 進 G1b。** 但 G1b 只換「core 解不解凍」，
+   若失敗原因是**交付位置**（前綴 vs 值的位置），G1b 也未必對症。
+   要不要先加一個 **`InlineLatent`**：把 carrier 放在**原本 value 的位置**
+   （取代 placeholder），仍走 latent、仍凍結 core？那是 G1a 的第三條路徑，
+   不是 G1b。
+3. **overfit 的規模是否足夠？** 1200 步、800/k。
+   L0 在同規模下是 92.9%，所以規模對 L0 夠 —— 但 delivery 只有 0.138M 參數，
+   是否需要更多步數才算「overfit 失敗」？
+
+## [73] Ladder 完成 —— oracle 100%、learned inline 100%、prefix/kv 不過
+
+照你的順序做完了：
+
+| 條件 | 交付位置 | 可學參數 | 整體 |
+|---|---|---|---|
+| L0（值在 prompt）| — | — | **100%** |
+| **oracle_inline** | **同位置**、原生 embedding | **0** | **100%** |
+| **InlineLatent** | **同位置**、learned latent | 1.33M | **100%** |
+| SyntheticKV | KV cache | 0.53M | 21.7% |
+| LatentSlots | 前綴 token | 0.14M | 3.3% |
+| latent_raw | 無交付 | — | 1.2%（下限）|
+
+**oracle 過 → 排除 embedding replacement / position / mask 的實作問題。**
+**learned inline 也過（1200 步就 100%）→ 支持「交付位置」假說。**
+
+實作細節：`MiniMindModel.forward` 加了 `inputs_embeds`（None 時逐位元相同，
+已用真 ckpt 驗過 sha `96d75cbe86653a0c`）。`InlineLatentAdapter` 把
+latent(25) → 5 個 embedding，塞回原本 value 的那 5 個位置。
+
+**已開跑 InlineLatent 正式（6000 步）**，要跟 L0 做配對比較。
+
+**三個判讀問題想先確認：**
+
+1. inline 在 overfit 規模就 100%，**正式跑是否只是形式**？
+   我仍照 §5.5 跑，但若你認為該直接做配對 CI 就說。
+2. **SyntheticKV 續跑到 6000 步**你先前要求過 —— 現在 inline 已通過，
+   kv 的續跑還有資訊價值嗎？我認為有：它區分
+   「只有同位置可行」與「異位置需要更多預算」，但成本是 35 分鐘。
+3. 這個結果對 §6 閉環的含意，我想寫成：
+   **「delivery 必須落在 core 已經會讀的位置」**，
+   而不是「必須是 token」——因為 InlineLatent 交付的是 embedding 不是 token。
+   你同意這個措辭嗎？
+
+## [74] 四點全收；capacity 混淆是我沒控制到的
+
+**問1/2 照做**：inline 正式 6000 步跑中（不改 seed/資料/stopping rule）；
+**SyntheticKV 6000 已排隊**（inline 跑完自動接手）。
+你說得對，看到結果才停就是 outcome-dependent stopping。
+
+⚠️ 一個偏離請確認：我排的是**同 config、同 L0 init、6000 步的重跑**，
+不是從 smoke checkpoint 續訓。理由：OneCycle 的排程長度不同，
+從 1200 步的終點續訓會得到一條與 L0（也是 fresh 6000 OneCycle）不可比的曲線。
+若你認為該用真「續訓」，說一聲我改。
+
+**問3 措辭照你的收窄**，寫成：
+> 在**凍結、且由 L0 explicit-value 訓練**的 core 下，
+> latent embedding 放回 **core 既有的讀取位置**可達 100%；
+> prefix 與**目前這個** cache 介面未達標。
+
+不泛化成「所有 core 都必須同位置」，也不宣稱 KV 本質不可行。
+
+**capacity 混淆我沒控制到**：InlineLatent 1.33M vs KV 0.53M vs slots 0.14M ——
+三者**不是純位置的單變因比較**。oracle(0 參數)100% 排除了替換實作問題，
+inline 100% 證明該路徑可行並強力支持位置假說，但
+**「差異全由位置造成」仍需 capacity-matched / move-only 對照**。
+這句已記為研究文字必留。
+
+**in-place KV replacement 的建議我採納**：若 KV 6000 仍敗，
+下一步做「在每層把 placeholder 那些**既有位置**的 K/V 換成 latent 合成的 K/V，
+位置/mask/token 骨架全不變」，而不是解凍 core。
+它直接檢驗「embedding 可行能否轉成同位置 KV」，也更貼近閉環目標。
+
+## [75] G1a InlineLatent 正式：100%，與 L0 完全相同
+
+| | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| L0 baseline（6000 步）| 100% | 100% | 100% | 100% | **100%** |
+| **G1a InlineLatent（6000 步、core 凍結）** | 100% | 100% | 100% | 100% | **100%** |
+
+事前登記的驗收：配對差值 **0pp**（≥ −5pp ✅）、k=1 **100%**（≥95% ✅）。
+n=100/k、同一批固定 val ID、未改 seed/資料/stopping rule。
+
+**一個分級歸屬要請你裁決**：你把 InlineLatent 定義為
+**診斷對照，不是第三個目標架構**，所以我不確定它算不算 §5 的 **L1**
+（「兩條 latent 路徑任一過 → latent delivery 存在性成立」）。
+
+我的看法是**它確實是 latent delivery**：prompt 裡沒有任何 value（只有
+placeholder），內容全部來自 latent 經 learned adapter ——
+差別只在交付**位置**。所以我傾向認為 **L1 成立**，但範圍限定為
+「同位置的 latent 交付」，而 L2/L3（KV／兩條都過）仍未達成。
+
+若你認為 L1 應保留給原本定義的 slots/kv 兩條，我就把 inline 的結果
+記成「診斷 ladder 的上界」而不入分級。**這會影響研究文字怎麼寫，所以想先確認。**
+
+KV 6000 已自動接手（fresh，同 L0 init/seed/IDs，只有 total_steps 與其
+OneCycle 排程不同，初始 adapter sha 會記進 artifact）。
+
+## [76] 裁決照收 —— 兩個里程碑分開記，已寫進 §4.23
+
+`預先登記的 L1` = **pending**（等 SyntheticKV fresh-6000）；
+`L1-inline (diagnostic/exploratory)` = **pass**。兩者並列，
+**不用後者填前者的勾**。
+
+你的定性我也照抄：oracle_inline 才是上界；learned InlineLatent 是
+**post-hoc interface discovery + confirmatory replication**，不是單純上界。
+
+「能宣稱／不能宣稱」也分開列了：
+- 有存在性證據：latent 內容表示、凍結 core 的消費、
+  **交付的是 embedding 不是 token**
+- 尚未成立：position-independent delivery、KV synthesis、
+  持久 pool/retrieve/write 閉環
+- **不因 inline 100% 升級整個 C 層或 §6 閉環**
+
+capacity 混淆與後續預先登記（KV 過 → 原 L1 成立；不過 → in-place KV
+replacement 另立 `L1-v2`，不回填舊 L1；不解凍 core）全部入檔。
+
+KV fresh-6000 跑中（PID 911339）。
