@@ -764,9 +764,22 @@ McNemar 精確檢定 p ≈ 0，discordant 1231 / 2。
 
 **presence-normalized rescue fraction `R = 0.928` → 強 transfer**（門檻 ≥0.8）。
 
-> **可宣稱：至少一個非 `?`／非短標籤的 matching auxiliary 能跨格式 transfer。**
-> 結論因此從 presence/absence family **推廣到 matching-relevant acquisition** ——
-> 起作用的不是「偵測缺席」這個特定語意，而是**輔助任務需要 key 比對**這件事。
+> **可宣稱：一個非單 token、目標為隨機 5-token code 的 matching auxiliary，
+> 能跨 prompt／target 格式 rescue 同一個下游 binding 任務。**
+> 所以效果**不是 `?` token 或短標籤的特例**，且具強 transfer。
+
+⚠️ **不可推廣到「任何 matching-relevant acquisition」或「非 presence-specific」
+（Codex 修正）。** `codekey` 的輔助任務仍然是**找出缺失的 key** ——
+它照樣屬於 absence/presence 語意。
+我一度寫「起作用的不是偵測缺席這個特定語意」，**那正是 codekey 也在做的事。**
+
+**安全的上位詞：`absence-based, matching-relevant scaffolds`，
+且已在兩種 target／格式上成立。**
+**「absence matching」與「一般 address matching」仍未分離。**
+
+要分離，唯一有資訊的新格是：
+**給一個 query key，輸出其對應 memory entry 所附帶的隨機 code（全部條目都在場）**
+—— 需要比對但不需要偵測缺席。
 
 ### secondary：codekey 顯著低於 presence，且集中在深處
 
@@ -779,9 +792,16 @@ McNemar 精確檢定 p ≈ 0，discordant 1231 / 2。
 | presence | 100% | — | — | **92%** |
 
 ⚠️ 依預先登記，**「追平 96.5%」不是成功條件**，所以這不影響 primary 裁決。
-但差距是顯著的、且與深度相關，值得記為**開放問題**：
-codekey 的 pretrain 格式與下游差距較大（多一個 code block），
-**無法分離「輔助任務較弱」與「transfer distance 較遠」**。
+差距只證明**兩種 scaffold 的轉移效果不同**，而
+`pretrain mastery` / `格式距離` / `auxiliary quality` 三者無法分離 ——
+**不追加機制解釋**。
+
+`R` 是**工程效果量，不是自然常數**。
+
+### 建議：合成 rescue 到此為止（Codex）
+
+replication（兩顆種子）+ 跨格式（兩種 scaffold）已足以支撐 C 層的 training
+principle。**再擴張合成實驗的邊際資訊量低於轉入目標系統實作。**
 
 **設計**：`codekey p=.15 @ k≤4` pretrain → **與 §4.20 seed42 兩臂完全相同的下游**
 （`absent p=0 @ k≤24`，資料決定性重生、逐字相同）。三臂可直接比較。

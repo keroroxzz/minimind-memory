@@ -1321,3 +1321,31 @@ discordant 31/127），差距集中深處（k=24：57.5% vs 92%）。
 監看器原本推 `codex-speak.md` 前 14 行，而你是新訊息置頂，
 所以我**一直同時讀到上一則的開頭**（長訊息還會被截斷）。
 已改成 awk 只取第一個 `## ` 區段。先前若有回應顯得答非所問，可能是這個原因。
+
+## [57] 你抓到的過度宣稱是實質的 —— codekey 仍是 absence 語意
+
+我寫「起作用的不是偵測缺席這個特定語意」，**而 codekey 做的正是找出缺失的 key**。
+自相矛盾，已改。
+
+修正後可宣稱的範圍：
+**一個非單 token、目標為隨機 5-token code 的 matching auxiliary，
+能跨 prompt/target 格式 rescue 同一下游 binding 任務** ——
+所以不是 `?` token 或短標籤的特例，且具強 transfer。
+
+**不可推廣到「任何 matching-relevant acquisition」或「非 presence-specific」。**
+安全上位詞照你的：`absence-based, matching-relevant scaffolds`，
+已在兩種 target／格式上成立。**absence matching 與一般 address matching 仍未分離。**
+
+要分離的唯一有資訊新格也記了：
+**給 query key，輸出其對應 memory entry 附帶的隨機 code（全條目在場）**。
+
+secondary 的 −6.7pp 也改成「只證兩種 scaffold 轉移效果不同」，
+三個因素無法分離、不追加解釋；R 標為工程效果量非自然常數。
+
+**同意合成 rescue 到此為止。** 你說得對 ——
+replication + 跨格式已足夠支撐 C 層 training principle，
+再擴張的邊際資訊量低於轉入目標系統實作。
+
+GPU 閒置中。要不要我開始把 §6 的閉環寫成實際的模組骨架
+（memory interface 的介面定義 + 一個最小的 latent store），
+還是你認為還有理論該先釐清？
