@@ -783,6 +783,20 @@ class MiniMindModel(nn.Module):
         past_key_values = past_key_values or [None] * total_layers
         start_pos = past_key_values[0][0].shape[1] if past_key_values[0] is not None else 0
         hidden_states = self.dropout(self.embed_tokens(input_ids))
+
+        # --- C 層：memory carrier 前綴（LatentSlots delivery，見 design_c_layer.md）---
+        # `memory_carriers` 為 None 時**完全不進這條路徑**，輸出與改動前逐位元相同。
+        # 交付的 carrier 佔用 prefix 位置，真實 token 的 RoPE 位置隨之後移 ——
+        # 與 SyntheticKV 的 virtual prefix 語意一致。
+        n_carriers = 0
+        if kwargs.get('memory_carriers') is not None:
+            mc = kwargs['memory_carriers'].to(hidden_states.dtype)
+            n_carriers = mc.shape[1]
+            hidden_states = torch.cat([mc, hidden_states], dim=1)
+            seq_length = hidden_states.shape[1]
+            if attention_mask is not None:
+                attention_mask = torch.cat(
+                    [attention_mask.new_ones(batch_size, n_carriers), attention_mask], dim=1)
         
         # 確保 mems 的 batch_size 與目前輸入一致 (處理最後一個不完整 batch 的情況)
         if mems is not None:

@@ -16,7 +16,13 @@ from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
 BACKBONE = dict(hidden_size=512, num_hidden_layers=8, num_attention_heads=8,
                 num_key_value_heads=2, vocab_size=6400, max_position_embeddings=1024)
-ARCH = dict(use_engram=False, use_dense_attention=False, num_loops=2)
+# ⚠️ **必須顯式開 `use_looped_transformer`**。只給 `num_loops=2` 時，
+#    model 內部會 `if not looped: num_loops = 1` —— 迴圈根本沒開，
+#    於是「16 個 cache 條目」的測試會空過（模型只用前 8 個，其餘靜默忽略）。
+#    與 CLAUDE.md 記過的 `use_engram` 預設陷阱同一個形狀：**顯式釘住每個 flag**。
+LOOP_KW = dict(use_looped_transformer=True, loop_adapter="shared",
+               loop_input_injection=True, loop_index_embed=True)
+ARCH = dict(use_engram=False, use_dense_attention=False, num_loops=2, **LOOP_KW)
 
 _pass = _fail = 0
 
@@ -165,6 +171,7 @@ def test_synthetic_kv_full_forward():
     torch.manual_seed(0)
     for n_loops in (1, 2):
         cfg = dict(ARCH); cfg["num_loops"] = n_loops
+        assert cfg["use_looped_transformer"], "迴圈沒開的話這條測試會空過"
         m = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **cfg)).eval()
         ad = SyntheticKVAdapter(8, 2, 64, num_loops=n_loops)
         lat = torch.stack([perm_to_latent([1, 0, 2, 3, 4])]).unsqueeze(0).expand(2, -1, -1)
@@ -180,6 +187,11 @@ def test_synthetic_kv_full_forward():
         except Exception as ex:
             ok, why = False, f"{type(ex).__name__}: {ex}"
         check(f"num_loops={n_loops}：完整 forward 通過", ok, why)
+        # 模型真的用掉全部條目了嗎？只檢查「不崩」會讓多餘的條目被靜默忽略。
+        with torch.no_grad():
+            used = m(ids, past_key_values=kv, use_cache=True).past_key_values
+        check(f"num_loops={n_loops}：模型回傳 {len(used)} 個 cache 條目（需 {8*n_loops}）",
+              len(used) == 8 * n_loops)
 
 
 def test_rope_matches_core_exactly():

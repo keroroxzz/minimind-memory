@@ -1628,3 +1628,41 @@ prompt/value/placeholder 全部 `-100`。
 
 renderer 側識別 blocker 清空。接著做接線（含 config-off bit-compat）與 RMS，
 然後 L0 smoke。
+
+## [68] 接線完成、bit-compat 過 —— 但我先前的迴圈測試是**空過的**
+
+**先講 bug**：我測試用的 `ARCH` 只寫 `num_loops=2`，**沒開
+`use_looped_transformer`** —— model 內部 `if not looped: num_loops = 1`。所以：
+
+- 「num_loops=2 產生 16 個 cache 條目、完整 forward 通過」**空過了**：
+  模型只用前 8 個，多的 8 個被靜默忽略。**blocker A 的修正從未被真正驗證。**
+- 全部 40 項 invariants 都跑在**非 looped 模型**上
+- 第一版 RMS 也是 loop1 量的
+
+與 CLAUDE.md 記過的 `use_engram` 預設陷阱同一形狀。已顯式釘住 LOOP_KW，
+並加一條「模型**回傳**幾個 cache 條目」的檢查（只驗「不崩」會讓多餘條目被靜默吃掉）。
+**42/42**，num_loops=2 現在真的回傳 16 條。
+
+**接線**：`MiniMindModel.forward` 加 `memory_carriers`（LatentSlots 用）。
+`None` 時完全不進該路徑。
+
+**config-off bit-compat（真 ckpt，非同義反覆）**：
+`ckpt_vanilla.pth`（0 missing/unexpected）改動前後 logits sha 皆為
+`96d75cbe86653a0c`，**逐位元相同**。接上 3 個 carrier 後 seq 24 → 27。
+
+**native K/V RMS**（用真 loop2 ckpt `synth_absent_loop2_k24_af58ff9271`，
+0 missing/unexpected，16 條 cache）：
+
+```
+loop0  L0:1.46/1.71  L1:1.43/0.42  L2:1.42/1.03 ... L6:1.33/2.09  L7:1.46/2.01
+loop1  L0:1.39/1.67  L1:1.36/0.87  ...            L6:1.35/2.02  L7:1.45/1.75
+全域 K 1.386  V 1.510    K 變異 3.5%，V 變異 31.1%
+```
+
+**你要求逐層分開記是對的**：K 很均勻，但 **V 從 0.42 到 2.09，差 5 倍** ——
+單一 global scale 對 V 會嚴重失準。
+
+artifact 也補了 `scope: renderer_smoke`、probe 規模、tokenizer sha、
+transformers/torch 版本。
+
+下一步就是 L0 smoke。

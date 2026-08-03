@@ -11,5 +11,58 @@
   "n_val": 80,
   "placeholder": ". . . . .",
   "latent_dim": 25,
-  "gates_passed": true
+  "gates_passed": true,
+  "scope": "renderer_smoke",
+  "note": "n_train/n_val 與 checksums 是 renderer smoke split；max_len_k24 來自另一個 length probe（max_k=24, n_per_k=40, seed=7）。正式 L0 另存實際規模。",
+  "probe_k24": {
+    "n_per_k": 40,
+    "seed": 7
+  },
+  "tokenizer_path": "./model",
+  "tokenizer_sha": "71f32c68cf63a153",
+  "transformers_version": "5.3.0",
+  "torch_version": "2.10.0+cu128",
+  "native_kv_rms": {
+    "per_entry_K": [
+      1.46062,
+      1.42725,
+      1.41772,
+      1.35662,
+      1.4185,
+      1.37496,
+      1.33072,
+      1.45676,
+      1.38509,
+      1.35856,
+      1.32799,
+      1.30824,
+      1.37656,
+      1.37518,
+      1.34762,
+      1.45056
+    ],
+    "per_entry_V": [
+      1.71356,
+      0.42322,
+      1.02693,
+      1.47081,
+      1.49421,
+      2.03448,
+      2.09158,
+      2.01488,
+      1.66611,
+      0.86721,
+      1.1602,
+      1.3112,
+      1.39088,
+      1.72416,
+      2.02172,
+      1.75363
+    ],
+    "dtype": "torch.float32",
+    "n_samples": 48,
+    "source_ckpt": "synth_absent_loop2_k24_af58ff9271.pth",
+    "config": "loop2 (use_looped_transformer=True)",
+    "note": "先前一版是在 use_looped_transformer 未開的情況下量的（實際跑 loop1），已重量。"
+  }
 }
