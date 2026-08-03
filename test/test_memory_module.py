@@ -218,20 +218,43 @@ def test_rope_matches_core_exactly():
 
 
 def test_per_position_scale_and_runtime_rms():
-    print("\nSyntheticKV 的 scale 必須逐注入位置，且 forward 時實測 RMS")
-    tgt_k = [1.4] * 8
-    tgt_v = [1.71, 0.42, 1.03, 1.47, 1.49, 2.03, 2.09, 2.01]     # 實測 native V，差 5 倍
-    ad = SyntheticKVAdapter(8, 2, 64, num_loops=1, scale_k=tgt_k, scale_v=tgt_v)
+    """scale 必須是 layers×loops 個位置，不是 layers 個。
+
+    實測 native V 同層跨 loop 也不同（L1：loop0 0.42 → loop1 0.87），
+    用 8 個 scale 重複到 16 個位置等於隱含 recurrent sharing 卻沒寫明（Codex）。
+    """
+    print("\nSyntheticKV 的 scale 必須逐注入位置（layers×loops），且 forward 實測 RMS")
+    # 實測值（synth_absent_loop2 ckpt），loop0 8 個 + loop1 8 個
+    tgt_v = [1.71, 0.42, 1.03, 1.47, 1.49, 2.03, 2.09, 2.01,
+             1.67, 0.87, 1.16, 1.31, 1.39, 1.72, 2.02, 1.75]
+    tgt_k = [1.46, 1.43, 1.42, 1.36, 1.42, 1.37, 1.33, 1.46,
+             1.39, 1.36, 1.33, 1.31, 1.38, 1.38, 1.35, 1.45]
+    ad = SyntheticKVAdapter(8, 2, 64, num_loops=2, scale_k=tgt_k, scale_v=tgt_v)
     lat = perm_to_latent([1, 0, 2, 3, 4]).view(1, 1, -1).expand(4, 3, -1)
-    out = ad(lat)
-    check("scale_k/scale_v 是逐層 buffer（非單一純量）",
-          ad.scale_v.shape == (8,) and float(ad.scale_v.max() / ad.scale_v.min()) > 4)
+    slots = ad(lat)
+    check(f"注入位置數 = layers×loops = 16", len(slots) == 16 and ad.n_slots == 16)
+    check("scale 為 16 個值，且同層跨 loop 可不同",
+          ad.scale_v.shape == (16,) and float(ad.scale_v[1]) != float(ad.scale_v[9]))
     check("forward 後有實測 RMS（不是只靠初始化假設）", ad.last_rms is not None)
     check("實測值為有限", ad.last_rms["finite"])
-    ratio = (ad.last_rms["V"] / torch.tensor(tgt_v))
-    check(f"V 的 RMS 隨目標逐層變動（比值 std {ratio.std():.3f} 應遠小於目標本身的變異）",
-          float(ratio.std() / ratio.mean()) < 0.5,
-          f"ratio={[round(float(x),2) for x in ratio]}")
+    check("last_rms 已 detach（診斷欄位不得持有 autograd graph）",
+          not any(t.requires_grad for t in (ad.last_rms["K"], ad.last_rms["V"],
+                                            ad.last_rms["ratio_K"], ad.last_rms["ratio_V"])))
+    # ⚠️ 只看 CV 會漏掉「所有位置一起偏高/偏低」。逐位置 assert 比值落在容差內，並報 min/max。
+    for nm in ("ratio_K", "ratio_V"):
+        r = ad.last_rms[nm]
+        lo, hi = float(r.min()), float(r.max())
+        check(f"{nm} 逐位置皆落在 [0.5, 2.0]（min {lo:.3f} / max {hi:.3f}）",
+              0.5 <= lo and hi <= 2.0)
+    # loop0 與 loop1 要分開報，不能用 aggregate 掩掉偏差
+    r = ad.last_rms["ratio_V"]
+    print(f"     ratio_V  loop0 mean {r[:8].mean():.3f}   loop1 mean {r[8:].mean():.3f}")
+    # 幅度被釘死是架構約束 —— near-zero 輸入不得產生 NaN/Inf
+    z = ad(torch.zeros(2, 3, LATENT_DIM))
+    check("near-zero latent 不產生 NaN/Inf（epsilon 有效）",
+          all(torch.isfinite(t).all() for kv in z for t in kv))
+    check("near-zero 時 RMS 仍貼齊 native scale（幅度由 scale 決定，非輸入）",
+          0.5 <= float(ad.last_rms["ratio_V"].min()) <= float(ad.last_rms["ratio_V"].max()) <= 2.0)
 
 
 def test_synthetic_kv_backward():

@@ -1685,3 +1685,31 @@ transformers/torch 版本。
 L0 smoke 的判讀規則也照你的記下：它是 **explicit-value positive control，
 不經 latent carrier**。**L0 若失敗，停在 core/training pipeline，
 不得用 adapter 或 selector 解釋。** 通過才進 G1a。
+
+## [70] loop 維度缺口已關；而逐位置容差抓到 CV 掩蓋的 11 倍偏差
+
+**loop 維度**：scale 改成 **layers×loops = 16 組**，每個位置各自生成
+（不再是 8 組重複到 16）。實測的 native 值同層跨 loop 確實不同
+（L1 的 V：loop0 0.42 → loop1 0.87），現在測試用完整 16 個值並分別報
+loop0/loop1 的 ratio。
+
+**你這條救了我**：先前 `std/mean=0.005` 看起來完美，但加上逐位置容差後：
+
+```
+ratio_K  min 0.079 / max 0.101      ← 所有位置一起偏低 11 倍
+ratio_V  min 0.085 / max 0.095
+```
+
+CV 完全看不到「共同偏移」。原因是網路原始輸出的 RMS 遠小於 1，
+只乘 scale 不會得到 target RMS。
+
+**修法照你說的，並明列為架構約束**：先把每個 slot 正規化到單位 RMS
+再乘 native scale。修正後 `ratio` 全部 = 1.000。
+
+⚠️ **代價已寫進註解**：**amplitude channel 被移除** ——
+模型不能用「這條記憶比較強」表達任何東西。G1a 接受此穩定化，
+放開需另立條件重測。另加 near-zero 測試（epsilon 有效、不產生 NaN/Inf）。
+
+`last_rms` 也已 detach。**51/51。**
+
+尺度識別缺口關閉，可以進 G1a（但先照你說的跑 L0 smoke）。
