@@ -1450,17 +1450,37 @@ core 由 L0 explicit-value 訓練而來、**G1a 全程凍結 core**。
 | **L0**（值直接在 prompt）| — | core | **100%** |
 | **oracle_inline**（同位置、原生 embedding）| 同位置 | **0** | **100%** |
 | **InlineLatent**（同位置、learned latent）| 同位置 | 1.33M | **100%** |
-| SyntheticKV（learned）| KV cache | 1.06M | 21.7%<sup>†</sup> |
+| **SyntheticKV fresh-6000**（learned）| KV cache | 1.06M | **34.8%** |
+| SyntheticKV 1200 pilot | KV cache | 1.06M | 21.7%<sup>†</sup> |
 | LatentSlots（learned）| 前綴 token | 0.14M | 3.3%<sup>†</sup> |
 | latent_raw（無交付）| — | — | **1.2%**（下限）|
 
-<sup>†</sup> 1200 步 pilot。SyntheticKV 的 fresh-6000 為事前登記的裁決跑。
+<sup>†</sup> pilot，不與 fresh-6000 逐點比較（OneCycle horizon 不同），也不累加成 7200 步。
+
+### 預先登記的 L1 判定：**FAIL**
+
+`SyntheticKV` fresh-6000（同 L0 init/seed/IDs，僅 total_steps 與其排程不同，
+初始 adapter sha `73ce8192caab76a5`）：
+
+| k | 1 | 2 | 3 | 4 | 整體 |
+|---|---|---|---|---|---|
+| 6000 步 | **92.0%** | 38.0% | 7.0% | 2.0% | **34.8%** |
+| 1200 pilot | 70.0% | 13.3% | 1.7% | 1.7% | 21.7% |
+
+**train loss 已長平台**（0.8475 → 0.7502 @2200，之後在 0.75~0.78 震盪至 5200，
+不再下降），所以「1200 步預算不足」已被排除 —— 依事前判準判 **frozen-core
+SyntheticKV fail**。k=1 = 92.0% 未達 95% 的 sanity gate，整體 34.8% 遠低於
+L0 的 −5pp 容差。
+
+**失敗形狀值得記**：`SyntheticKV` 在 k=1 已達 92%，但**每加一步掉約一半**；
+而 `LatentSlots` 連 k=1 都只有 8.3%。**兩者是不同的失敗模式** ——
+KV 能交付單步，撐不住組合。
 
 ### 里程碑要分開記，不可互相填空（Codex）
 
 | 里程碑 | 狀態 |
 |---|---|
-| **預先登記的 L1**（`LatentSlots` 或 `SyntheticKV` 任一過）| **pending** — 等 SyntheticKV fresh-6000 |
+| **預先登記的 L1**（`LatentSlots` 或 `SyntheticKV` 任一過）| **FAIL** |
 | **`L1-inline`**（diagnostic / exploratory）| **pass** |
 
 ⚠️ **不可把 `InlineLatent` 追認為原 L1。** §5.5 已操作性寫死是那兩條路徑，
