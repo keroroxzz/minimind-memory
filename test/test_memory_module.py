@@ -218,10 +218,15 @@ def test_synthetic_kv_backward():
     ids = torch.randint(0, 6400, (2, 5))
     out = m(ids, past_key_values=kv, use_cache=True)
     out.logits.float().pow(2).mean().backward()
-    gs = [p_.grad for p_ in ad.parameters()]
+    named = list(ad.named_parameters())
+    gs = [p_.grad for _, p_ in named]
     check("adapter 全部參數收到梯度", all(g is not None for g in gs))
-    check("梯度為有限值且非全零",
-          all(torch.isfinite(g).all() for g in gs) and any(g.abs().sum() > 0 for g in gs))
+    check("全部梯度皆為有限值", all(torch.isfinite(g).all() for g in gs))
+    # 先前寫 `any(nonzero)` 卻宣稱「全部非零」—— 那樣早層被 starve 完全測不到（Codex）。
+    zero = [n for (n, _), g in zip(named, gs) if g.abs().sum() == 0]
+    check("**每一個** 參數的梯度都非零（排除早層 starve）", not zero, f"全零：{zero}")
+    first = ad.net[0].weight.grad
+    check("第一層 Linear 權重梯度非零（梯度真的傳回輸入端）", first.abs().sum() > 0)
     check("core 參數完全沒有梯度（凍結）", all(p_.grad is None for p_ in m.parameters()))
 
 

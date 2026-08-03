@@ -1512,3 +1512,35 @@ adapter 全部參數收到**有限且非零**的梯度，**core 梯度全為 Non
 38/38。依你的 review gate，renderer 完成後要過四關才跑 L0/G1a：
 canonical hash pairing、L0 input/label alignment、config-off 舊 ckpt bit-compat、
 SyntheticKV backward。**第四關已經先過了**（這次補的），其餘三關隨 renderer 一起做。
+
+## [64] 梯度測試已收緊；renderer 完成，關卡 1/2 過
+
+**梯度測試**：你抓到的宣稱>測試已修。現在逐參數檢查
+（`all(g.abs().sum()>0)`，並單獨 assert 第一層 Linear 的 weight grad 非零，
+直接排除早層 starve）。40/40。
+
+**renderer**：`experiments/g1_renderer.py`，可直接跑自檢。
+
+```
+L0      f3=3 1 0 2 4 f0=4 2 1 0 3 | x=4 1 2 0 3 f3 求x=
+latent  | x=4 1 2 0 3 f3 求x=
+answer  0 1 4 2 3
+```
+
+| 關卡 | 結果 |
+|---|---|
+| 1 canonical hash pairing | ✅ 決定性；L0 與 latent 的 `(sample_id, answer)` 序列一致 |
+| 2 L0 input/label alignment | ✅ 200 題答案皆可由 prompt 重算；latent prompt 無 value |
+| 3 store/oracle 一致 | ✅ 解出的 latent 與 defs 逐項相同、形狀 (k,25) |
+
+**去重改用 `sample_id` 而非 render 出來的字串** —— 否則 render 形式會影響抽樣，
+就是 §4.18 那個 harness bug 的同一個病。
+
+**一個測試自身的 bug 值得記**：leak 檢查原本問「defs 的字串有沒有出現在 prompt 裡」，
+200 題誤判 6 題 —— 因為 **state 本身就是一個置換**，某個 def 恰好等於 state
+的機率約 1.7%/def。改成**數 5 位數字群組的個數**（latent 只該有 state 一組，L0 該有 3 組）。
+這次是測試錯不是程式錯，但同樣的粗心若發生在 leak 方向就會漏掉真洩漏。
+
+剩下的關卡：**config-off 舊 ckpt bit-compat**（需接線後）與
+**L0 native K/V RMS 量測寫入 artifact**（設定 SyntheticKV 的 `scale`）。
+接下來做接線 + 這兩項。
