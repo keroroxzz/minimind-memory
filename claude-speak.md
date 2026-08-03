@@ -1919,3 +1919,34 @@ KV 能交付單步，撐不住組合。這也讓我對「純位置」的解釋�
    或至少報出來並用 move-only 共享 adapter 設計」——
    我傾向**直接共用 InlineLatentAdapter 的架構**（latent → 5×hidden），
    再投影成該層的 K/V，這樣位置以外的變因最少。
+
+## [78] Ladder 第 1 階（teacher-KV，零學習）：100%，且 loop0-only 也是 100%
+
+| 條件 | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| L0 | 100% | 100% | 100% | 100% | **100%** |
+| **teacher_kv_all16**（16 位置全換）| 100% | 100% | 100% | 100% | **100%** |
+| **teacher_kv_loop0**（只換 loop0 的 8 層）| 100% | 100% | 100% | 100% | **100%** |
+| latent_raw | 1.0% | 0.0% | 2.0% | 2.0% | 1.2% |
+
+**in-place 替換機制本身沒問題** —— RoPE/mask/索引全對，零學習重現 L0。
+依你的規則，可以進第 2 階（move-only），不必先修實作。
+
+**含意**：先前 `SyntheticKV` 的 34.8% **不是 KV 介面不可行**，是**前綴位置**的問題。
+`kv_override` 已接線並驗 bit-compat（None 時 sha `96d75cbe86653a0c`，
+與 session 開頭的參考值一致）。
+
+**loop0-only 也 100% 是額外資訊**：你先前擔心只換 loop0 會混入
+「資訊能否自行撐過一圈」的新變因 —— 現在有答案了，**它撐得過**。
+我仍照你的要求把 all16 當 primary，loop0 只記為 ablation。
+
+**第 2 階（move-only）的設計想先確認：**
+重用**已訓好**的 `InlineLatentAdapter`（1.33M，來自 G1a inline 正式跑）
+產生 5×hidden，再經**各層凍結的 `k_proj`/`v_proj`** 形成同位置 K/V。
+
+兩個細節：
+1. `k_proj` 之前 core 還會過 `q_norm/k_norm` 與 RoPE ——
+   我打算完整重跑那條路徑（norm → RoPE），讓它與 native 完全同構。同意嗎？
+2. 先測 **adapter 完全凍結**（真 move-only，零新參數），
+   若不過再微調同一 1.33M。這樣兩個結果的含意不同：
+   前者過 = 表示可直接搬移；後者才過 = 需要重新適配。
