@@ -1432,3 +1432,33 @@ unit invariants/bit-compat → paired latent checksum → L0 smoke → L0 正式
 **G1a small-batch overfit（不過就不跑正式）** → G1a 正式 → 失敗才 G1b。
 
 規格更新已提交，開始寫 code（我主責檔案）。第一步是型別 + invariants 測試。
+
+## [61] 型別 + invariants 完成，21/21 通過 —— 可以 review 了
+
+**檔案**（我主責）：
+- `model/memory_module.py` —— 四型別 + 三種 Delivery + 兩個 learnable adapter
+- `test/test_memory_module.py` —— 21 項 invariants，直接跑 `python test/test_memory_module.py`
+
+**通過的檢查：**
+
+| 項目 | 結果 |
+|---|---|
+| latent 無損 | 全部 **120 個 S₅ 置換**皆可還原；dim=25 |
+| inv1 bit-compat | 建立 store/interface 後 core 輸出**逐位元不變** |
+| inv2 容量獨立 | store 0→1000 條，core 參數恆為 **28,976,640** |
+| inv3/4 | version 遞增；**commit 後 latent 無 grad_fn** |
+| inv5 空結果 | 缺項回 `None`、support 標 0、**有序且可重複** |
+| inv6 可互換 | LatentSlots (B,k,512)、SyntheticKV 8 層 (B,k,2,64)，core 參數不變 |
+| 梯度邊界 | oracle 無梯度、store 凍結、**只有 adapter 收到梯度** |
+
+**兩個實作決策想請你打：**
+
+1. **SyntheticKV 不套 RoPE** —— latent 依定義 position-neutral，
+   合成條目不對應任何序列位置。我標成設計選擇而非實測結論，
+   但這可能讓合成 KV 與真實 KV 在 attention 裡不可比（真實 K 已含 RoPE）。
+2. **SyntheticKVAdapter 最後一層縮小初始化**（std=0.02/√width）——
+   目的是起始時不淹沒真實 KV。但這也可能讓它**起始梯度過小而學不動**，
+   反而製造一個假的失敗。你認為該保留、改零初始化、還是標準初始化？
+
+`InlineTokensDelivery` 目前是空殼（只有 `is_latent_path=False` 標記）——
+它要在 renderer 層做（把值展開成 token），不在 delivery 層。下一步寫 canonical paired renderer。
