@@ -34,7 +34,7 @@ ActiveWorkspace          # 共享暫態，不是層（§6）
 
 MemoryEntry
     address:  (D_addr,)            # 比對用；G1 為 exact-key one-hot/embedding
-    latent:   (D_lat,)             # 內容；position-neutral
+    latent:   (25,)                # 內容；見下方「latent 的定義」
     metadata: dict                 # source / time / version
     version:  int
 
@@ -49,6 +49,20 @@ MemoryInterface                    # Controller 是它的政策面，不另算�
     deliver(entry, workspace) -> Delivery
 ```
 
+### latent 的定義（G1 必須先固定，否則失敗無法歸因）
+
+**G1 的 latent 是資訊完備、固定、canonical 的**，**沒有 content encoder**：
+
+```
+S₅ 置換 → 5×5 permutation matrix → flatten → (25,) one-hot
+```
+
+（等價選項：120 類 one-hot。取 25d 是因為它保留位置結構，便於日後接 encoder。）
+
+⚠️ **不可在 G1 用 learned／compressed latent。** 若 latent 本身會丟資訊，
+失敗就分不清是「latent 丟了資訊」還是「delivery 沒學會」。
+**learned/compressed latent 另立 G1b，不得混入 G1。**
+
 ## 2. Delivery 保持抽象
 
 **不可寫死** JIT／token inline／cross-attention 任一種。
@@ -58,8 +72,7 @@ MemoryInterface                    # Controller 是它的政策面，不另算�
 class Delivery(Protocol):
     def apply(self, ws: ActiveWorkspace) -> ActiveWorkspace: ...
 
-# G1 至少要能替換這三種實作，且切換不動 core 參數：
-#   InlineTokens   把值展開成 token 接在使用處（= inline 條件）
+#   InlineTokens   把值展開成 token 接在使用處  ← positive control，**不是** latent delivery
 #   LatentSlots    寫進 carriers，由 core 以 attention 讀取
 #   SyntheticKV    直接合成 KV 條目插進 ws.kv
 ```
@@ -70,10 +83,27 @@ class Delivery(Protocol):
 |---|---|
 | `LatentStore.commit` | **切斷 graph**。跨 episode 不回傳梯度 |
 | `select` | G1 為 oracle，**無梯度** |
-| `deliver` | **可學**，梯度回傳到 core |
-| store 內容 | G1 **凍結**，不學 write |
+| store 內容 | **凍結**，不學 write |
+| `deliver` | **可學** —— G1 唯一的可學組件 |
 
-**唯一可學的是 delivery。** 這是 G1 要量的東西。
+### G1a / G1b 必須分開預登記（先前規格自相矛盾）
+
+原本同時寫了「唯一可學的是 delivery」與「梯度回傳到 core」——
+**這兩句不能並存**：梯度若進 core，core 就也在學。分成兩階段：
+
+| 階段 | core weights | 測什麼 |
+|---|---|---|
+| **G1a** | **凍結** | **plug-compatibility** —— 既有 core 能否直接吃 delivery 出來的東西 |
+| **G1b** | 可與 delivery 共同適應 | **existential feasibility** —— 這條路徑到底行不行得通 |
+
+**先跑 G1a。** 只有 G1a 不過才跑 G1b，且結論範圍不同
+（G1a 過 = 可插拔；只有 G1b 過 = 需要重訓 core）。
+
+### 「切換 delivery 不改 core 參數」的精確意思
+
+指 **architecture 與 parameter count 不變**。
+**weights 是否凍結由階段決定**：G1a 凍結、G1b 不凍結。
+先前文字把兩者混用。
 
 ## 4. Invariants（要有測試）
 
@@ -90,20 +120,50 @@ class Delivery(Protocol):
 **任務**：沿用 `absent p=0 @ k≤24`（下游資料 checksum `7f81e60eca1e6b53`），
 但值改由 store 交付，而非寫在 prompt 裡。
 
-| 對照 | 內容 |
-|---|---|
-| **baseline** | explicit value in prompt（= 現有 `inline`，已知 99.8%）|
-| **G1** | oracle-selected → latent → learned delivery |
+### baseline 必須由同一批樣本 paired render，不可借歷史數字
 
-**通過條件（事前登記）：**
+⚠️ **不可直接引用舊 `inline` 的 99.8%** —— `absent p=0` 與舊 `inline` 的
+prompt/latent 分布不同。正確做法：
 
-- G1 的 overall 與 baseline 的**配對 95% CI 差值不低於 −5pp**
-- **k=1 ≥ 95%**（binding gate，沿用 §4.10）
-- 三種 Delivery 至少**兩種**達標 —— 只有一種達標代表結論綁在該實作上
+從**同一批 canonical `absent` 樣本**產生所有條件，逐題配對、hash 驗證：
 
-**失敗的判讀**：G1 低於 baseline 只證明**這個 latent→delivery 路徑**不足，
-**不反駁** §6 的閉環 —— 因為 store 與 selection 都被固定住了，
-失敗只可能出在 delivery 或 latent 表示。
+| 層級 | render | 說明 |
+|---|---|---|
+| **L0** | oracle 把同一 chain 解成 explicit values | positive control |
+| **L1/L2** | **只把值換成 latent**，其餘 prompt 與答案完全相同 | 受測條件 |
+
+### 分級通過條件（取代原本的「三選二」）
+
+`InlineTokens` 是 **positive control，不是 latent delivery** ——
+不能拿它湊數（Codex）。改成分級：
+
+| 層級 | 條件 | 可宣稱 |
+|---|---|---|
+| **L0** | explicit control 達標 | **必過**，否則測試台本身有問題 |
+| **L1** | `LatentSlots` **或** `SyntheticKV` 任一過 | **latent delivery 存在性成立** |
+| **L2** | `SyntheticKV` 過 | 使用者目標路徑成立 |
+| **L3** | 兩種 latent 路徑都過 | implementation generality |
+
+**單一路徑成功是有效結論**，只是範圍綁在該實作上。
+
+**達標定義**：與 L0 的配對 95% CI 差值 **不低於 −5pp**，
+且 **k=1 ≥ 95%**。
+
+⚠️ **k=1 這道閘在這裡是 delivery/execution sanity gate，不是 binding gate**
+—— selection 已經是 oracle，這裡根本沒在測 binding（Codex）。
+我先前從 §4.10 抄了「binding gate」的標籤，那是錯的。
+
+### 失敗的判讀範圍
+
+**單一 adapter 失敗** → 只否定**該 latent + delivery + training protocol** 組合。
+
+**但不可寫成不可反駁（Codex）**：若在
+「lossless latent + small-batch overfit 通過 + 合理容量/初始化」的條件下，
+**兩條 latent 路徑都失敗**，那就應該否定 G1 的前提 ——
+**「此 backbone 能直接吃 position-neutral latent」**。
+
+此時 §6 的閉環仍可退回「解碼成 explicit value 再交付」，
+但 **synthetic-latent 分支被實質削弱**。
 
 ## 6. 分工
 

@@ -1374,3 +1374,35 @@ GPU 閒置中。要不要我開始把 §6 的閉環寫成實際的模組骨架
    若 `SyntheticKV` 因為工程細節失敗，會拖累一個其實成立的結論。你覺得該保留嗎？
 2. **G1 失敗的判讀我寫成「只證明這個 latent→delivery 路徑不足，不反駁 §6 閉環」** ——
    這是照你在 codekey 那次的非對稱規則寫的，但我想確認範圍界定是否正確。
+
+## [59] 三個 blocker 全修，尤其 B 是我規格裡的自相矛盾
+
+**B（最嚴重）**：我同時寫了「唯一可學的是 delivery」與「梯度回傳到 core」——
+**兩句不能並存**。已拆成預登記的兩階段：
+
+| 階段 | core weights | 測什麼 |
+|---|---|---|
+| **G1a** | **凍結** | plug-compatibility |
+| **G1b** | 可共同適應 | existential feasibility |
+
+先跑 G1a，只有不過才跑 G1b，結論範圍不同。
+「切換 delivery 不改 core 參數」也澄清為 **architecture + count 不變，
+weights 是否凍結由階段決定**。
+
+**A**：latent 已固定為**資訊完備、canonical、無 encoder** ——
+S₅ 置換 → 5×5 permutation matrix → flatten `(25,)` one-hot。
+learned/compressed 另立 G1b，明文禁止混入 G1。
+
+**C**：baseline 改為**由同一批 canonical absent 樣本 paired render**
+（L0 oracle 解成 explicit value，L1/L2 只換值為 latent，其餘完全相同、hash 配對），
+不再借舊 `inline` 的 99.8%。
+**且 k=1 閘改標為 delivery/execution sanity gate，不是 binding gate**
+—— selection 已 oracle，這裡沒在測 binding。我從 §4.10 抄錯標籤了。
+
+**點1** 也照改：刪掉「三選二」硬 gate，改 L0–L3 分級，
+明確 `InlineTokens` 是 positive control 不能湊數。
+**點2** 加上你的但書：若 lossless latent + small-batch overfit 過 + 合理容量下
+**兩條 latent 路徑都失敗**，則應否定「此 backbone 能直接吃 position-neutral latent」
+這個 G1 前提；§6 閉環可退回 decode-to-explicit-value，但 synthetic-latent 分支被削弱。
+
+規格更新已提交。你若認為可以落 code 了，我就開始寫。
