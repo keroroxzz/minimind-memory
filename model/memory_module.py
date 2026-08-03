@@ -162,10 +162,19 @@ class SyntheticKVAdapter(nn.Module):
 
     def __init__(self, n_layers: int, n_kv_heads: int, head_dim: int,
                  latent_dim: int = LATENT_DIM, width: int = 256,
-                 num_loops: int = 1, rope_base: float = 1e6, scale: float = 1.0):
+                 num_loops: int = 1, rope_base: float = 1e6,
+                 scale_k=None, scale_v=None):
         super().__init__()
         self.n_layers, self.n_kv_heads, self.head_dim = n_layers, n_kv_heads, head_dim
-        self.num_loops, self.scale = num_loops, scale
+        self.num_loops = num_loops
+        # **逐注入位置**對準 native RMS，不用單一 global scale ——
+        # 實測 V 的各層變異達 31%（0.42 ~ 2.09，差 5 倍），K 只有 3.5%（Codex）。
+        # 形狀 (n_layers,)：同一批 per-layer KV 會重複到每一圈。
+        self.register_buffer("scale_k", torch.as_tensor(
+            scale_k if scale_k is not None else [1.0] * n_layers, dtype=torch.float32))
+        self.register_buffer("scale_v", torch.as_tensor(
+            scale_v if scale_v is not None else [1.0] * n_layers, dtype=torch.float32))
+        self.last_rms = None          # forward 時實測，不假設初始化後尺度不變
         out = n_layers * 2 * n_kv_heads * head_dim
         self.net = nn.Sequential(
             nn.Linear(latent_dim, width), nn.GELU(), nn.Linear(width, out),
@@ -192,13 +201,23 @@ class SyntheticKVAdapter(nn.Module):
     def forward(self, latents, freqs=None):          # (B, k, 25)
         B, k, _ = latents.shape
         o = self.net(latents).view(B, k, self.n_layers, 2, self.n_kv_heads, self.head_dim)
-        o = o * self.scale
+        sk = self.scale_k.view(1, 1, -1, 1, 1).to(o.dtype)
+        sv = self.scale_v.view(1, 1, -1, 1, 1).to(o.dtype)
+        o = torch.cat([o[:, :, :, :1] * sk.unsqueeze(3), o[:, :, :, 1:] * sv.unsqueeze(3)], dim=3)
         if freqs is None:
             cos, sin = self._fallback_freqs(k, latents.device)
         else:
             cos, sin = freqs[0][:k].to(latents.dtype), freqs[1][:k].to(latents.dtype)
         per_layer = [(self._rope(o[:, :, l, 0], cos, sin), o[:, :, l, 1])
                      for l in range(self.n_layers)]
+        # forward 時實測輸出 RMS，供對照 native calibration。
+        # 只在初始化時對一次尺度、之後假設它保留，是站不住的（Codex）。
+        with torch.no_grad():
+            self.last_rms = {
+                "K": torch.stack([kk.float().pow(2).mean().sqrt() for kk, _ in per_layer]),
+                "V": torch.stack([vv.float().pow(2).mean().sqrt() for _, vv in per_layer]),
+                "finite": bool(all(torch.isfinite(t).all() for kv in per_layer for t in kv)),
+            }
         # cache 條目數是 layers × num_loops（model 以 past_kv_idx 跨 loop 遞增索引）。
         # 只給 n_layers 個在 num_loops>1 時會越界 —— shape-only 測試看不出來。
         # G1 的選擇：同一批 per-layer KV **重複到每一圈**。

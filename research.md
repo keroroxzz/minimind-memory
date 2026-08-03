@@ -1420,6 +1420,26 @@ filler 的輔助目標是 5 個數字（回抄狀態），乍看有同樣的捷�
 
 ---
 
+## 4.22 撤回：C 層模組的前 40 項 invariants 是在**未開迴圈**下跑的
+
+`test/test_memory_module.py` 的 `ARCH` 只寫了 `num_loops=2`，
+**沒有開 `use_looped_transformer`** —— 而 model 內部是
+`if not looped: num_loops = 1`。後果：
+
+- 「num_loops=2 產生 16 個 cache 條目、完整 forward 通過」**空過** ——
+  模型只用前 8 個，多的 8 個被**靜默忽略**
+- 因此 blocker A（cache 條目數是 layers × num_loops）的修正**從未被驗證**
+- 第一版 native K/V RMS 也是在 loop1 下量的
+
+**前 40 項的 looped 相關證據撤回**，由「顯式開啟 `use_looped_transformer`
++ assert 模型**回傳** layers×loops 條」的 46 項重驗取代。
+**兩次測試不可累加成獨立支持**（Codex）。
+
+與 CLAUDE.md 記過的 `use_engram` 預設陷阱同一形狀：**顯式釘住每一個 flag**。
+測試 helper 現在固定 assert config 狀態，且禁止任何多餘的 carrier/cache 被靜默忽略。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

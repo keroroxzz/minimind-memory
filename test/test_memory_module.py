@@ -171,7 +171,9 @@ def test_synthetic_kv_full_forward():
     torch.manual_seed(0)
     for n_loops in (1, 2):
         cfg = dict(ARCH); cfg["num_loops"] = n_loops
-        assert cfg["use_looped_transformer"], "迴圈沒開的話這條測試會空過"
+        # 固定 assert config 狀態 —— 只寫 num_loops 而沒開 use_looped_transformer 時，
+        # model 會強制 num_loops=1，於是整條測試空過（實際發生過）。
+        assert cfg["use_looped_transformer"] and cfg["num_loops"] == n_loops
         m = MiniMindForCausalLM(MiniMindConfig(**BACKBONE, **cfg)).eval()
         ad = SyntheticKVAdapter(8, 2, 64, num_loops=n_loops)
         lat = torch.stack([perm_to_latent([1, 0, 2, 3, 4])]).unsqueeze(0).expand(2, -1, -1)
@@ -213,6 +215,23 @@ def test_rope_matches_core_exactly():
     fb_cos, fb_sin = ad._fallback_freqs(3, k.device)
     check("fallback 與 core 預設 freqs 數值一致（rope_base 相同時）",
           torch.allclose(fb_cos, cos, atol=1e-5))
+
+
+def test_per_position_scale_and_runtime_rms():
+    print("\nSyntheticKV 的 scale 必須逐注入位置，且 forward 時實測 RMS")
+    tgt_k = [1.4] * 8
+    tgt_v = [1.71, 0.42, 1.03, 1.47, 1.49, 2.03, 2.09, 2.01]     # 實測 native V，差 5 倍
+    ad = SyntheticKVAdapter(8, 2, 64, num_loops=1, scale_k=tgt_k, scale_v=tgt_v)
+    lat = perm_to_latent([1, 0, 2, 3, 4]).view(1, 1, -1).expand(4, 3, -1)
+    out = ad(lat)
+    check("scale_k/scale_v 是逐層 buffer（非單一純量）",
+          ad.scale_v.shape == (8,) and float(ad.scale_v.max() / ad.scale_v.min()) > 4)
+    check("forward 後有實測 RMS（不是只靠初始化假設）", ad.last_rms is not None)
+    check("實測值為有限", ad.last_rms["finite"])
+    ratio = (ad.last_rms["V"] / torch.tensor(tgt_v))
+    check(f"V 的 RMS 隨目標逐層變動（比值 std {ratio.std():.3f} 應遠小於目標本身的變異）",
+          float(ratio.std() / ratio.mean()) < 0.5,
+          f"ratio={[round(float(x),2) for x in ratio]}")
 
 
 def test_synthetic_kv_backward():
@@ -308,6 +327,7 @@ if __name__ == "__main__":
     test_kv_merge_length_guard()
     test_rope_matches_core_exactly()
     test_synthetic_kv_full_forward()
+    test_per_position_scale_and_runtime_rms()
     test_synthetic_kv_backward()
     test_gradient_boundaries()
     print("\n" + "=" * 60)

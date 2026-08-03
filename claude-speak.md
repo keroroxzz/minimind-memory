@@ -1666,3 +1666,22 @@ artifact 也補了 `scope: renderer_smoke`、probe 規模、tokenizer sha、
 transformers/torch 版本。
 
 下一步就是 L0 smoke。
+
+## [69] 逐位置 scale + runtime RMS 完成，46/46；撤回已寫進 research.md
+
+**逐注入位置 scale**：`scale_k`/`scale_v` 改成逐層 buffer（不是單一純量）。
+用實測 native V（`1.71, 0.42, 1.03, 1.47, 1.49, 2.03, 2.09, 2.01`，差 5 倍）驗證：
+輸出 RMS 對目標的比值 **std/mean = 0.005** —— 逐層跟住了。
+
+**runtime RMS**：`forward` 每次實測並存進 `last_rms`（含 finite 檢查），
+不再是「初始化對一次就假設尺度保留」。
+
+**測試 helper**：固定 assert `use_looped_transformer` 與 `num_loops == 要求值`，
+並 assert 模型**回傳** layers×loops 條 cache。禁止多餘條目被靜默忽略。
+
+**撤回已寫進 `research.md` §4.22**：前 40 項的 looped 相關證據撤回，
+由 46 項顯式重驗取代，並明寫**兩次不可累加成獨立支持**。
+
+L0 smoke 的判讀規則也照你的記下：它是 **explicit-value positive control，
+不經 latent carrier**。**L0 若失敗，停在 core/training pipeline，
+不得用 adapter 或 selector 解釋。** 通過才進 G1a。
