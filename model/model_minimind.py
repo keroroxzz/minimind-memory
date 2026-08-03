@@ -421,7 +421,7 @@ class Attention(nn.Module):
         self.dropout = config.dropout
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and config.flash_attn
 
-    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None):
+    def forward(self, x, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, kv_override=None):
         bsz, seq_len, _ = x.shape
         q_cos, q_sin, k_cos, k_sin = position_embeddings
 
@@ -485,7 +485,17 @@ class Attention(nn.Module):
             xv = xv.view(bsz, c.shape[1], self.n_local_kv_heads, self.head_dim)
             xq, xk = self.q_norm(xq), self.k_norm(xk)
             xq, xk = apply_rotary_pos_emb(xq, xk, q_cos, q_sin, k_cos, k_sin)
-            
+
+            # --- C 層：in-place KV replacement（design_c_layer.md）---
+            # 把**既有位置**的 K/V 換成外部提供的，位置/mask/token 骨架完全不變。
+            # 與 prefix 注入的差別：不新增位置，只覆蓋該位置算出來的 K/V。
+            # kv_override 為 None 時完全不進這條路徑（bit-compat）。
+            if kv_override is not None:
+                pos, ok, ov = kv_override            # pos:(P,)  ok/ov:(B,P,n_kv,hd)
+                xk = xk.clone(); xv = xv.clone()
+                xk[:, pos] = ok.to(xk.dtype)
+                xv[:, pos] = ov.to(xv.dtype)
+
             if past_key_value is not None:
                 xk = torch.cat([past_key_value[0], xk], dim=1)
                 xv = torch.cat([past_key_value[1], xv], dim=1)
@@ -672,12 +682,13 @@ class MiniMindBlock(nn.Module):
         key = str(loop_idx)
         return mod[key] if key in mod else None
 
-    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, loop_idx=0):
+    def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None, global_kv_pool=None, mems=None, loop_idx=0, kv_override=None):
         residual = hidden_states
         attn_input = self.input_layernorm(hidden_states)
         hidden_states_attn, updated_kv = self.self_attn(
             attn_input, position_embeddings,
-            past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems
+            past_key_value, use_cache, attention_mask, global_kv_pool, mems=mems,
+            kv_override=kv_override
         )
         adapter = self._adapter('attn', loop_idx)
         if adapter is not None:
@@ -868,6 +879,10 @@ class MiniMindModel(nn.Module):
             global_kv_pool = {'k': [], 'v': []} if self.config.use_dense_attention else None
             for i, layer in enumerate(self.layers):
                 past_key_value = past_key_values[past_kv_idx] if past_key_values is not None else None
+                # kv_override 依 (loop, layer) 索引 —— L0 core 每圈每層都會重算這些位置，
+                # 只換 loop0 會讓 loop1 又由 placeholder hidden 重算，混入新變因（Codex）。
+                _kvo = kwargs.get('kv_override')
+                _kvo = _kvo[past_kv_idx] if _kvo is not None else None
 
                 # Stage 2: Fusion Engram Knowledge into corresponding blocks
                 if self.use_engram and i in self.engram_layers and loop_idx == 0:
@@ -884,7 +899,8 @@ class MiniMindModel(nn.Module):
                     attention_mask=attention_mask,
                     global_kv_pool=global_kv_pool,
                     mems=layer_mems,
-                    loop_idx=loop_idx
+                    loop_idx=loop_idx,
+                    kv_override=_kvo
                 )
                 presents.append(present)
                 if isinstance(layer.mlp, MOEFeedForward):
