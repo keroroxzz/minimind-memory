@@ -1,0 +1,63 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 196,
+        "total": 200,
+        "acc": 0.98,
+        "pos_acc": 0.9929999999999999,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 167,
+        "total": 200,
+        "acc": 0.835,
+        "pos_acc": 0.9299999999999996,
+        "wellformed": 1.0
+      },
+      "_abstain": {
+        "n_answerable": 691,
+        "n_missing": 109,
+        "A_ans": 0.9464544138929089,
+        "false_abstain": 0.0,
+        "R_abstain": 1.0,
+        "hallucination": 0.0
+      }
+    },
+    "overall": 0.95375,
+    "train_dist": {
+      "task": "absent",
+      "max_k": 4,
+      "steps": 12000,
+      "n_gen": 2,
+      "ops": "+-",
+      "seed": 7,
+      "seq_len": 160,
+      "max_len": 43,
+      "latent_checksum": "682de62b2e3bbbfe",
+      "p_missing": 0.15,
+      "abstain_form": "short",
+      "carrier": null,
+      "distractors": 0,
+      "train_per_k": null
+    },
+    "params_M": 29.500928,
+    "wall_clock_s": 3378.618088722229,
+    "steps": 12000,
+    "peak_vram_GiB": 6.8748860359191895
+  }
+}

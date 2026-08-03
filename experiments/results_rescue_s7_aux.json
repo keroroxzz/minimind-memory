@@ -1,0 +1,203 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "2": {
+        "correct": 200,
+        "total": 200,
+        "acc": 1.0,
+        "pos_acc": 1.0,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 199,
+        "total": 200,
+        "acc": 0.995,
+        "pos_acc": 0.998,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 198,
+        "total": 200,
+        "acc": 0.99,
+        "pos_acc": 0.996,
+        "wellformed": 1.0
+      },
+      "5": {
+        "correct": 193,
+        "total": 200,
+        "acc": 0.965,
+        "pos_acc": 0.9859999999999998,
+        "wellformed": 1.0
+      },
+      "6": {
+        "correct": 182,
+        "total": 200,
+        "acc": 0.91,
+        "pos_acc": 0.9619999999999997,
+        "wellformed": 1.0
+      },
+      "7": {
+        "correct": 189,
+        "total": 200,
+        "acc": 0.945,
+        "pos_acc": 0.9779999999999999,
+        "wellformed": 1.0
+      },
+      "8": {
+        "correct": 183,
+        "total": 200,
+        "acc": 0.915,
+        "pos_acc": 0.9619999999999999,
+        "wellformed": 1.0
+      },
+      "9": {
+        "correct": 174,
+        "total": 200,
+        "acc": 0.87,
+        "pos_acc": 0.9449999999999996,
+        "wellformed": 1.0
+      },
+      "10": {
+        "correct": 166,
+        "total": 200,
+        "acc": 0.83,
+        "pos_acc": 0.9279999999999995,
+        "wellformed": 1.0
+      },
+      "11": {
+        "correct": 178,
+        "total": 200,
+        "acc": 0.89,
+        "pos_acc": 0.9519999999999997,
+        "wellformed": 1.0
+      },
+      "12": {
+        "correct": 167,
+        "total": 200,
+        "acc": 0.835,
+        "pos_acc": 0.9269999999999996,
+        "wellformed": 1.0
+      },
+      "13": {
+        "correct": 172,
+        "total": 200,
+        "acc": 0.86,
+        "pos_acc": 0.9369999999999997,
+        "wellformed": 1.0
+      },
+      "14": {
+        "correct": 166,
+        "total": 200,
+        "acc": 0.83,
+        "pos_acc": 0.9199999999999996,
+        "wellformed": 1.0
+      },
+      "15": {
+        "correct": 154,
+        "total": 200,
+        "acc": 0.77,
+        "pos_acc": 0.8839999999999995,
+        "wellformed": 1.0
+      },
+      "16": {
+        "correct": 169,
+        "total": 200,
+        "acc": 0.845,
+        "pos_acc": 0.9259999999999998,
+        "wellformed": 1.0
+      },
+      "17": {
+        "correct": 161,
+        "total": 200,
+        "acc": 0.805,
+        "pos_acc": 0.9019999999999995,
+        "wellformed": 1.0
+      },
+      "18": {
+        "correct": 166,
+        "total": 200,
+        "acc": 0.83,
+        "pos_acc": 0.9169999999999996,
+        "wellformed": 1.0
+      },
+      "19": {
+        "correct": 158,
+        "total": 200,
+        "acc": 0.79,
+        "pos_acc": 0.8989999999999995,
+        "wellformed": 1.0
+      },
+      "20": {
+        "correct": 167,
+        "total": 200,
+        "acc": 0.835,
+        "pos_acc": 0.9239999999999996,
+        "wellformed": 1.0
+      },
+      "21": {
+        "correct": 165,
+        "total": 200,
+        "acc": 0.825,
+        "pos_acc": 0.9119999999999999,
+        "wellformed": 1.0
+      },
+      "22": {
+        "correct": 151,
+        "total": 200,
+        "acc": 0.755,
+        "pos_acc": 0.8719999999999994,
+        "wellformed": 1.0
+      },
+      "23": {
+        "correct": 138,
+        "total": 200,
+        "acc": 0.69,
+        "pos_acc": 0.8439999999999998,
+        "wellformed": 1.0
+      },
+      "24": {
+        "correct": 148,
+        "total": 200,
+        "acc": 0.74,
+        "pos_acc": 0.846,
+        "wellformed": 1.0
+      },
+      "_abstain": {
+        "n_answerable": 4800,
+        "n_missing": 0,
+        "A_ans": 0.8633333333333333,
+        "false_abstain": 0.0,
+        "R_abstain": 0.0,
+        "hallucination": 0.0
+      }
+    },
+    "overall": 0.8633333333333333,
+    "train_dist": {
+      "task": "absent",
+      "max_k": 24,
+      "steps": 12000,
+      "n_gen": 2,
+      "ops": "+-",
+      "seed": 7,
+      "seq_len": 160,
+      "max_len": 83,
+      "latent_checksum": "f0ec82eddd460e73",
+      "p_missing": 0.0,
+      "abstain_form": "short",
+      "carrier": null,
+      "distractors": 0,
+      "train_per_k": null
+    },
+    "params_M": 29.500928,
+    "wall_clock_s": 3954.7393169403076,
+    "steps": 12000,
+    "peak_vram_GiB": 6.8748860359191895
+  }
+}

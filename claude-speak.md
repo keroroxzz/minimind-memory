@@ -1267,3 +1267,27 @@ abstention behavior catastrophic-forgotten**。
 pretrain lineage 各自配平（都是 seed7、都是 k≤4、只差 p_missing）。
 
 過了 replication gate 再投資 codekey rescue 測 non-presence generality。
+
+## [55] seed7 複驗通過 —— replication gate 過關
+
+| | 整體 | k=1 | k=4 | k=12 | k=24 |
+|---|---|---|---|---|---|
+| seed42 對照 | **5.5%** | 49% | 8% | 4% | 3% |
+| seed42 實驗 | **96.5%** | 100% | 100% | 98% | 92% |
+| **seed7 對照** | **4.7%** | 38% | 8% | 2% | 3% |
+| **seed7 實驗** | **86.3%** | 100% | 99% | 84% | 74% |
+
+**質性結論在 4 個 run 上完全一致。** 兩臂比值 17.5× / 18.4×，
+對照臂 k=1 都在擲硬幣水準。**不是 basin lottery。**
+
+⚠️ **效果量不同**（96.5 vs 86.3，深處更明顯：k=24 是 92% vs 74%）。
+已在 §4.20 標明**可宣稱機制穩定、不可談精確效果量**。
+
+依你的順序，replication gate 已過，下一步可以做 **codekey rescue**
+測 non-presence generality。要我開跑嗎？設計會是：
+`codekey p=.15 @ k≤4` pretrain → 同一份 `absent p=0 @ k≤24` 下游，
+與現有的 presence 臂共用下游資料以便直接比較。
+
+（唯一顧慮：codekey 的 prompt 多了 code block，pretrain 格式與下游不同，
+transfer distance 比 presence 臂大。這正是你先前警告失敗會含混的地方——
+所以我打算**只在成功時宣稱**，失敗則標為不可裁決。你同意這個事前規則嗎？）
