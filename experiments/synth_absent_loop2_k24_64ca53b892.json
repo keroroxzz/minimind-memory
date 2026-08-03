@@ -1,0 +1,37 @@
+{
+  "task": "absent",
+  "variant": "loop2",
+  "max_k": 24,
+  "seed": 42,
+  "steps": 12000,
+  "n_gen": 2,
+  "ops": "+-",
+  "p_missing": 0.0,
+  "abstain_form": "short",
+  "carrier": "pointer",
+  "distractors": 0,
+  "seq_len": 160,
+  "lr": 0.0003,
+  "batch": 64,
+  "accum": 1,
+  "init_from": "synth_codekey_loop2.pth",
+  "from_pretrain": 0,
+  "latent_checksum": "7f81e60eca1e6b53",
+  "backbone": {
+    "hidden_size": 512,
+    "num_hidden_layers": 8,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "vocab_size": 6400,
+    "max_position_embeddings": 1024
+  },
+  "arch": {
+    "use_engram": false,
+    "use_dense_attention": false,
+    "num_loops": 2,
+    "use_looped_transformer": true,
+    "loop_adapter": "shared",
+    "loop_input_injection": true,
+    "loop_index_embed": true
+  }
+}

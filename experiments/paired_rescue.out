@@ -1,0 +1,11 @@
+官方 val 列 n=1440  checksum 0b8875cbd2931b57
+  ctrl       overall   5.3%   k=1  50.0%   sha 4d7b4bcd1131
+  presence   overall  97.3%   k=1 100.0%   sha 13197057ae30
+  codekey    overall  90.6%   k=1 100.0%   sha 878fca39ebec
+
+配對比較：
+  codekey − control: +85.3pp  discordant 1231/2  McNemar p=0.00e+00  95% CI [+83.5, +87.2]pp
+  presence − control: +92.0pp  discordant 1329/4  McNemar p=0.00e+00  95% CI [+90.6, +93.4]pp
+  codekey − presence: -6.7pp  discordant 31/127  McNemar p=5.38e-15  95% CI [-8.3, -5.1]pp
+
+presence-normalized rescue fraction  R = 0.928

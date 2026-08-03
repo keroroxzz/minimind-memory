@@ -742,7 +742,46 @@ k=24 加長到 177 > 原本的 `SEQ_LEN=160`，而 `encode()` 會**靜默丟棄*
 
 ---
 
-## 4.21 預先登記：codekey rescue（測 non-presence generality）
+## 4.21 codekey rescue：primary 通過 —— 結論可推廣到 matching-relevant acquisition
+
+三臂共用**同一批下游樣本**（latent checksum `7f81e60eca1e6b53`，非僅同分布），
+配對評測於同一批官方 val 列（n=1440、checksum `0b8875cbd2931b57`）：
+
+| 臂 | overall | k=1 | checkpoint sha |
+|---|---|---|---|
+| control（answer-only）| 5.3% | 50.0% | `4d7b4bcd1131` |
+| presence（`absent p=.15`）| **97.3%** | 100% | `13197057ae30` |
+| **codekey（`codekey p=.15`）** | **90.6%** | **100%** | `878fca39ebec` |
+
+### primary（§4.21 預先登記）：通過
+
+| 條件 | 結果 |
+|---|---|
+| 配對 95% CI 差值 > 0 | **[+83.5, +87.2] pp** ✅ |
+| k=1 ≥ 95%（binding gate）| **100%** ✅ |
+
+McNemar 精確檢定 p ≈ 0，discordant 1231 / 2。
+
+**presence-normalized rescue fraction `R = 0.928` → 強 transfer**（門檻 ≥0.8）。
+
+> **可宣稱：至少一個非 `?`／非短標籤的 matching auxiliary 能跨格式 transfer。**
+> 結論因此從 presence/absence family **推廣到 matching-relevant acquisition** ——
+> 起作用的不是「偵測缺席」這個特定語意，而是**輔助任務需要 key 比對**這件事。
+
+### secondary：codekey 顯著低於 presence，且集中在深處
+
+`codekey − presence = −6.7pp`（p=5.4e-15、CI [−8.3, −5.1]、discordant 31/127）。
+逐 k 看差距集中在深端：
+
+| k | 1–4 | 22 | 23 | 24 |
+|---|---|---|---|---|
+| codekey | 100% | 78.0% | 69.5% | **57.5%** |
+| presence | 100% | — | — | **92%** |
+
+⚠️ 依預先登記，**「追平 96.5%」不是成功條件**，所以這不影響 primary 裁決。
+但差距是顯著的、且與深度相關，值得記為**開放問題**：
+codekey 的 pretrain 格式與下游差距較大（多一個 code block），
+**無法分離「輔助任務較弱」與「transfer distance 較遠」**。
 
 **設計**：`codekey p=.15 @ k≤4` pretrain → **與 §4.20 seed42 兩臂完全相同的下游**
 （`absent p=0 @ k≤24`，資料決定性重生、逐字相同）。三臂可直接比較。
