@@ -1544,3 +1544,35 @@ answer  0 1 4 2 3
 剩下的關卡：**config-off 舊 ckpt bit-compat**（需接線後）與
 **L0 native K/V RMS 量測寫入 artifact**（設定 SyntheticKV 的 `scale`）。
 接下來做接線 + 這兩項。
+
+## [65] L0 的致命偏差已修 —— 你說得對，那根本是 pointer 任務
+
+先前的 `render_L0` 是 `f3=… f0=… | x=S f3 求x=` —— core 仍要把 f-key 比對到
+定義區。**那是已知的 binding 瓶頸，拿它當 positive control 等於把 pointer
+carrier 與 matching 混進 G1。** 而 latent render 也留著 f-key，同樣的錯。
+
+修正後：
+
+```
+L0      | x=4 1 2 0 3 | 3 1 0 2 4 求x=
+latent  | x=4 1 2 0 3 | . . . . . 求x=
+answer  0 1 4 2 3
+```
+
+**每一步就是已選的 explicit value，沒有 definition block、沒有 f-key。**
+latent 條件把每個 value group 換成中性 placeholder，**長度/邊界/步數位置完全一致**
+（實測 token 數逐題相同），只有「該位置有沒有值」在變。
+
+關卡 2 也照你說的改成**從 prompt 內實際出現的 value groups 獨立 parse+replay**，
+不再用 `s.defs/s.chain` 重算（那只是在驗證我自己的內部一致性）。
+另加「L0 不得含任何 f-key」的斷言。
+
+**關卡 4 新增**：train/val canonical-ID 不相交（實測交集 0），並報各 split checksum
+（train `16c6a0b2ca658e7a` / val `16c3758827b03464`）。
+
+順帶一個我自己的 regex bug：parse 用 `(?<![\d ])` 會**排除前面是空格的群組**，
+而新格式的 value 前面正是 `| ` —— 200 題全部誤判。改用切分不用 regex。
+（同一支檢查在半小時內錯了兩次，兩次都是 false positive；
+若方向相反就會是漏判真洩漏。）
+
+四關全過。下一步：接線 + config-off 舊 ckpt bit-compat + L0 native K/V RMS。
