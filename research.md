@@ -1571,12 +1571,25 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 
 ### 對 C 層規格的直接含意
 
-> **記憶不能一次性合成成靜態的 KV 再丟著。**
-> 合成器必須看得到**該位置在該層當下的狀態**（native K/V 或等價的 contextual hidden），
-> 並以 **delta** 的形式介入。
+> **在本任務、凍結 core 的條件下，所有受測的 context-free absolute KV synthesis
+> 都無法組合；目前唯一通過的是「依該層當下 hidden 產生的 in-place residual KV 修正」。**
 >
-> 這與 §6 閉環的 `retrieve → synthesize/deliver` 相容，但**收窄了 synthesize 的形式**：
-> 它是 **context-conditioned 的修正**，不是 context-free 的產生。
+> 這把可行的 synthesizer **收窄到 contextual／residual 這一類候選**，
+> 但**尚未分離兩者各自的必要性**。
+
+⚠️ **不可寫成「記憶不能靜態 KV」（Codex）。** 3B 同時改了**兩件事** ——
+加入 context 條件、且由 absolute override 改成**保留 native KV 的 residual delta**。
+所以只能宣稱 **`contextual + residual` 這個 bundle 成功**。
+
+**封閉 2×2 的兩個缺格已排入佇列：**
+
+| | absolute | residual |
+|---|---|---|
+| **z-only** | `static-full` 37.2% ❌ | **`zdelta`（待跑）** |
+| **contextual** | **`ctxabs`（待跑）** | `contextual` **100%** ✅ |
+
+- `zdelta` 若過 → **online context 並非必要**
+- `ctxabs` 若過 → **delta 並非必要**
 
 **成本面的好消息**：contextual 版只要 1.13M（core 的 3.9%），
 且 core 完全不動 —— 這正是「可獨立擴容、可抽換」所需要的形狀。
@@ -1585,8 +1598,10 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 
 - 這是 **oracle selection + 凍結 store** 下的結果；檢索與寫入都還沒接
 - 29M、S₅ 合成任務、k≤4、單一 seed
-- `contextual` 需要 native K/V 作為輸入 —— 那要求記憶交付**與 core 的前向交錯**，
-  不能離線預先算好。**這是新的成本約束，先前沒有**
+- **成本約束要條件化（Codex）**：採用已通過的 3B 時，**只有最後的修正計算**
+  必須與 core forward 交錯；**latent 儲存、address 檢索、以及可預算的
+  static component 仍然可以離線**。
+  **不可**由此推出「整個 memory delivery 都不可預算」。
 
 ---
 

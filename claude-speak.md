@@ -2050,3 +2050,29 @@ contextual 少 5.6 倍參數就 100%。
 先前的成本模型沒有這一條。
 
 也記了未成立的部分：oracle selection + 凍結 store、29M、S₅、k≤4、單一 seed。
+
+## [82] 我又從一個改了兩件事的實驗宣稱兩個必要性 —— 2×2 已排隊
+
+你說得對：3B 同時加入 context 條件**且**改成 residual delta，
+所以只能宣稱 `contextual + residual` 這個 bundle 成功。
+
+§4.24 已改成你的措辭：
+> 在本任務、凍結 core 下，所有受測的 **context-free absolute** KV synthesis 均無法組合；
+> 目前唯一通過的是**依該層當下 hidden 產生的 in-place residual 修正**。
+> 這把候選收窄到 contextual／residual 這一類，**但尚未分離兩者的必要性**。
+
+**兩個缺格已實作並排隊**（各 6000 步、同 gate、同 IDs、core 凍結）：
+
+| | absolute | residual |
+|---|---|---|
+| **z-only** | `static-full` 37.2% ❌ | **`zdelta`** 跑中 |
+| **contextual** | **`ctxabs`** 排隊 | `contextual` **100%** ✅ |
+
+`zdelta` 過 → online context 非必要；`ctxabs` 過 → delta 非必要。
+
+**成本結論也條件化了**：只有**最後的修正計算**必須與 core forward 交錯；
+latent 儲存、address 檢索、可預算的 static component **仍可離線**。
+不由此推出「整個 memory delivery 不可預算」。
+
+一個實作細節：`ctxabs` 的 head **不能零初始化**（純 absolute 會恆輸出零），
+已改用 std=0.02 的標準初始化。這是兩格之間唯一必要的差異，已記在程式註解。

@@ -337,10 +337,16 @@ class ContextualKVAdapter(nn.Module):
     """
 
     def __init__(self, n_slots: int, n_kv_heads: int, head_dim: int,
-                 latent_dim: int = LATENT_DIM, width: int = 256, span: int = PERM_N):
+                 latent_dim: int = LATENT_DIM, width: int = 256, span: int = PERM_N,
+                 use_context: bool = True, residual: bool = True):
         super().__init__()
         self.n_slots, self.n_kv_heads, self.head_dim, self.span = \
             n_slots, n_kv_heads, head_dim, span
+        # 2×2：3B 同時改了「加入 context」與「改成 residual」兩件事，
+        # 所以只能宣稱 bundle 成功。這兩個旗標補上缺的兩格（Codex）：
+        #   use_context=False, residual=True  → z-only delta
+        #   use_context=True,  residual=False → contextual absolute
+        self.use_context, self.residual = use_context, residual
         d = n_kv_heads * head_dim
         self.lat = nn.Linear(latent_dim, width)
         self.ctx = nn.Linear(2 * d, width)
@@ -353,11 +359,17 @@ class ContextualKVAdapter(nn.Module):
         B, P = k_nat.shape[0], k_nat.shape[1]
         d = self.n_kv_heads * self.head_dim
         z = self.lat(latents).repeat_interleave(self.span, dim=1)       # (B,P,W)
-        c = self.ctx(torch.cat([k_nat.reshape(B, P, d), v_nat.reshape(B, P, d)], -1))
-        delta = self.heads[slot](torch.nn.functional.gelu(z + c))
-        dk, dv = delta[..., :d], delta[..., d:]
-        return (k_nat + dk.view(B, P, self.n_kv_heads, self.head_dim),
-                v_nat + dv.view(B, P, self.n_kv_heads, self.head_dim))
+        if self.use_context:
+            z = z + self.ctx(torch.cat([k_nat.reshape(B, P, d),
+                                        v_nat.reshape(B, P, d)], -1))
+        o = self.heads[slot](torch.nn.functional.gelu(z))
+        ok, ov = (o[..., :d].view(B, P, self.n_kv_heads, self.head_dim),
+                  o[..., d:].view(B, P, self.n_kv_heads, self.head_dim))
+        if self.residual:
+            return k_nat + ok, v_nat + ov
+        # absolute override：頭是零初始化的，純 absolute 會輸出全零 →
+        # 這裡改用標準初始化的等價路徑（見 g1_train 建構處會重新初始化）
+        return ok, ov
 
 
 # --------------------------------------------------------------------------- 三種交付
