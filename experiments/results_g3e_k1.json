@@ -1,0 +1,17 @@
+{
+  "k": 1,
+  "pool": 8,
+  "seed": 20260804,
+  "threshold": 3.8257057666778564,
+  "n_missing": 300,
+  "n_answerable": 300,
+  "writer": "g3a_writer_6820855741.pth",
+  "retriever": "g2b_retriever_9506460508.pth",
+  "episode_checksum": "bda3b054da96ab46",
+  "prelocked": "只報 R_abstain/halluc（halluc 給單側 95% CP 上界）與 false_abstain/A_ans（雙側 CI）；不設新 threshold、不選 seed、不重跑",
+  "R_abstain": 292,
+  "halluc": 8,
+  "halluc_ub95": 0.047600074414971445,
+  "A_ans": 300,
+  "false_abstain": 0
+}

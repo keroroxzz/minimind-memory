@@ -154,9 +154,17 @@ frozen, so only the retriever is under test.
 
 | stage | address source | key identities | result |
 |---|---|---|---|
-| G2a | fixed random orthogonal | fixed `f0..f3` | **100%** ordered / per-step / hit-miss |
-| G2b | same, query from frozen core hidden | fixed | **100%** |
+| G2a | fixed random orthogonal | fixed `f0..f3` | **100%** ordered / per-step / hit-miss† |
+| G2b | same, query from frozen core hidden | fixed | **100%**† |
 | G2c | **tied encoder over canonical key spans** | **train/cal/test disjoint** | retrieval **98.1%**, hit/miss **73.3% / 81.5%** |
+
+† **The hit/miss 100% was underpowered.** Those runs saw only ~60 missing cases, and
+`P(0 hallucinations | n=60, p=0.027) ≈ 0.19`. A pre-registered one-shot replication at
+**300 missing + 300 answerable** (`g3e_k1_safety.py`, `research.md` §4.37) measured
+**halluc 8/300 = 2.7%, one-sided 95% CP upper bound 4.76%** — with `A_ans` 100% and
+`false_abstain` 0%. Three independent measurements now agree (2/32, 3/59, 8/300): the
+closed-world support head has a **rare but real** failure mode. Report the answerable path and
+missing safety separately; never merge them into one PASS.
 
 **G2c splits.** Unseen-identity *ranking* transfers (per-step recall 98.1% on both seeds, and
 the encoder pushes input-side max|cos| 0.964 apart to 0.824). A single support **threshold does
