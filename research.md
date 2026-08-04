@@ -2845,6 +2845,67 @@ core 的 `max_position_embeddings` 是 **1024**，所以 414 tokens **在位置�
 
 ---
 
+## 4.43 G5b：**分段有效；記憶交付的斷點是「配置」，不是「記憶」**
+
+把長度 K 的 chain 拆成每段 ≤4，checkpoint 是**一個置換、放進 value slot**
+（`zdelta` 唯一訓練過的角色）。代數：更新是 `st ← st ∘ p`，從 identity 出發跑
+p1..pj 得到合成置換 `P_j`，而 `st0 ∘ P_j = st_j`。
+
+### 四組 primary（n=100）
+
+| K | ① `monolithic` | ② `oracle_ckpt` | ③ `pred_text` | ④ `pred_memory` | mixed 交付次數 |
+|---|---|---|---|---|---|
+| 4 | 100.0% | 100.0% | 100.0% | **100.0%** | **0** |
+| 8 | **0.0%** | 100.0% | 100.0% | **59.0%** | 2 |
+| 12 | **3.0%** | **100.0%** | **100.0%** | **20.0%** | 3 |
+
+- **①vs③：0% → 100%（K=8）、3% → 100%（K=12）。**
+  分段 + 顯式 checkpoint **繞過了此 core 的 monolithic 邊界**，
+  而**每一次呼叫都 k≤4、單次深度完全沒被突破**。
+- **②vs③：100% vs 100%** —— **中間誤差傳播為零**。
+- **③vs④：損失隨 mixed-carrier 交付次數累積**（0 次 → 100%，2 次 → 59%，3 次 → 20%）。
+
+⚠️ **①vs③ 證明的是「分段」有效，不是「記憶」有效** —— ③ 是純文字 carry、
+完全沒用到記憶。**記憶的價值要靠 ④ 追上 ③ 才成立。**
+措辭鎖死：只能說「**多次 core 呼叫 + 顯式 checkpoint 的分段計算繞過了整體鏈長**」，
+**不能**說單次 executor 變深；monolithic 與 segmented **計算量不同**，
+這是 **system capability / compute tradeoff**，不是等算力的模型能力比較。
+
+### 診斷（post-smoke **exploratory**，primary 四組不動）
+
+事前鎖死的判讀分支：⑥ 也低、⑤ 高 → 支持 mixed-carrier 歸因。
+
+| 條件 | checkpoint 值 | 交付配置 | K=8 |
+|---|---|---|---|
+| `pred_memory` | 預測 | **mixed** | **53.3%** |
+| `oracle_mem_mixed` | **真值** | **mixed** | **85.0%** |
+| `pred_mem_allph` | 預測 | **全 placeholder** | **96.7%** |
+| `oracle_mem_allph` | 真值 | 全 placeholder | **100.0%** |
+
+**落在第一個分支 → mixed-carrier 歸因成立。**
+
+- 固定 checkpoint 為**真值**時，光是配置差異就值 **15pp**（85.0 vs 100.0）。
+- 用**預測值**時，配置差異值 **43pp**（53.3 vs 96.7）。
+- **`pred_mem_allph` 96.7% 幾乎追平 `pred_text` 的 100%。**
+
+> **所以：記憶確實能承載 checkpoint —— 只是不能在混合配置下。**
+> 斷點是**交付配置與訓練配置不匹配**，不是「記憶不能承載中間結果」。
+
+這與本專案一路的模式完全同形（§4.30 的 span shift、§4.34 的 3-token stress）：
+**介面在某個配置上訓練，換個配置就不轉移。**
+
+⚠️ ④ 的 latent 是 `perm_to_latent`（**確定性、精確**），roundtrip 由 §4.38 的 guard
+逐條驗過 —— 所以 ④ 與 ③ 的**唯一**差別確實只在交付形式，不混內容或往返誤差。
+
+### 限制
+
+- 沿用同一 S₅ schema 是**合法的 homogeneous closed-type 正控制**，但
+  **結果可能依賴代數閉包與型別同構**；異質中間狀態另立後續泛化題。
+- `pred_mem_allph` 是 **exploratory**，不是 primary；要把它升為結論需要
+  重新預先登記一組以 all-placeholder 為預設配置的 primary。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

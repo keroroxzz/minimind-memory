@@ -67,6 +67,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 IDENT = list(range(PERM_N))
 CONDS = ("monolithic", "oracle_ckpt", "pred_text", "pred_memory")
 
+# ---- post-smoke **exploratory diagnostic**（Codex）：不改動上面四組 primary ----
+#   ⑤ `pred_mem_allph`   該段**所有 slot 都 placeholder、全部走交付**
+#   ⑥ `oracle_mem_mixed` **真值** checkpoint 以 latent 交付 + 3 個明確 p
+#
+# 判讀事前鎖死：
+#   ⑥ 也低、⑤ 高          → 支持 **mixed-carrier** 歸因
+#   ⑥ 高、④ 低            → 斷點在 **checkpoint encoding／往返**
+#   ⑤ 也低                → 假說被推翻或不足，屬更廣的 zdelta checkpoint 不轉移
+# ⑤ 必須對照**同配置**的 oracle ceiling，**不先驗要求它一定 100%**。
+DIAG = ("pred_mem_allph", "oracle_mem_allph", "oracle_mem_mixed")
+
 
 def compose(a, b):
     """`a ∘ b`，與本專案的 `st ← [st[p[i]]]` 更新一致。"""
@@ -135,10 +146,12 @@ def run_segmented(m, tok, dl, writer, ev, chain, st0, mode, key, stats):
         if si == 0:
             slots, lat = list(ps), None
         else:
-            use = true_carry_prev if mode == "oracle_ckpt" else pred_carry
+            use = (true_carry_prev
+                   if mode in ("oracle_ckpt", "oracle_mem_mixed", "oracle_mem_allph")
+                   else pred_carry)
             if use is None:
                 return None
-            if mode == "pred_memory":
+            if mode in ("pred_memory", "oracle_mem_mixed"):
                 # **commit → store → retrieve → 交付**：checkpoint 走完整往返
                 store = LatentStore()
                 store.commit([MemoryEntry(key, perm_to_latent(use).to(DEVICE),
@@ -147,6 +160,22 @@ def run_segmented(m, tok, dl, writer, ev, chain, st0, mode, key, stats):
                 if e is None or e.address != key:      # §4.38 的 guard
                     stats["guard"] += 1; return None
                 slots, lat = [None] + list(ps), e.latent.to(DEVICE).unsqueeze(0)
+            elif mode in ("pred_mem_allph", "oracle_mem_allph"):
+                # ⑤：**整段都走交付** —— checkpoint 與該段的 p 全部 commit 再取回。
+                #    該段的 p 用 **oracle/確定性 latent**（`perm_to_latent`），
+                #    不引入新的 writer 誤差；roundtrip 由 guard 逐條驗。
+                store = LatentStore()
+                items = [use] + list(ps)
+                for j, pp_ in enumerate(items):
+                    store.commit([MemoryEntry(f"{key}#{j}",
+                                              perm_to_latent(pp_).to(DEVICE), {})])
+                lats = []
+                for j in range(len(items)):
+                    e = store.read([f"{key}#{j}"])[0]
+                    if e is None or e.address != f"{key}#{j}":
+                        stats["guard"] += 1; return None
+                    lats.append(e.latent.to(DEVICE))
+                slots, lat = [None] * len(items), torch.stack(lats)
             else:
                 slots, lat = [use] + list(ps), None
         true_carry_prev = true_carry
@@ -162,6 +191,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--Ks", type=int, nargs="+", default=[4, 8, 12])
+    ap.add_argument("--diag", action="store_true",
+                    help="加跑 ⑤/⑥ 的 exploratory diagnostic（不改 primary 四組）")
     ap.add_argument("--seed", type=int, default=90909)
     a = ap.parse_args()
 
@@ -188,7 +219,7 @@ def main():
             gold = st0
             for p in chain:
                 gold = compose(gold, p)
-            for c in CONDS:
+            for c in CONDS + (DIAG if a.diag else ()):
                 st = defaultdict(int)
                 if c == "monolithic":
                     got = call_core(m, tok, st0, chain); st["calls"] = 1
@@ -198,7 +229,7 @@ def main():
                 r = res[c][K]; r[1] += 1; r[0] += int(got == gold)
                 calls[c][K].append(st["calls"])
         print(f"  {'條件':<14s} {'accuracy':>9s} {'core calls':>11s}")
-        for c in CONDS:
+        for c in CONDS + (DIAG if a.diag else ()):
             r = res[c][K]; cl = calls[c][K]
             print(f"  {c:<14s} {r[0]/max(r[1],1):8.1%} {sum(cl)/max(len(cl),1):10.1f}")
         print()
@@ -210,11 +241,13 @@ def main():
           f"\n     這是**系統能力／compute tradeoff**，不是等算力的模型能力比較。"
           f"\n  ⚠️ 沿用同一 S₅ schema 是合法的 homogeneous closed-type 正控制，"
           f"\n     但結果**可能依賴代數閉包與型別同構**；異質中間狀態另立後續泛化題。")
-    json.dump({"cells": {c: {str(K): res[c][K] for K in a.Ks} for c in CONDS},
+    allc = CONDS + (DIAG if a.diag else ())
+    json.dump({"cells": {c: {str(K): res[c][K] for K in a.Ks} for c in allc},
                "calls": {c: {str(K): sum(calls[c][K])/max(len(calls[c][K]),1)
-                             for K in a.Ks} for c in CONDS},
-               "n": a.n, "seed": a.seed},
-              open(os.path.join(HERE, "results_g5b.json"), "w"), indent=2,
+                             for K in a.Ks} for c in allc},
+               "n": a.n, "seed": a.seed, "diag": a.diag},
+              open(os.path.join(HERE, "results_g5b_diag.json" if a.diag
+                                else "results_g5b.json"), "w"), indent=2,
               ensure_ascii=False)
     print(f"  -> results_g5b.json")
 

@@ -1,0 +1,72 @@
+{
+  "cells": {
+    "monolithic": {
+      "8": [
+        0,
+        60
+      ]
+    },
+    "oracle_ckpt": {
+      "8": [
+        60,
+        60
+      ]
+    },
+    "pred_text": {
+      "8": [
+        60,
+        60
+      ]
+    },
+    "pred_memory": {
+      "8": [
+        32,
+        60
+      ]
+    },
+    "pred_mem_allph": {
+      "8": [
+        58,
+        60
+      ]
+    },
+    "oracle_mem_allph": {
+      "8": [
+        60,
+        60
+      ]
+    },
+    "oracle_mem_mixed": {
+      "8": [
+        51,
+        60
+      ]
+    }
+  },
+  "calls": {
+    "monolithic": {
+      "8": 1.0
+    },
+    "oracle_ckpt": {
+      "8": 4.0
+    },
+    "pred_text": {
+      "8": 4.0
+    },
+    "pred_memory": {
+      "8": 3.7666666666666666
+    },
+    "pred_mem_allph": {
+      "8": 4.0
+    },
+    "oracle_mem_allph": {
+      "8": 4.0
+    },
+    "oracle_mem_mixed": {
+      "8": 3.7666666666666666
+    }
+  },
+  "n": 60,
+  "seed": 90909,
+  "diag": true
+}
