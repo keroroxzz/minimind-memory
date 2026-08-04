@@ -17,3 +17,7 @@ experiments/*.pth
 experiments/*_tokens.pt
 experiments/synth_depth.pt
 experiments/reasoning_val_raw.json
+minimind-3/
+scripts/dataset_gemma4_26b_q2/
+scripts/dataset_qwen27/
+scripts/dataset_qwen35_claude_iq3/

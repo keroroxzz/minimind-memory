@@ -1,0 +1,118 @@
+{
+  "stage": "G2c",
+  "keys_train": 28,
+  "keys_test": [
+    "f38",
+    "f39",
+    "f40",
+    "f41",
+    "f42",
+    "f43",
+    "f44",
+    "f45",
+    "f46",
+    "f47"
+  ],
+  "query_source": "key_emb",
+  "steps": 4000,
+  "lr": 0.001,
+  "bs": 64,
+  "seed": 42,
+  "p_missing": 0.15,
+  "pool": 8,
+  "retriever_params": 279270,
+  "threshold": -2.587949752807617,
+  "core_zdelta": "g1_G1a_zdelta_d9a603e4e2.pth",
+  "smoke": false,
+  "train_checksum": "bcb06f916bf20346",
+  "calib_checksum": "856fe333fa240186",
+  "test_checksum": "4983de86d76d21ba",
+  "per_k": {
+    "1": {
+      "n": 100,
+      "step_ok": 98,
+      "steps": 100,
+      "hitacc": 82,
+      "ordered": 98,
+      "e2e": 84,
+      "e2e_n": 84,
+      "miss_items": 16,
+      "miss_abstain": 14
+    },
+    "2": {
+      "n": 100,
+      "step_ok": 189,
+      "steps": 200,
+      "hitacc": 138,
+      "ordered": 94,
+      "e2e": 79,
+      "e2e_n": 79,
+      "miss_items": 21,
+      "miss_abstain": 15
+    },
+    "3": {
+      "n": 100,
+      "step_ok": 297,
+      "steps": 300,
+      "hitacc": 217,
+      "ordered": 98,
+      "e2e": 85,
+      "e2e_n": 87,
+      "miss_items": 13,
+      "miss_abstain": 11
+    },
+    "4": {
+      "n": 100,
+      "step_ok": 397,
+      "steps": 400,
+      "hitacc": 296,
+      "ordered": 98,
+      "e2e": 82,
+      "e2e_n": 85,
+      "miss_items": 15,
+      "miss_abstain": 13
+    }
+  },
+  "r4": {
+    "ans_n": 335,
+    "false_abstain": 126,
+    "A_ans": 330,
+    "miss_n": 65,
+    "R_abstain": 53,
+    "halluc": 12
+  },
+  "impostor_bins": [
+    {
+      "lo": -1.0,
+      "hi": 0.3,
+      "n": 36,
+      "acc": 1.0
+    },
+    {
+      "lo": 0.3,
+      "hi": 0.6,
+      "n": 32,
+      "acc": 1.0
+    },
+    {
+      "lo": 0.6,
+      "hi": 0.8,
+      "n": 651,
+      "acc": 0.9708141321044547
+    },
+    {
+      "lo": 0.8,
+      "hi": 0.9,
+      "n": 281,
+      "acc": 0.11743772241992882
+    },
+    {
+      "lo": 0.9,
+      "hi": 1.01,
+      "n": 0,
+      "acc": null
+    }
+  ],
+  "executor_given_correct": 0.9850746268656716,
+  "egc_n": 335
+}

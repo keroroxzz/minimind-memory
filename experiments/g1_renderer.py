@@ -135,7 +135,7 @@ POOL_SIZE = 8            # 固定 8 條 —— missing 題也補到 8，避免�
 ALL_KEYS = [f"f{i}" for i in range(48)]      # G2c 需要每個 split 各 ≥8 個 key
 
 
-def build_pool(s: CanonicalSample, rng, missing: bool = False, keys=None):
+def build_pool(s: CanonicalSample, rng, missing: bool = False, keys=None, pool_size=None):
     """回傳 (pool_symbols, addr_bank, latents_by_symbol, query_keys, target_idx, hit)。
 
     ⚠️ **render 完全不動**（仍是 5 個 dot）—— key 走 out-of-band metadata（Codex）。
@@ -145,6 +145,7 @@ def build_pool(s: CanonicalSample, rng, missing: bool = False, keys=None):
     ⚠️ **pool 基數恆為 8**：missing 題移除一條 required、補一條額外 distractor，
        否則模型可以用「pool 少了一條」判 missing，而不是真的比對。
     """
+    n_pool = pool_size or POOL_SIZE
     required = list(dict.fromkeys(s.chain))                 # 有序去重
     universe = keys if keys is not None else ALL_KEYS
     others = [k for k in universe if k not in required]
@@ -153,8 +154,10 @@ def build_pool(s: CanonicalSample, rng, missing: bool = False, keys=None):
     if missing and required:
         dropped = required[rng.randrange(len(required))]
         required = [k for k in required if k != dropped]
-    pool = required + others[:POOL_SIZE - len(required)]    # 恆為 8
-    assert len(pool) == POOL_SIZE
+    others = [k for k in others if k != dropped]            # dropped 不得回到 pool
+    pool = required + others[:n_pool - len(required)]       # 基數恆定
+    assert len(pool) == n_pool, \
+        f"key universe 只有 {len(universe)} 個，補不滿 pool={n_pool}（需 ≥ pool+1）"
     rng.shuffle(pool)
 
     lat = {}
@@ -249,6 +252,25 @@ assert not (set(KEYS_TRAIN) & set(KEYS_CAL)) and not (set(KEYS_CAL) & set(KEYS_T
     and not (set(KEYS_TRAIN) & set(KEYS_TEST))
 for _n, _s in (("train", KEYS_TRAIN), ("cal", KEYS_CAL), ("test", KEYS_TEST)):
     assert len(_s) > POOL_SIZE, f"{_n} split 只有 {len(_s)} 個 key，missing 題補不滿 pool"
+
+# pool scaling（8→16→32）用的 **純 distractor 身分**：從不當 query target，
+# 也從不進 train/cal —— scaling 只加 distractor，不改任何 split 的身分。
+# f48..f159 實測 canonical span ≤3 token（在 MAX_SPAN 內）且彼此不重複。
+KEYS_DISTRACTOR = [f"f{i}" for i in range(48, 160)]
+assert not (set(KEYS_DISTRACTOR) & (set(KEYS_TRAIN) | set(KEYS_CAL) | set(KEYS_TEST)))
+
+# ---- G2c-cal-v2 的**全新未查看**身分集合（§4.29 預先登記）
+#
+# 舊 test（f38..f47）已被查看過，不可拿擴大 cal 後再測同一批當 confirmatory。
+# cal2 / test2 各 40 個、由同一 generator 固定 seed IID 抽出、**數量事前定死**，
+# 不因 cosine 分布重生 —— 否則修法會退化成 hard-negative 策展（Codex）。
+_v2 = list(KEYS_DISTRACTOR)
+random.Random(20260804).shuffle(_v2)
+KEYS_CAL2, KEYS_TEST2 = sorted(_v2[:40]), sorted(_v2[40:80])
+assert len(KEYS_CAL2) == len(KEYS_TEST2) == 40
+assert not (set(KEYS_CAL2) & set(KEYS_TEST2))
+assert not ((set(KEYS_CAL2) | set(KEYS_TEST2)) &
+            (set(KEYS_TRAIN) | set(KEYS_CAL) | set(KEYS_TEST)))
 
 
 def build_store(s: CanonicalSample) -> LatentStore:

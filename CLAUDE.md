@@ -231,6 +231,14 @@ Design rules these encode, which matter more than the code:
   correlating it with specific codes. When a task depends on targets being a fixed length, verify
   the *full* target fragment as it actually appears (leading space, boundaries), never the bare
   character. `'? ? ? ? ?'` is 9 tokens for the same reason — the space is its own token.
+- **The same trap breaks *measurement*, not just data design.** Comparing how distinguishable
+  symbols are must use each symbol's span **as it appears in context**: `'f0'→[105,51]` but
+  `' f0'→[341,51]`. Measuring the bare form reported 28 pairs of "identical" hidden states and
+  produced a wrong claim ("the frozen core never saw these symbols so it does not encode them");
+  the corrected span gave 7 pairs, none of them exact — the real issue was conditioning
+  (σ_min/σ_max 1.65e-4), not absence. Any symbol-identity comparison must go through one
+  canonical-span helper shared by every side — `g1_renderer.canonical_key_ids` /
+  `locate_key_span`. Never re-derive the tokenization inline.
 - **Never let a dataset builder skip rows silently.** `synth_depth_task.py` used to
   `continue` past anything longer than `SEQ_LEN`. That does not thin a dataset uniformly — it
   removes the *deepest* samples first, exactly the end of the range a depth experiment measures,

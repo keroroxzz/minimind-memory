@@ -2462,3 +2462,150 @@ miss 的 step 落在 `[-1.00,+0.30)` 箱，代表「查的 key 不在 pool 裡 �
 不是 support head 學到什麼額外判準。這跟你預鎖的措辭一致，但我想寫進 research.md 時
 講得更死一點：G2c 證的是 **address 建構的分離度**，missing calibration 是它的推論，
 不是獨立的第二項能力。你同意這個寫法嗎？
+
+## [94] G2c seed 42：**retrieve 過、abstention 不過**，而且你那句警告正中
+
+seed 43 還在跑，但 seed 42 的結果清楚到值得你先看 —— 這不是 bug，是真失敗，位置很具體。
+
+**untouched test（未見身分，pool=8）：**
+
+| | |
+|---|---|
+| ordered / per-step | **97.0% / 98.1%** ← address 建構過了 |
+| **hit/miss** | **73.3%** ← 崩 |
+| A_ans | 98.5% |
+| **false_abstain** | **37.6%** ← 主要錯誤，不是 halluc |
+| halluc | 18.5% |
+| calibration 上的 hit/miss | **99.3%** |
+
+**分箱直接指出斷點：**
+```
+[-1.00,+0.30)   n= 36  acc 100.0%
+[+0.30,+0.60)   n= 32  acc 100.0%
+[+0.60,+0.80)   n=651  acc  97.1%
+[+0.80,+0.90)   n=281  acc  11.7%   ← 塌在這裡
+```
+
+**幾何解釋（encoder 凍結後量的）：**
+
+| 身分集合 | n | max\|cos\| | 中位數 | **>0.8 的對數** |
+|---|---|---|---|---|
+| TRAIN | 28 | 0.864 | 0.038 | 2 |
+| **CAL** | 10 | 0.783 | 0.362 | **0** |
+| TEST | 10 | 0.824 | 0.454 | **2** |
+
+**calibration split 裡一對 >0.8 的都沒有** —— 而 >0.8 正是 support head 崩掉的區間。
+threshold 是在一個**結構上不含困難情況**的幾何裡校出來的，所以 cal 讀 99.3%
+卻在 test 掉到 73.3%。你 [93] 回覆裡寫的「threshold 跨 split 泛化需要另驗」
+就是這個，而且 cal 讀數**完全掩蓋**了它。
+
+注意：cal 的 key 也是未見的（f28–f37）。所以這**不是 seen vs unseen**，
+是**兩個不同未見身分集合之間的幾何差異** —— 10 個身分只有 45 對，
+有沒有落在 0.8 以上是運氣。
+
+**這與 §4.20 是同一條線**：binding/retrieval 是可轉移的（鷹架撤掉後保留 100%），
+棄答校準不轉移（R_abstain → 0%）。G2c 在未見身分上重現了同一個分裂。
+
+**我想做的（但先問你，因為很容易變成「調到過為止」）：**
+問題是 calibration set 在結構上不覆蓋 test 的困難區間。原則性的修法是
+**讓 cal 的身分數夠多、幾何跨度夠寬**（例如 cal 改用 f48+ 裡的 40 個身分，
+仍與 test 完全不交），而不是把 cal 調大到剛好過。
+
+但我也可以直接把現在這版寫成結果：**G2c 的 address 建構通過、abstention
+calibration 不通過，機制已定位**。這樣更誠實，而且它本身是個乾淨的發現。
+
+你要哪一個？如果選前者，我要怎麼把「不是調到過為止」寫死？
+（我的想法：**先驗地**要求 cal 的 impostor-cosine 分布必須覆蓋 [0, 0.9]
+的每個箱且每箱 n≥30，這個條件只看 cal 自己、不看 test，可以事前檢查。）
+
+## [95] seed 43 複現 + 診斷：我的「覆蓋不足」假設**錯了**，你拒絕用 bins 當閘門是對的
+
+**seed 43 複現**（與 seed 42 同形狀）：
+ordered 96.2% / per-step **98.1%** / hit-miss **81.5%** / R_abstain 71.2% / halluc 28.8% /
+address max|cos| 0.828。兩個 seed：**取回過、棄答不過**。
+
+**診斷（`g2c_diagnose_support.py`，oracle 欄明確標為上界、不作宣稱）：**
+
+| seed | 集合 | 凍結 thr | oracle 上界 | 落差 | >0.8 的 step | 其中 acc |
+|---|---|---|---|---|---|---|
+| 42 | TRAIN | 100.0% | 100.0% | 0.0% | 0 | — |
+| 42 | CAL | 99.6% | 99.6% | 0.0% | **0** | — |
+| 42 | TEST | 73.5% | **96.3%** | **22.8%** | 269 | 9.7% |
+| 43 | CAL | 99.5% | 99.5% | 0.0% | **182** | **100.0%** |
+| 43 | TEST | 84.6% | **98.0%** | **13.4%** | 153 | 9.8% |
+
+**結論 1：score 分得開，是 threshold 不轉移。** oracle 96–98% vs 凍結 73–85%。
+
+**結論 2（推翻我 [94] 的假設）：不是「cal 缺乏困難區間覆蓋」。**
+seed 43 的 cal **有 182 個 >0.8 的 step，而且在凍結 threshold 下 100% 正確**；
+同一個 threshold 在 test 的 153 個困難 step 上只有 9.8%。
+所以 score 的**尺度隨身分集合而移**，不是 cal 沒看過困難情況。
+我 [94] 末尾提的「[0,0.9] 每箱 n≥30」納入 gate **本來就修不好這個**，
+而且如你所說會變成 hard-negative 策展。撤回那個提案。
+
+**照你的裁決執行：**
+1. G2c-v1 定稿為 **identity retrieval pass、open-set abstention calibration fail**，
+   兩 seed 的 73.3% / 81.5% 與 false_abstain 37.6% 原樣寫入，後續不回填。
+2. G2c-cal-v2 用**全新未查看**的 cal2 / test2 身分集合（各 40，同一 generator、
+   固定 seed、IID，事前定數量，不因 cos 分布重生），與 train / 舊 cal / 舊 test 全不交
+   （取自 f48..f159）。先存 identity 與 checksum 再算 threshold。
+3. encoder 與 support features／訓練全凍結，只重估 threshold。
+4. test2 只跑一次，完整報 R_abstain / false_abstain / halluc 與 CI。
+
+**threshold 規則我先寫死，請你確認再跑**（非對稱代價）：
+> 在 cal2 上先求滿足 **halluc ≤ 5%** 的所有 threshold；若集合非空，
+> 在其中**最小化 false_abstain**，同分取中點。若集合為空，判 v2 fail，**不放寬上限**。
+
+halluc 上限選 5% 的理由：這是進 write 前的介面，寫入錯誤資料的代價
+遠高於多問一次。你同意 5%，還是要另一個數？（我不會看到 test2 再改。）
+
+## [96] G2c-cal-v2：**兩個 seed 都 FAIL**，且 utility gate 抓到你設計它要抓的東西
+
+照預先登記跑完，模型全凍結、只重估 threshold。**先宣告後執行**：兩個 seed 的模型都跑、
+**兩個都要過才算 PASS**（事後挑一個 seed 就是選擇性報告）。跑完不再改。
+
+| | seed 42 | seed 43 |
+|---|---|---|
+| cal2 missing n | 122（零錯上界 2.4%）| 126（零錯上界 2.3%）|
+| cal2 選出 threshold | +16.985 | +16.295 |
+| **cal2 上的 false_abstain** | **98.1%** | **97.6%** |
+| test2 R_abstain | 100.0% [96.4, 100] | 97.4% [92.6, 99.1] |
+| test2 halluc 單側 95% 上界 | 2.9% ✅ | **6.6% ❌** |
+| test2 false_abstain | **97.3% ❌** | **98.2% ❌** |
+| test2 hit/miss | 13.4% | 13.5% |
+| 裁決 | **FAIL_utility_gate** | **FAIL_risk_gate** |
+
+**utility gate 完全正確地抓到了退化解。** 關鍵不在 test2 —— 在 **cal2 上**：
+halluc 上界 ≤5% 的約束下，**可達到的最小 false_abstain 已經是 98.1% / 97.6%**。
+也就是說在新身分集合上根本不存在同時低風險又可用的 threshold，present 與 absent 的
+score 幾乎完全重疊。沒有 utility gate 的話這會以「R_abstain 100%、halluc 0%」的
+面貌通過，那是純粹的假象。
+
+依預先登記：**判校準不可轉移，停止。** 不換 threshold、不擴 cal、不開第三版。
+
+**但我查到一個混淆，要寫進解讀（不是要重開）：**
+
+| 身分集合 | n | canonical span 長度分布 |
+|---|---|---|
+| TRAIN | 28 | **{2: 26, 3: 2}** |
+| CAL/TEST (v1) | 10 | {2: 4, 3: 6} / {2: 2, 3: 8} |
+| **CAL2/TEST2** | 40 | **{2: 4, 3: 36} / {2: 3, 3: 37}** |
+
+f48..f159 幾乎全是 3-token span，而 train 幾乎全是 2-token。
+所以 v2 測的**不只是未見身分，是結構不同的身分族群**。
+
+機制對得上：encoder 的 `pos_logit[2]` 只從初始值移動 **0.075 / 0.087**
+（pos 0 移動 0.216 / 0.233）—— 28 個訓練身分裡只有 2 個有第三格，第三格幾乎沒收到梯度。
+而 softmax 正規化使 3-token key 的權重是 **0.14/0.34/0.52**，
+2-token 是 **0.29/0.71** —— 是兩個不同的 pooling regime，score 尺度自然偏移。
+
+**所以 v2 的 FAIL 應該寫成：**
+> 在**跨越 span 結構**的未見身分族群上，凍結的 support score 無法用單一 threshold
+> 同時滿足風險與可用性；threshold 不可轉移。
+
+而**不是**「對任何未見身分都不可轉移」—— 因為 v1 的 test（3-token 佔 8/10）
+per-step recall 仍有 98.1%，ranking 明顯轉移了，只有 score 尺度沒有。
+
+這個寫法你同意嗎？另外我想確認：這條線到此為止（write/consolidation 需要可靠的
+missing 介面，而我們剛判定它不可轉移），還是你認為 ranking 可轉移這件事
+已足以支撐下一階段的某個縮小版目標？

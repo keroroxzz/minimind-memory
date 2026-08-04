@@ -1753,6 +1753,226 @@ query 取 retrieval view 上**每個 key 最後一個 token 的 hidden**。
 
 ---
 
+## 4.28 G2c 方法與**事前解讀**（結果出來前寫下，2026-08-04）
+
+正式兩 seed 的結果尚未回來。以下只寫方法與判讀規則 —— 依 Codex 的要求，
+**在兩 seed 通過前不寫 G2c PASS**，smoke 的 100% 不算結果。
+
+### 換掉了什麼
+
+G2a/G2b 的 address 是**隨機正交向量**，與 key 沒有可泛化的關係，所以
+unseen key 在那個設定下是資訊論上答不出來的問題。G2c 把 address 改成
+
+```
+a = normalize(E(span(" f41")))      # write 側
+q = normalize(E(span(" f41")))      # query 側 —— 同一個 E，同一份 canonical span
+```
+
+`E` 是唯一新增的可學組件（`TiedAddressEncoder`），與 retriever 一起訓、訓完凍結，
+**凍結後才 commit test 的 address**。key 身分三分且完全不交（28 / 10 / 10）。
+
+### 資料閘（`experiments/g2c_identity_gate.py`）—— 訓練前必須過
+
+這道閘擋下了兩個會讓 G2c 因為錯誤理由失敗的問題：
+
+1. **canonical span 必須含前導空白。** tokenizer 是 context-dependent 的
+   （`"f0"→[105,51]` 但 `" f0"→[341,51]`），而 key 在 write／retrieval view 裡
+   一律前面有空白。用不帶空白的形式量測會**虛報碰撞**：一度報 28 對 write-hidden
+   完全重疊，改正後只有 7 對，且 raw max|diff| 是 6e-2~1.5e-1 對 ‖h‖=41.3 ——
+   **不是精確重疊**。canonical span 已升格為 renderer invariant。
+2. **pooling 不可用 mean。** `f34`=[341,54,55] 與 `f43`=[341,55,54] 是 **anagram**，
+   mean pooling 下 |cos|=1.000 —— 身分在池化階段就被抹掉。改成可學的 per-position
+   權重（遞增斜坡初始化），並留下 regression test。
+
+### 撤回：「凍結 core 未見 f-key 所以不編碼身分」
+
+我一度據此主張 tied-encoder-over-core-hidden 的前提不成立。**撤回** ——
+那 28 對是量測錯誤造成的。修正後的正確理由是**條件數**：
+
+| 基底 | 扣平均後 max\|cos\| | rank | σ_min/σ_max |
+|---|---|---|---|
+| write-view hidden | 1.000（241 對 >0.99）| 47/48 | **1.65e-4** |
+| token embedding（位置加權）| **0.959**（0 對）| 32/48 | **1.09e-1** |
+
+hidden 技術上滿秩、身分**確實在**，只是佔範數 0.3%，要靠極微小方向分辨。
+所以 address 改用凍結 token embedding。這只說明「**此凍結 numeric-L0 core 的
+所測 hidden** 的身分方向病態」，**不宣稱** core 永不編碼未見符號。
+
+### 一個 pre-result 的協定修正
+
+`KEYS_CAL`/`KEYS_TEST` 原本各 8 個 = `POOL_SIZE`。但 missing 題要把 dropped key
+排除在 pool 外、又把 pool 補滿 8 條（基數恆定是為了不讓模型用「少一條」判 missing），
+split 恰好 8 時就湊不滿。改成 **28 / 10 / 10** 並加 assert。
+改動發生在**任何 G2c 訓練之前**，不是看到結果才調。
+
+### 預鎖的措辭（Codex 版，逐字）
+
+> G2c 測得兩項**同源**性質：共享 encoder 對未見 identity 的 address 可分離；
+> 由 calibration 固定的單一 support threshold 可在 untouched test 把
+> present self-match 與 absent nearest-impostor 分開。後者依賴前者的
+> score geometry，**不代表獨立語意 support 模組**，但也**不是僅由 pairwise
+> 分離自動保證**。
+
+三條限制一併鎖住：
+
+- 這是**未見 key 身分／序列組合**，**不是未見 token 原子** ——
+  train/cal/test 仍共用 `f` 與數字 subtoken，encoder 學的是 order-aware 的組合規則。
+- **不是 semantic retrieval。** query 與 address 用同一份 canonical identity，
+  自匹配本身容易；新增的證據是**未見身分的共享 address 建構**與
+  **非正交 distractor 下的 missing calibration**。
+- test 只有 10 個 identity、pool=8。安全結論以 untouched test 的
+  `R_abstain` / `false_abstain` / `halluc` 為準，`max|cos|` 與分箱只是幾何證據。
+
+### 判讀規則
+
+- learned encoder 若把未見 key 壓成碰撞 → 算**模型 fail**，**不重抽 key**。
+  身分已凍結在 `experiments/g2c_identity_artifact.pt`（含完整 pairwise 分布、
+  canonical 切法、跨組 max 0.964），不按 margin 門檻篩掉難例。
+- threshold **只由 calibration 決定**，untouched test 上不再調。
+- 通過後才做 pool scaling（8→16→32），且**encoder 與 threshold 全程凍結**、
+  只加 distractor 身分（`KEYS_DISTRACTOR` = f48..f159，從不當 query target）。
+  掉在 ordered/per-step 是分離度不足；掉在 `halluc`/`R_abstain` 是 threshold
+  撐不住更多 near-impostor —— 兩者分開報。
+
+---
+
+## 4.29 G2c-v1 定稿：**identity retrieval 過、open-set abstention calibration 不過**
+
+兩個 seed，untouched test（10 個未見身分、pool=8）。以下數字**不回填、不覆寫** ——
+後續任何修法都另立版本，不得抹掉這裡的失敗。
+
+| | seed 42 | seed 43 |
+|---|---|---|
+| ordered | 97.0% | 96.2% |
+| **per-step recall** | **98.1%** | **98.1%** |
+| **hit/miss** | **73.3%** | **81.5%** |
+| A_ans | 98.5% | 97.7% |
+| **false_abstain** | **37.6%** | — |
+| **halluc** | **18.5%** | **28.8%** |
+| calibration 上的 hit/miss | 99.3% | 99.5% |
+| test address 兩兩 max\|cos\| | 0.824 | 0.828 |
+
+**過的部分：** 共享 encoder 對**未見身分**建構出可分離的 address ——
+輸入端跨組 max\|cos\| 0.964 被推開到 0.824/0.828，per-step recall 98.1%（兩 seed 一致）。
+
+**不過的部分：** 由 calibration 固定的單一 support threshold **不轉移**到另一組未見身分。
+cal 讀 99.3–99.5%，test 掉到 73.3–81.5%。
+
+### 診斷：是 threshold 不轉移，不是 score 不可分
+
+`experiments/g2c_diagnose_support.py`。oracle 欄是在各集合自己上掃出來的
+**上界診斷，不可作為結果宣稱**（本專案已犯過一次 calibration→evaluation 重用，§4.27 修掉）。
+
+| seed | 集合 | 凍結 thr | oracle 上界 | 落差 | >0.8 的 step | 其中 acc |
+|---|---|---|---|---|---|---|
+| 42 | TRAIN | 100.0% | 100.0% | 0.0% | 0 | — |
+| 42 | CAL | 99.6% | 99.6% | 0.0% | **0** | — |
+| 42 | TEST | 73.5% | **96.3%** | **22.8%** | 269 | 9.7% |
+| 43 | CAL | 99.5% | 99.5% | 0.0% | **182** | **100.0%** |
+| 43 | TEST | 84.6% | **98.0%** | **13.4%** | 153 | 9.8% |
+
+score 分得開（oracle 96–98%），落差全在 threshold。
+
+### 撤回一個中途的假設
+
+我一度認為原因是「calibration split 不含困難情況」—— seed 42 的 cal 確實一對 >0.8 都沒有。
+**但 seed 43 推翻了它**：seed 43 的 cal 有 **182 個 >0.8 的 step 且在凍結 threshold 下
+100% 正確**，同一個 threshold 在 test 的 153 個困難 step 上只有 **9.8%**。
+所以 score 的**尺度隨身分集合而移**，不是 cal 沒看過困難情況。
+據此提出的「每個 cosine 箱 n≥30 才納入 cal」也一併撤回 —— 箱界 0.8 是**看見 test 崩點後**
+才形成的，用它挑 cal 會讓修法退化成 hard-negative 策展（Codex）。
+bins 只作診斷，**不決定抽樣或重抽**。
+
+### 與 §4.20 的關係
+
+呈現**一致的分裂形狀**：能力本身可轉移，棄答校準不可轉移。
+但**不宣稱是同一機制已複現** —— 目前的證據是 identity ranking 可轉移，
+而 10-identity 的 calibration 產生的 threshold 不轉移。
+這正好說明 **missing calibration 不是 address 分離度的自動推論**，
+與 §4.28 預鎖措辭的第二句一致。
+
+### 下一步只做一次：G2c-cal-v2（預先登記）
+
+可靠的 missing 是進 write 階段前的必要介面，所以值得再修一次 —— 但只有一次。
+
+- **全新、未查看**的 cal2 / test2 身分集合，各 40 個，同一 generator、固定 seed、IID，
+  數量事前定死，**不因 cos 分布重生**。與 train / 舊 cal / 舊 test 完全不交（取自 f48..f159）。
+- 舊 test 已被看見，**不可**用擴大 cal 後再測同一 test 當 confirmatory。
+- encoder 與 support features／訓練**全凍結**，只重估 threshold。
+- 先存 identity 與 checksum，再算 threshold。test2 **只跑一次**。
+- threshold 規則事前寫死（非對稱代價）：在 cal2 上先取滿足 **halluc ≤ 5%** 的
+  threshold 集合；非空則在其中**最小化 false_abstain**，同分取中點；
+  **空集合則判 v2 fail，不放寬上限**。
+- 若仍敗 → 判**校準不可轉移**，停止調參。
+
+---
+
+## 4.30 G2c-cal-v2 定稿：**兩個 seed 都 FAIL**，校準不可轉移
+
+照 §4.29 的預先登記執行，模型全凍結、只重估 threshold。
+**先宣告後執行**：兩個 seed 的模型都跑、**兩個都要過才算 PASS**
+（事後挑一個 seed 就是選擇性報告）。跑完不再改。
+
+| | seed 42 | seed 43 |
+|---|---|---|
+| cal2 missing n | 122（零錯的 95% 上界 2.4%）| 126（2.3%）|
+| cal2 選出 threshold | +16.985 | +16.295 |
+| **cal2 上可達的最小 false_abstain** | **98.1%** | **97.6%** |
+| test2 R_abstain | 100.0% [96.4, 100] | 97.4% [92.6, 99.1] |
+| test2 halluc 單側 95% 上界 | 2.9% ✅ | **6.6% ❌** |
+| test2 false_abstain | **97.3% ❌** | **98.2% ❌** |
+| test2 hit/miss | 13.4% [11.9, 14.9] | 13.5% [12.1, 15.1] |
+| 裁決 | **FAIL_utility_gate** | **FAIL_risk_gate** |
+
+### utility gate 抓到的是退化解，而且問題在 cal2 就已經存在
+
+關鍵不在 test2 —— 在 **cal2 上**：halluc 單側 95% 上界 ≤5% 的約束下，
+**可達到的最小 false_abstain 已經是 98.1% / 97.6%**。
+新身分集合上根本不存在同時低風險又可用的 threshold；present 與 absent 的 score
+幾乎完全重疊。**沒有 utility gate 的話，這會以「R_abstain 100%、halluc 0%」的面貌
+通過** —— 那是純粹的假象（Codex 事前就是為此加的）。
+
+halluc 用**單側 95% Clopper–Pearson 上界**而非點估計，也是事前定的：
+n 小時「剛好零次幻覺」不代表風險 ≤5%（零錯要壓到 5% 需要 n ≥ 59）。
+
+### 一個混淆，改變解讀但不改變裁決
+
+| 身分集合 | n | canonical span 長度分布 |
+|---|---|---|
+| TRAIN | 28 | **{2: 26, 3: 2}** |
+| CAL / TEST (v1) | 10 | {2: 4, 3: 6} / {2: 2, 3: 8} |
+| **CAL2 / TEST2** | 40 | **{2: 4, 3: 36} / {2: 3, 3: 37}** |
+
+`f48..f159` 幾乎全是 3-token span，而 train 幾乎全是 2-token ——
+v2 測的**不只是未見身分，是結構不同的身分族群**。
+
+機制對得上：encoder 的 `pos_logit[2]` 只從初始值移動 **0.075 / 0.087**
+（pos 0 移動 0.216 / 0.233）—— 28 個訓練身分裡只有 2 個有第三格。
+softmax 正規化又讓 3-token key 的權重是 **0.14 / 0.34 / 0.52**、
+2-token 是 **0.29 / 0.71** —— 兩個不同的 pooling regime，score 尺度自然偏移。
+
+### 因此結論寫成
+
+> 在**跨越 span 結構**的未見身分族群上，凍結的 support score 無法用單一 threshold
+> 同時滿足風險與可用性；**threshold 不可轉移**。
+
+**不寫成**「對任何未見身分都不可轉移」—— v1 的 test（3-token 佔 8/10）
+per-step recall 仍有 98.1%，**ranking 明顯轉移了，只有 score 尺度沒有**。
+
+### 整條 G2c 線的總結
+
+| | 結果 |
+|---|---|
+| 未見身分的 address 建構（可分離） | **過** —— 輸入端 0.964 推開到 0.824/0.828 |
+| 未見身分的 ordered / per-step retrieval | **過** —— 97.0/96.2%、98.1%/98.1% |
+| 未見身分的 open-set abstention calibration | **不過** —— v1 73.3/81.5%，v2 兩道 gate 各倒一道 |
+
+依預先登記：**停止調參**。不換 threshold、不擴 cal、不開第三版。
+這與 §4.20 呈現**一致的分裂形狀**（能力可轉移、棄答校準不可轉移），
+但**不宣稱是同一機制已複現**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
