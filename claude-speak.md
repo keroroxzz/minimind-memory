@@ -3322,3 +3322,59 @@ B 在本專案是**既有的、先前就通過的介面**，不是我看到 A �
 B 失敗即判定不可行」**，不留第三次。
 
 你怎麼看？
+
+## [111] G4b-B = **PASS，但 learned 輸給不需學習的規則**
+
+預先登記在跑之前落 `g4b_B_prereg.json`，含你要的每一條
+（final layer only、canonical key 位置、shared scalar scorer、不重新學 address、
+禁 pooling/多 head/掃 layer、**B 敗即停止、沒有 C**）。
+
+| | A（last-token）| **B（candidate-wise）** |
+|---|---|---|
+| probe train / test | 44.7% / **34.8%**（chance 34.4%）| **100% / 100%** |
+| formal test raw exact | — | **94.5%**（較難 split）|
+
+**所以 recency 資訊確實在各 entity 自己的 hidden 裡，只是不在單一 last-token 摘要裡。**
+
+selective policy（cal 選 threshold、test 只跑一次）：
+
+| test（n=600）| |
+|---|---|
+| coverage / abstain | 84.8% / 15.2% |
+| **guarded wrong-existing** | **8/509 = 1.6%**，單側 95% 上界 **2.82%** ✅ |
+
+**裁決 PASS。** 但我認為最誠實的標題是你事前就預言的那句：
+
+**非學習的 `argmax(last write position)` baseline 是 100.0%，
+而 learned resolver 的 raw exact 只有 94.5% —— learned 版本輸給那條規則。**
+
+而且機制上幾乎可以確定 B 只是在**讀位置**：每個 entity 的 hidden 天然帶著
+序列位置編碼，線性映射學「位置越後分數越高」是平凡的。
+所以宣稱嚴格收在你鎖的範圍：**candidate-wise temporal resolver / controller readout 可行**；
+**不稱** core 自行摘要整段 stream、**不稱**神經 working memory、
+**不稱**任何關於一般時序 binding 的推論（本任務的關係**永遠是「最後寫入」**）。
+A 永久記為 `final-token / final-layer linear readout FAIL`，不被 B 取代。
+
+**依預先登記，G4b 到此結束，沒有 C。**
+
+**我想跟你對一下整體位置，因為我覺得這條線可能到了一個轉折點。**
+
+現在的狀態是：所有「元件層」的問題都有答案了 —— delivery、write formation、
+store 契約、故障、邊界、membership、temporal readout。而且**最乾淨的幾個結果
+都是把責任從 learned 元件搬回契約或 deterministic 規則之後才拿到的**
+（§4.38 的 membership、§4.39 的 address、§4.41 這條 baseline）。
+
+反過來說，**每一次「讓神經網路自己學」的地方，不是輸給規則就是撞牆**：
+- G2c open-set calibration → **FAIL**（兩版，已封）
+- G3a v1 task-loss-only 無約束 writer → **FAIL**（要靠 row-softmax 的結構先驗）
+- G4b-A last-token readout → **FAIL**
+- G4b-B → PASS 但**輸給 100% 的規則**
+
+我不確定這是「任務太簡單所以規則夠用」還是「這個 29M 凍結 core 的表示不夠」。
+但它對 §6 的目標系統有實質含意：如果記憶系統的每一塊最後都由契約與規則實作，
+那「可分離、可抽換的記憶模組」這個論點**成立得比預期更強**（模組真的不需要學），
+但「小模型靠外部記憶越級打怪」那條**還完全沒被測到** ——
+因為我們一直在測記憶，沒測「有了記憶之後推理有沒有變強」。
+
+你怎麼看？下一步是該回去測**能力面**（記憶對下游推理的增益），
+還是先把 G2c 那個 open-set blocker 用新的架構重開？
