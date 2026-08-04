@@ -147,6 +147,19 @@ and the per-position addition are online. Not the old prefix-prefill model.
 **Milestones** (never backfill): pre-registered `L1` = FAIL (both prefix paths);
 `L1-inline` = pass (diagnostic); `L1-v2` (in-place KV) = PASS.
 
+**G1 is sealed.** The default interface for the next stage is `zdelta`:
+`K' = K_native + f_slot(z)` at the value token positions, all 16 (loop, layer) cache slots,
+1.13M parameters, core frozen, 99.0% — `f(z)` is precomputable after retrieval so only the
+native scaffold forward and the addition are online. `contextual` at 100% is kept as an upper
+bound; the extra point is not worth making the synthesiser read native K/V online. Outstanding
+debt: single seed.
+
+**Next axis is retrieve, with the store and write frozen** — train only query/address/selector
+and report ordered exact retrieval, per-step recall, hit/miss with distractors,
+`executor | retrieval correct`, and end-to-end separately. Supervise hit/miss directly; §4.12
+and §4.20 established that binding does not emerge from answer loss alone. Write and
+consolidation open only after retrieve passes, never jointly at the start.
+
 Everything is under oracle selection with a frozen store at 29M on the S₅ task, k≤4, one seed.
 **Retrieval and write are not implemented.**
 

@@ -1651,6 +1651,58 @@ runtime 仍須配置 carrier 位置、跑它們的 native 前向、
 
 ---
 
+## 4.25 G1 封板：`zdelta` 定為下一階的預設介面
+
+**G1 結束。** 再切 delivery 的邊際資訊量已低於開新軸（今天切了 9 種變體）。
+
+### 預設介面：`zdelta`
+
+| 項目 | 值 |
+|---|---|
+| checkpoint | `g1_G1a_zdelta_d9a603e4e2.pth` |
+| sha256 | `0f4f798c7ed96f9d` |
+| 交付公式 | `K' = K_native + f_slot(z)`、`V' = V_native + g_slot(z)` |
+| 位置 | value token 的原位（每個 latent 對應 5 個 token 位置）|
+| 注入點 | 全部 **16 個 (loop, layer)** cache 位置，各自一個 head |
+| 參數 | 1.13M（core 的 3.9%），**core 全程凍結** |
+| 逐 k | 100 / 100 / 100 / 96 → 整體 **99.0%** |
+| RMS/mask 契約 | 硬式尺度校準（§3.6）、exact-zero 保持零 |
+
+**為什麼不是 `contextual`（100%）**：多的 1pp 要付出「合成器必須線上讀 native K/V」
+的代價。`zdelta` 的 `f(z)` **可在 retrieve 後離線預算**，
+線上只剩 native scaffold 前向 + 逐位置加法。
+**不為 1pp 增加 online 依賴**；`contextual` 保留為上界／備援。
+
+### 待還的債
+
+**單 seed。** 不阻塞 retrieve，但若之後的結果**依賴那 1pp**，
+或要做強架構宣稱，必須先複驗 `zdelta` 的第二顆種子。
+
+---
+
+## 4.26 下一階：retrieve（凍結 store 與 write）
+
+**只動一段**：pool 內容與正確的 ordered latent **固定**，
+core 與 `zdelta` delivery **凍結**，**只訓 query/address/selector**。
+
+**分開報這五個指標**（不可只看 end-to-end）：
+
+1. **ordered exact retrieval** —— 整條 chain 的順序與內容都對
+2. **per-step recall** —— 逐步命中率
+3. **hit/miss** —— 含 missing 與 distractor
+4. **`executor | retrieval correct`** —— 檢索對的前提下，執行還會不會錯
+5. **end-to-end**
+
+⚠️ **沿用 §4.12/§4.20 的教訓：hit/miss 要直接監督，不能只靠答案梯度。**
+那條線已經證實：只用答案 loss，binding 不會自己長出來。
+
+**retrieve 過閘之後才開 write/consolidation** —— 且要先凍結 retriever 與 delivery、
+用 oracle commit 測 latent formation，再逐步解除。
+**不可一開始就把 read/write/store 更新聯訓**，否則失敗無法定位
+（§0 的同一條理由，已吃過兩次虧）。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
