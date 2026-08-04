@@ -491,7 +491,14 @@ class Attention(nn.Module):
             # 與 prefix 注入的差別：不新增位置，只覆蓋該位置算出來的 K/V。
             # kv_override 為 None 時完全不進這條路徑（bit-compat）。
             if kv_override is not None:
-                pos, ok, ov = kv_override            # pos:(P,)  ok/ov:(B,P,n_kv,hd)
+                if callable(kv_override):
+                    # 3B contextual：把**該層在那些位置算出來的 native K/V**
+                    # （已含 state 與前序 value 的資訊）交給合成器，
+                    # 由它產生取代值或 delta。3A 的 context-free 版本產不出
+                    # 支撐組合的 KV（k=1 98% 但 k=4 只有 3%）。
+                    pos, ok, ov = kv_override(xk, xv)
+                else:
+                    pos, ok, ov = kv_override        # pos:(P,)  ok/ov:(B,P,n_kv,hd)
                 xk = xk.clone(); xv = xv.clone()
                 xk[:, pos] = ok.to(xk.dtype)
                 xv[:, pos] = ov.to(xv.dtype)
@@ -882,7 +889,10 @@ class MiniMindModel(nn.Module):
                 # kv_override 依 (loop, layer) 索引 —— L0 core 每圈每層都會重算這些位置，
                 # 只換 loop0 會讓 loop1 又由 placeholder hidden 重算，混入新變因（Codex）。
                 _kvo = kwargs.get('kv_override')
-                _kvo = _kvo[past_kv_idx] if _kvo is not None else None
+                # 兩種形式：list（3A static，逐 slot 索引）或 callable（3B contextual，
+                # 由合成器在層內看到 native K/V 後產生）。callable 直接往下傳。
+                if _kvo is not None and not callable(_kvo):
+                    _kvo = _kvo[past_kv_idx]
 
                 # Stage 2: Fusion Engram Knowledge into corresponding blocks
                 if self.use_engram and i in self.engram_layers and loop_idx == 0:

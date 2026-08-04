@@ -274,6 +274,92 @@ class SyntheticKVAdapter(nn.Module):
         return slots
 
 
+class StaticFullKVAdapter(nn.Module):
+    """3A static-full：**每個 loop×layer 一個獨立 head**，輸入**只有 latent**。
+
+    與 `SyntheticKVAdapter` 的差別：後者用一個共享 MLP 產生全部 slot；
+    這裡每個 slot 有自己的非線性 head，容量與獨立性都更高。
+
+    ⚠️ **輸入不得偷加 context**（Codex）—— 這正是 3A 要測的變因。
+    若它通過 → 先前的失敗是**共享容量**不足；
+    若它失敗 → 只能說「高容量、逐位置但 **context-free** 的 KV 合成失敗」，
+    **不可**升級成「所有合成 KV 不可組合」。
+    """
+
+    def __init__(self, n_slots: int, n_kv_heads: int, head_dim: int,
+                 latent_dim: int = LATENT_DIM, trunk: int = 256, head: int = 256,
+                 span: int = PERM_N, scale_k=None, scale_v=None, rope_base: float = 1e6):
+        super().__init__()
+        self.n_slots, self.n_kv_heads, self.head_dim = n_slots, n_kv_heads, head_dim
+        # 每個 latent 對應 **span 個 token 位置**（value span），
+        # 不是一個 slot —— 同位置注入要覆蓋那 5 個位置各自的 K/V。
+        self.span = span
+        self.trunk = nn.Sequential(nn.Linear(latent_dim, trunk), nn.GELU())
+        out = span * 2 * n_kv_heads * head_dim
+        self.heads = nn.ModuleList([
+            nn.Sequential(nn.Linear(trunk, head), nn.GELU(), nn.Linear(head, out))
+            for _ in range(n_slots)])
+
+        def _buf(x):
+            v = torch.as_tensor(x if x is not None else [1.0] * n_slots, dtype=torch.float32)
+            assert v.shape == (n_slots,)
+            return v
+        self.register_buffer("scale_k", _buf(scale_k))
+        self.register_buffer("scale_v", _buf(scale_v))
+
+    def forward(self, latents):                  # (B,k,25) -> list[n_slots] of (K,V)
+        B, k, _ = latents.shape
+        t = self.trunk(latents)
+        out = []
+        for i, h in enumerate(self.heads):
+            o = h(t).view(B, k * self.span, 2, self.n_kv_heads, self.head_dim)
+            # 與 SyntheticKV 相同的硬式尺度校準（見 §3.6：幅度通道被移除）
+            rms = o.detach().float().pow(2).mean(dim=(0, 1, 3, 4), keepdim=True).sqrt()
+            o = o / rms.clamp_min(1e-6).to(o.dtype)
+            kk = o[:, :, 0] * self.scale_k[i].to(o.dtype)
+            vv = o[:, :, 1] * self.scale_v[i].to(o.dtype)
+            m = (latents.abs().sum(-1) > 0).to(o.dtype)
+            m = m.repeat_interleave(self.span, dim=1)[:, :, None, None]
+            out.append((kk * m, vv * m))         # exact-zero 保持零
+        return out
+
+
+class ContextualKVAdapter(nn.Module):
+    """3B contextual in-place KV：`G_{loop,layer}(z_i, native_kv_i)`。
+
+    3A（context-free，6.32M、16 獨立 head）在 k=1 達 98% 但 k=4 只有 3% ——
+    容量不是瓶頸。Codex 的假說：合成器缺少 **state 與前序 value 的條件**，
+    而 Inline embedding 會在每層被更新、teacher KV 正是那些 contextual hidden 產生的。
+
+    這裡讓合成器看得到**該層在該位置算出來的 native K/V**（已含 context），
+    輸出 **delta**：`K' = K_native + ΔK(z, K_native)`。
+    零初始化最後一層 → 起始時等同不交付，訓練才逐步偏離。
+    """
+
+    def __init__(self, n_slots: int, n_kv_heads: int, head_dim: int,
+                 latent_dim: int = LATENT_DIM, width: int = 256, span: int = PERM_N):
+        super().__init__()
+        self.n_slots, self.n_kv_heads, self.head_dim, self.span = \
+            n_slots, n_kv_heads, head_dim, span
+        d = n_kv_heads * head_dim
+        self.lat = nn.Linear(latent_dim, width)
+        self.ctx = nn.Linear(2 * d, width)
+        self.heads = nn.ModuleList([nn.Linear(width, 2 * d) for _ in range(n_slots)])
+        for h in self.heads:                       # 零初始化 → 起始 delta = 0
+            nn.init.zeros_(h.weight); nn.init.zeros_(h.bias)
+
+    def forward(self, slot, latents, k_nat, v_nat):
+        """latents (B,k,25)；k_nat/v_nat (B,P,n_kv,hd)，P = k*span。"""
+        B, P = k_nat.shape[0], k_nat.shape[1]
+        d = self.n_kv_heads * self.head_dim
+        z = self.lat(latents).repeat_interleave(self.span, dim=1)       # (B,P,W)
+        c = self.ctx(torch.cat([k_nat.reshape(B, P, d), v_nat.reshape(B, P, d)], -1))
+        delta = self.heads[slot](torch.nn.functional.gelu(z + c))
+        dk, dv = delta[..., :d], delta[..., d:]
+        return (k_nat + dk.view(B, P, self.n_kv_heads, self.head_dim),
+                v_nat + dv.view(B, P, self.n_kv_heads, self.head_dim))
+
+
 # --------------------------------------------------------------------------- 三種交付
 
 class InlineTokensDelivery:
