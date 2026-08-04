@@ -2647,3 +2647,106 @@ writer ≈ zero ≈ shuffled。loss 1.75 → 1.32 後走平。4000 步的正式�
    這算「合理的設計選擇」還是「偷偷把答案塞進結構裡」？
 
 我傾向先試 2（純結構、不加監督訊號），2 不行再上 1。你的看法？
+
+## [98] G3a-v1 = **FAIL**（照預先登記，不回填）；v2 已起跑
+
+**v1（task-loss-only、無約束 writer，4000 步，val = 未見置換）：**
+
+| 條件 | 整體 |
+|---|---|
+| oracle | **99.0%** |
+| **writer** | **3.5%** |
+| zero | 0.5% |
+| shuffled | 1.0% |
+
+loss 從 1.89 降到 1.01，**但 end-to-end 停在地板**。
+
+**你要的 formation 指標補上了**（`g3a_formation_metrics.py`，未見置換 × 4 key = 96 個事件）：
+
+| 集合 | row argmax | 整置換 | 合法 permutation 率 | row entropy | latent 距離 |
+|---|---|---|---|---|---|
+| train | 33.8% | 0.0% | **0.0%** | 1.392 | 2.283 |
+| **val** | **37.1%** | 0.0% | **0.0%** | 1.408 | 2.316 |
+| chance | 20.0% | — | 3.84% | 1.609（均勻）| — |
+
+三件事值得記：
+1. **row argmax 高於 chance（37% vs 20%）但整置換 0%** —— formation 發生了一點點，
+   遠遠不足。這正是只看 end-to-end 分不出來的區間，你堅持要這些指標是對的。
+2. **val > train（37.1% vs 33.8%）** —— 是**欠擬合**，不是過擬合。
+   所以不是「背了 380 組」，是根本學不動。
+3. **合法 permutation 率 0%、entropy 1.408（接近均勻 1.609）、latent 距離 2.3** ——
+   輸出既不確定也不在目標流形上。這支持你 [97] 的判讀：
+   **信用穿過凍結的 delivery/core 之後太弱，且輸出流形不匹配**，
+   而不是「綁定機制重現」。
+
+**v2 已起跑**：rowsoftmax、同資料、同 4000 步、同 seed，架構與 temperature 固定，
+**不看結果調**。會報 end-to-end 四條件 + row argmax / 整置換 / 合法率 / entropy / latent 距離。
+
+一個我先講的判讀準備：v2 的 rowsoftmax 保證 entropy 與流形匹配，
+所以**如果 v2 的 row argmax 仍在 37% 附近**，那就把「輸出流形不匹配」這個解釋排除掉，
+剩下的是**信用太弱**；反之若 row argmax 跳起來、end-to-end 也跟上，
+就是流形問題主導。這樣 v1/v2 的對比本身就是一個乾淨的分解，
+不只是「換個參數化再試一次」。你同意這個讀法嗎？
+
+## [99] G3a-v2 = **PASS**，而且你的更正正好讓結果更強
+
+你 [98] 的回覆在結果出來前就到了，三條更正我全部接受，而且第二條反而放大了結論。
+
+**v2（rowsoftmax，同資料、同 4000 步、同 seed，唯一改動是輸出參數化）：**
+
+| 條件 | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| oracle | 100.0% | 100.0% | 99.0% | 97.0% | **99.0%** |
+| **writer** | 100.0% | 100.0% | 99.0% | 97.0% | **99.0%** |
+| zero | 0.0% | 2.0% | 0.0% | 0.0% | 0.5% |
+| shuffled | 1.0% | 1.0% | 1.0% | 0.0% | 0.8% |
+
+**writer 與 oracle 逐格相同。** 地板與 shuffled 對照都塌了。
+
+**formation（獨立腳本重算，未見置換 × 4 key = 96 個事件）：**
+
+| | row argmax | 整置換 | 合法率 | entropy | latent 距離 |
+|---|---|---|---|---|---|
+| v1 val | 37.1% | 0.0% | 0.0% | 1.408 | 2.316 |
+| **v2 val** | **100.0%** | **100.0%** | **100.0%** | **0.005** | **0.001** |
+| chance | 20.0% | — | 3.84% | 1.609 | — |
+
+**latent 距離 0.001** —— writer 幾乎精確重建了 `perm_to_latent`，
+而它**從未被監督去複製這個編碼**，只有下游答案 loss。
+
+**你的第二條更正讓結果變強，不是變弱：** 你指出 row-softmax 只保證每列非負且和為 1，
+**不**保證低 entropy、也**不**保證欄唯一。既然如此，
+**合法率 100% 與 entropy 0.005 就是學出來的、不是參數化白送的**。
+我原本以為那是結構保證，那樣反而會削弱結論。
+
+**措辭照你預鎖的讀法 ①，並吸收你的歸因限制**（已寫入 §4.33）：
+> row-categorical 的參數化使 task-loss-only 的 write formation **變得可優化**。
+> 不可只歸因流形（v1→v2 同時改了輸出約束與梯度幾何／尺度），
+> 支持的是**結構／conditioning bundle 主導**。
+> 不說「無先驗下自然湧現」，結論限定在已知的 S₅ latent schema。
+
+v1 的 `val > train` 也照你的話收成「無過擬合證據、與欠擬合相容」。
+
+**v3 不做** —— 前提是 v2 失敗，v2 過了，加輔助標籤只會把里程碑降級成 supervised formation。
+
+**三個元件的現況：**
+
+| 元件 | 狀態 |
+|---|---|
+| delivery（G1）| `zdelta` **PASS** 99.0% |
+| retrieve（G2）| 固定 key **PASS** 100%；未見身分 ranking **PASS** 98.1%；<br>open-set abstention calibration **FAIL**（已封）|
+| write（G3a）| 結構化 task-loss-only formation **PASS** 99.0%，未見置換 |
+
+**下一步我要做 G3b closed-world 閉環**（接 G2a/G2b 固定 key retriever／support，
+不接 G2c、不宣稱 open-set）。動手前想先跟你敲定兩件事：
+
+1. **閉環的失敗歸因怎麼隔離？** 三個元件各自過了，但串起來後
+   任何一處掉分都會表現成 end-to-end 掉分。我想固定報
+   `retrieval 正確率`、`formation | retrieval 正確`、`executor | 兩者皆正確`、`end-to-end`
+   四個數字，讓失敗可定位。夠嗎？
+2. **G3b 有沒有什麼是「串起來才會出現、單獨測不到」的東西？**
+   我想到一個：**writer 形成的 latent 要進 store，再被 retriever 取回** ——
+   而 G3a 的 writer 是直接把 latent 餵給 delivery 的，中間沒有 store 往返。
+   commit/read 的 detach 與快照語意在 `LatentStore` 已有測試，
+   但「writer → store → retriever → delivery」這條完整路徑從未跑過。
+   你覺得還有別的嗎？

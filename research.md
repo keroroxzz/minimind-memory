@@ -2071,6 +2071,125 @@ writer ≈ zero ≈ shuffled。**在看到正式跑的結果前**登記：
 
 ---
 
+## 4.32 G3a-v1 定稿：**task-loss-only / 無約束 writer = FAIL**（不回填）
+
+4000 步，val = 未見置換。
+
+| 條件 | 整體 |
+|---|---|
+| oracle（`perm_to_latent`，零學習）| **99.0%** |
+| **writer** | **3.5%** |
+| zero（全零 latent）| 0.5% |
+| shuffled（讀別條 entry 的事件）| 1.0% |
+
+loss 從 1.89 降到 1.01，**但 end-to-end 停在地板**。
+
+### formation 指標才看得出真實情況
+
+`experiments/g3a_formation_metrics.py`，未見置換 × 4 個 key = 96 個事件：
+
+| 集合 | row argmax | 整置換 | 合法 permutation 率 | row entropy | latent 距離 |
+|---|---|---|---|---|---|
+| train | 33.8% | 0.0% | **0.0%** | 1.392 | 2.283 |
+| **val** | **37.1%** | 0.0% | **0.0%** | 1.408 | 2.316 |
+| chance | 20.0% | — | 3.84% | 1.609（均勻）| — |
+
+三件事：
+
+1. **row argmax 高於 chance（37% vs 20%）但整置換 0%** —— formation 發生了一點點、
+   遠遠不足。這正是**只看 end-to-end 分不出來**的區間；沒有這些指標會誤判成
+   「完全沒學到」。
+2. **val > train（37.1% vs 33.8%）→ 欠擬合，不是過擬合。**
+   所以不是「背了 380 組 (key, perm)」，是根本學不動。
+3. **合法 permutation 率 0%、entropy 1.408（接近均勻）、latent 距離 2.3** ——
+   輸出既不確定，也不在目標流形上。
+
+### 判讀（不可寫成「綁定機制重現」）
+
+支持的是「**下游答案梯度穿過凍結的 delivery/core 之後信用太弱，
+且輸出流形不匹配**」。**不是** §4.20 的 key-matching 情境 ——
+這裡每個 entry 直接給了 perm、沒有 selector。
+
+### v1/v2 的對比本身是一個分解
+
+v2 的 rowsoftmax 在結構上就保證了 entropy 與流形匹配，所以：
+
+- v2 的 row argmax **仍在 37% 附近** → 排除「流形不匹配」，剩下**信用太弱**。
+- v2 的 row argmax **跳起來且 end-to-end 跟上** → **流形問題主導**。
+
+也就是說 v2 不只是「換個參數化再試一次」。
+
+**⚠️ 但這個分解不乾淨**（Codex 在看到結果前就更正）：
+`v1 → v2` **同時**改了輸出約束與**梯度幾何／尺度**，所以不能只歸因流形。
+而且 row-softmax **只**保證每列非負且和為 1 —— 它**不**保證低 entropy，
+也**不**保證 5 欄唯一的 permutation manifold。
+
+---
+
+## 4.33 G3a-v2 定稿：**PASS** —— 結構化的 task-loss-only write formation 可行
+
+同資料、同 4000 步、同 seed，唯一改動是 writer 的輸出參數化（5×5 逐列 softmax）。
+
+| 條件 | k=1 | k=2 | k=3 | k=4 | 整體 |
+|---|---|---|---|---|---|
+| oracle | 100.0% | 100.0% | 99.0% | 97.0% | **99.0%** |
+| **writer** | 100.0% | 100.0% | 99.0% | 97.0% | **99.0%** |
+| zero | 0.0% | 2.0% | 0.0% | 0.0% | 0.5% |
+| shuffled | 1.0% | 1.0% | 1.0% | 0.0% | 0.8% |
+
+**writer 與 oracle 逐格相同。** 地板（zero 0.5%）與對照（shuffled 0.8%）都塌了，
+所以分數確實來自事件內容，不是 carrier 位置或任何與事件無關的東西。
+
+**formation 指標**（未見置換 × 4 key = 96 個事件，train/val 由獨立腳本重算）：
+
+| | row argmax | 整置換 | 合法 permutation 率 | row entropy | latent 距離 |
+|---|---|---|---|---|---|
+| v1 train | 33.8% | 0.0% | 0.0% | 1.392 | 2.283 |
+| v1 **val** | 37.1% | 0.0% | 0.0% | 1.408 | 2.316 |
+| v2 train | 100.0% | 100.0% | 100.0% | 0.000 | 0.000 |
+| **v2 val** | **100.0%** | **100.0%** | **100.0%** | **0.005** | **0.001** |
+| chance | 20.0% | — | 3.84% | 1.609 | — |
+
+**latent 距離 0.001** —— writer 幾乎**精確重建**了 `perm_to_latent`，
+而它**從未被監督去複製這個編碼**，只有下游答案 loss。
+
+**合法率 100% 與 entropy 0.005 是學出來的，不是參數化白送的** ——
+逐列 softmax 不保證這兩者中的任何一個。這讓結果更強，不是更弱。
+
+### 可以宣稱與不可宣稱的
+
+**可以說：**
+> **row-categorical 的參數化使 task-loss-only 的 write formation 變得可優化。**
+> 一個從未見過 `zdelta` 的 writer，可以只憑下游答案梯度，形成
+> 一個從未見過 writer 的凍結交付介面**能精確消費**的 latent，
+> 並泛化到**未見的置換**。
+
+**不可以說：**
+- **不可**只歸因於「流形不匹配」—— v1→v2 同時改了輸出約束與梯度幾何／尺度。
+  支持的是**結構／conditioning 這個 bundle 主導**。
+- **不可**說「無先驗下自然湧現」—— 結論限定在**已知的 S₅ latent schema**，
+  不泛化成通用 latent writer。
+- v1 的 `val > train`（37.1 vs 33.8）只寫「**無過擬合證據、與欠擬合相容**」；
+  3.3pp 可能是有限樣本或 split 難度，不足以單獨證明欠擬合。
+
+### v3 不做
+
+`G3a-v3 reconstruction scaffold` 的前提是 v2 失敗。v2 過了，所以**不做** ——
+加輔助標籤只會把里程碑從「無 write label」降級成 supervised formation。
+
+### 三個元件的現況
+
+| 元件 | 狀態 |
+|---|---|
+| **delivery**（G1）| `zdelta` **PASS** 99.0%，1.13M，core 凍結 |
+| **retrieve**（G2）| 固定 key **PASS** 100%；未見身分 ranking **PASS** 98.1%，<br>但 open-set abstention calibration **FAIL**（§4.30，已封） |
+| **write**（G3a）| 結構化 task-loss-only formation **PASS** 99.0%，未見置換 |
+
+下一步是 **G3b：closed-world 閉環** —— 接回**已通過**的 G2a/G2b 固定 key retriever／support。
+**不得接 G2c，不得宣稱 open-set 閉環。**
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

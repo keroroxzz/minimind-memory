@@ -178,12 +178,46 @@ under a **joint identity + span-structure shift** and this design cannot separat
 **Design debt recorded, not paid here**: a canonical encoder's training must cover the
 tokenization structure it will meet; support scores must be robust to structural shift.
 
-**Next** (`research.md` §4.31): **G3a write formation** — frozen core + `zdelta`, oracle
-retrieval, `missing=0`, the writer the only learnable part. Generalisation axis is the
-*permutation* (95 train / 24 val, disjoint), not key identity. Four conditions are mandatory:
-`oracle` (ceiling), `writer`, `zero` (floor), `shuffled` (writer reads a different entry's
-event — if that also scores, the result is void). G3b (closed-world loop) may only reconnect
-the **G2a/G2b** fixed-key retriever, never G2c, and may not claim an open-set loop.
+## C layer — G3a write formation, 2026-08-04
+
+`research.md` §4.31–4.33. Frozen core + `zdelta`, oracle retrieval, `missing=0`, the writer the
+only learnable part. The generalisation axis is the *permutation* (95 train / 24 val, disjoint),
+not key identity. Four conditions are mandatory: `oracle` (ceiling), `writer`, `zero` (floor),
+`shuffled` (writer reads a different entry's event — if that also scores, the result is void).
+
+| version | writer output | end-to-end (unseen perms) | row argmax | valid perm | latent dist |
+|---|---|---|---|---|---|
+| oracle | `perm_to_latent` | **99.0%** | — | — | 0 |
+| **v1** | unconstrained 25-d | **3.5% — FAIL** | 37.1% | 0.0% | 2.32 |
+| **v2** | **5×5 row-softmax** | **99.0% — PASS** | **100%** | **100%** | **0.001** |
+| zero / shuffled | — | 0.5% / 0.8% | — | — | — |
+
+v2's writer matches the oracle cell for cell. It reconstructs `perm_to_latent` to within 0.001
+having never been supervised on that encoding — only downstream answer loss.
+
+**Only end-to-end is not enough to read this.** v1 scored 37.1% row argmax against 20% chance —
+partial formation invisible in a 3.5% end-to-end number. `g3a_formation_metrics.py` reports
+row argmax / exact perm / valid-permutation rate / row entropy / latent distance; run it on any
+writer checkpoint.
+
+**What may be claimed**: a row-categorical parameterisation makes task-loss-only write formation
+*optimisable* — a writer that has never seen `zdelta` can form, from answer gradient alone, a
+latent that a frozen delivery interface which has never seen the writer consumes exactly, and
+this generalises to unseen permutations. Row-softmax guarantees only that each row is
+non-negative and sums to 1; the 100% valid-permutation rate and 0.005 entropy are *learned*, not
+structural.
+
+**What may not**: do not attribute this to manifold mismatch alone — v1→v2 changed the output
+constraint *and* the gradient geometry/scale, so the credit belongs to the structure/conditioning
+bundle. Do not say it "emerges without priors": the conclusion is scoped to the known S₅ latent
+schema, not a general latent writer. `G3a-v3` (reconstruction scaffold) was conditional on v2
+failing and is therefore **not run** — adding auxiliary labels would downgrade the milestone to
+supervised formation.
+
+**Next**: **G3b closed-world loop** — reconnect the **G2a/G2b** fixed-key retriever/support only,
+never G2c, and do not claim an open-set loop. The untested path is `writer → store → retriever →
+delivery`: G3a feeds the writer's latent straight to delivery, so the store round-trip has never
+run end to end.
 
 **G1 is sealed.** The default interface for the next stage is `zdelta`:
 `K' = K_native + f_slot(z)` at the value token positions, all 16 (loop, layer) cache slots,
