@@ -1,0 +1,189 @@
+{
+  "axis": "pool",
+  "threshold": 3.8257057666778564,
+  "retriever": "g2b_retriever_9506460508.pth",
+  "query_keys": [
+    "f0",
+    "f1",
+    "f2",
+    "f3"
+  ],
+  "n": 200,
+  "seed": 4321,
+  "cells": {
+    "pool=8": {
+      "L0": [
+        170,
+        170
+      ],
+      "oracle": {
+        "formation": [
+          727,
+          727
+        ],
+        "address": [
+          800,
+          800
+        ],
+        "content": [
+          727,
+          727
+        ],
+        "e2e": [
+          162,
+          170
+        ],
+        "r4": {
+          "ans_n": 170,
+          "false_abstain": 0,
+          "miss_n": 30,
+          "R_abstain": 30,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      },
+      "learned": {
+        "formation": [
+          727,
+          727
+        ],
+        "address": [
+          798,
+          800
+        ],
+        "content": [
+          727,
+          727
+        ],
+        "e2e": [
+          162,
+          170
+        ],
+        "r4": {
+          "ans_n": 170,
+          "false_abstain": 0,
+          "miss_n": 30,
+          "R_abstain": 30,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      }
+    },
+    "pool=16": {
+      "L0": [
+        169,
+        169
+      ],
+      "oracle": {
+        "formation": [
+          744,
+          744
+        ],
+        "address": [
+          800,
+          800
+        ],
+        "content": [
+          744,
+          744
+        ],
+        "e2e": [
+          163,
+          169
+        ],
+        "r4": {
+          "ans_n": 169,
+          "false_abstain": 0,
+          "miss_n": 31,
+          "R_abstain": 31,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      },
+      "learned": {
+        "formation": [
+          744,
+          744
+        ],
+        "address": [
+          800,
+          800
+        ],
+        "content": [
+          744,
+          744
+        ],
+        "e2e": [
+          164,
+          169
+        ],
+        "r4": {
+          "ans_n": 169,
+          "false_abstain": 0,
+          "miss_n": 31,
+          "R_abstain": 31,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      }
+    },
+    "pool=31": {
+      "L0": [
+        181,
+        181
+      ],
+      "oracle": {
+        "formation": [
+          753,
+          753
+        ],
+        "address": [
+          800,
+          800
+        ],
+        "content": [
+          753,
+          753
+        ],
+        "e2e": [
+          172,
+          181
+        ],
+        "r4": {
+          "ans_n": 181,
+          "false_abstain": 0,
+          "miss_n": 19,
+          "R_abstain": 19,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      },
+      "learned": {
+        "formation": [
+          753,
+          753
+        ],
+        "address": [
+          800,
+          800
+        ],
+        "content": [
+          753,
+          753
+        ],
+        "e2e": [
+          172,
+          181
+        ],
+        "r4": {
+          "ans_n": 181,
+          "false_abstain": 0,
+          "miss_n": 19,
+          "R_abstain": 19,
+          "halluc": 0
+        },
+        "picked_distractor": 0
+      }
+    }
+  }
+}

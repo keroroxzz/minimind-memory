@@ -1,0 +1,18 @@
+{
+  "n": 120,
+  "worst": {
+    "logits": 0.0,
+    "support": 0.0
+  },
+  "decision_mismatch": 0,
+  "argmax_mismatch": 0,
+  "three_token": [
+    "f26",
+    "f27",
+    "f31"
+  ],
+  "pool": 31,
+  "k": 4,
+  "seed": 909,
+  "verdict": "INVARIANT"
+}

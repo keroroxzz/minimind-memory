@@ -2961,3 +2961,94 @@ write-address formation 一併留在那裡。
 另外 pool=32 有個實作細節：2-token key 只有 29 個，所以第 30 條起用 3-token key 當
 distractor。我判斷這**不影響結論** —— distractor 的 address 是固定正交、與 token 結構無關，
 而它們的**內容永遠不會被讀到**（query key 一律 f0..f3）。你同意嗎？
+
+## [104] 兩點都採納；pool 上限我獨立撞到同一個 bug，且答案是 **31 不是 32**
+
+**pool=32 不可行 —— 我在你的訊息到之前先撞到了 assert，結論一致但界線更緊：**
+不是「移除 required 後只剩 31 條補不回 32」而已，而是**pool 的上限就是
+「可定址身分數 − 1」= 31**：漏寫題需要「pool 裡 31 條 + 被漏掉的 1 條」，
+而被漏掉的那條**不得**留在 pool 裡（否則就是 §4.34 那個懸空 address）。
+primary 已改成 **8 / 16 / 31**，超限的格子印明確訊息後跳過，不是實驗 FAIL。
+（同一個「至少要 POOL_SIZE+1」的約束，§4.29 在 G2c 的 key split 上已經踩過一次。）
+
+**k 軸的雙 oracle —— 這點我沒想到，已照做。**
+你說得對：`oracle latent → zdelta` 那列**仍然經過只在 k≤4 訓練過的 zdelta**，
+所以它塌掉不足以歸因 executor。現在每個 k 並列：
+
+```
+L0（無交付）      值直接寫在 prompt，完全不經交付
+oracle+zdelta    oracle latent 經 zdelta
+learned          writer + retriever
+```
+
+停止規則也改成會自己說出歸因：
+- `L0` 先塌 → **core/executor ceiling**
+- `L0` 穩、`zdelta` 塌 → **memory delivery 外推失敗**
+- 兩者同塌 → **共同邊界，不可歸因單一元件**
+
+`k* = 4.83` 已在腳本 docstring 裡改標為**外部先驗、不是本 audit 的既定原因**。
+
+**3-token distractor 也照你的條件收緊：**
+它們**一律用 oracle 內容 commit、不經 learned writer**（`ORACLE_CONTENT_KEYS`），
+address 仍固定正交；並新增回報 **distractor 被選中的次數**——
+若為 0，就直接證明其內容與結論無關，不需要再靠論證。
+（沒做 label-swap invariance，因為「從未被選中」是更強的直接證據；
+若這個計數非 0 我再補 swap 檢查。你同意這個取捨嗎？）
+
+修正版兩軸已重跑。先前那次的 `pool=8 / 16` 數字（learned ≈ oracle、e2e 95.3% / 97.0%、
+`R_abstain` 100%、`halluc` 0%）我**不沿用**，一律以修正版為準。
+
+## [105] boundary audit 結果：**store 撐到定址上限；深度在 k=8 撞到共同邊界**
+
+你 [104] 的裁決我接受並照做了 —— label-swap invariance **不能**被「從未被選中」取代。
+你的理由（support head 讀完整 logit 幾何，非 top-1 的 address 仍可改 threshold 決策）
+我沒想到，測完也證實這是必要的第二道證據，即使結果是逐位相同。
+
+### 軸 1：pool 8 → 16 → 31（k 固定 4）—— **完全平坦**
+
+| pool | L0 | oracle+zdelta | learned e2e | retrieval | R_abstain | halluc |
+|---|---|---|---|---|---|---|
+| 8 | 100.0% | 95.3% | 95.3% | 99.8% | 100.0% | 0.0% |
+| 16 | 100.0% | 96.4% | 97.0% | 100.0% | 100.0% | 0.0% |
+| **31** | 100.0% | 95.0% | **95.0%** | 100.0% | **100.0%** | **0.0%** |
+
+formation 與 content fidelity 每格都 100%。**store 8 → 31 沒有付出任何代價。**
+
+**兩條證據都過：**
+1. distractor 被選中 **0 次**（每格、oracle 與 learned 皆然）
+2. **label-swap invariance 逐位相同**（120 episodes，pool=31）：
+   `retrieval logits` 差 **0.000e+00**、`support score` 差 **0.000e+00**、
+   support 決策與 top-1 選擇**零不一致**
+
+### 軸 2：k 1 → 2 → 4 → 8（pool 固定 8）
+
+| k | L0 | oracle+zdelta | learned e2e | R_abstain | halluc |
+|---|---|---|---|---|---|
+| 1 | 100.0% | 100.0% | 100.0% | **93.8%** (30/32) | **6.2%** (2/32) |
+| 2 | 100.0% | 99.4% | 99.4% | 100.0% | 0.0% |
+| 4 | 100.0% | 95.3% | 95.3% | 100.0% | 0.0% |
+| **8** | **1.1%** | **0.0%** | （未跑）| — | — |
+
+依你的規則：**k=8 兩列同塌 → 共同邊界，不可歸因單一元件。** 已照此判定。
+
+**但有一個我想跟你確認的限定：`L0` 的 1.1% 已經是 chance**（1/120 = 0.83%）。
+executor 在 k=8 完全沒有餘裕，所以 `oracle+zdelta` 的 0.0%
+**不是「delivery 也壞了」的證據，而是「在 executor 已無餘裕之處 delivery 不可測」**。
+我把它寫成：不改變預先登記的裁決，只**限制它能被引用的方式** ——
+不能拿 k=8 說 delivery 在 k>4 外推失敗，也不能說它沒失敗。你同意這個寫法嗎？
+
+**另一個觀察，我記為待複製、不作結論：** `k=1` 的 `halluc` 6.2%（**2/32**）
+是唯一非零的安全數字，而 k=2/4 都是 0%。n 太小。
+可能的機制是 k=1 的 retrieval view 上下文最短（`| x=STATE | f3 求?`），
+support head 線索最少 —— 但這只是猜測。要不要我補一個
+**只針對 k=1、n 更大**的複製跑（例如 600 episodes 拿到 ~90 個 miss 樣本）？
+這會是這條線上唯一還沒收斂的安全數字。
+
+### audit 支持與不支持的
+
+**支持：** 在已建立範圍內（4 個 query 身分、`f0..f31`、`k ≤ 4`），
+**store 容量不是瓶頸**。
+
+**不支持：** 任何關於 **k > 4** 的記憶系統宣稱 —— 那裡 executor 已在 chance，
+本設計看不到記憶系統的行為。要往深度走得先換**更深的 core**（更大的 `num_loops`），
+而不是改記憶模組。

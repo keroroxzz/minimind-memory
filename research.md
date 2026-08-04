@@ -2374,6 +2374,88 @@ full-chain 的崩塌由 `address retrieval 7.9%` 主導。
 
 ---
 
+## 4.36 boundary audit 結果：**store 撐到定址上限；深度在 k=8 撞到共同邊界**
+
+全凍結、不重校、不訓練。每格 200 episodes。
+
+### k 軸的歸因需要**三列**，不是兩列
+
+`oracle latent → zdelta` 那列**仍然經過只在 k≤4 訓練過的 `zdelta`**，
+所以它塌掉**不足以**歸因 executor（Codex）。因此每格並列
+**`L0`（值寫在 prompt、完全不經交付）**：
+
+| 讀法 | 結論 |
+|---|---|
+| `L0` 先塌 | **core / executor ceiling** |
+| `L0` 穩、`zdelta` 塌 | **memory delivery 外推失敗** |
+| 兩者同塌 | **共同邊界，不可歸因單一元件** |
+
+`k* ≈ 4.83` 是 looped-transformer 那張表給的**外部先驗**，**不是本 audit 的既定原因**。
+
+### 軸 1：pool 8 → 16 → 31（k 固定 4）—— **完全平坦**
+
+| pool | L0 | oracle+zdelta | learned e2e | retrieval | R_abstain | halluc |
+|---|---|---|---|---|---|---|
+| 8 | 100.0% | 95.3% | 95.3% | 99.8% | 100.0% | 0.0% |
+| 16 | 100.0% | 96.4% | 97.0% | 100.0% | 100.0% | 0.0% |
+| **31** | 100.0% | 95.0% | **95.0%** | 100.0% | **100.0%** | **0.0%** |
+
+formation 與 content fidelity 在每一格都是 **100%**。
+**store 從 8 條擴到 31 條，沒有付出任何代價** —— 而 31 就是
+`ADDR_DIM=32` 下**可測的上限**（漏寫題需要「pool 裡 31 條 + 被漏掉的 1 條」，
+被漏掉的那條不得留在 pool 裡，否則就是 §4.34 的懸空 address）。
+
+**pool-size 是唯一變因 —— 需要兩條獨立證據，缺一不可**（Codex）：
+
+1. **distractor 被選中 0 次**（每一格、oracle 與 learned 皆然）
+   → 排除 oracle distractor 的**內容**污染 **executor**。
+2. **label-swap invariance 逐位相同**（`g3d_distractor_invariance.py`，120 episodes）：
+   固定 query、pool 基數與**全部 address 向量**，只換 3-token distractor 的內容 ——
+   `retrieval logits` 差 **0.000e+00**、`support score` 差 **0.000e+00**、
+   support 決策與 top-1 選擇**零不一致**
+   → 排除 span/label 污染 **support**。
+
+   為什麼「從未被選中」單獨不夠：**support head 讀的是完整 logit 幾何**
+   （top1、top1−top2、logsumexp），一個從未成為 top-1 的 address
+   仍可能改變 threshold 決策、`R_abstain` 與 `halluc`。
+
+（3-token distractor 一律用 **oracle 內容** commit、不經 learned writer，
+否則 writer 的 span OOD 會透過 formation/guard 改變 pool membership，
+把 span 效應混進 pool-size 這一軸。）
+
+### 軸 2：k 1 → 2 → 4 → 8（pool 固定 8）
+
+| k | L0 | oracle+zdelta | learned e2e | R_abstain | halluc |
+|---|---|---|---|---|---|
+| 1 | 100.0% | 100.0% | 100.0% | **93.8%** (30/32) | **6.2%** (2/32) |
+| 2 | 100.0% | 99.4% | 99.4% | 100.0% | 0.0% |
+| 4 | 100.0% | 95.3% | 95.3% | 100.0% | 0.0% |
+| **8** | **1.1%** | **0.0%** | （未跑）| — | — |
+
+**k=8 兩列同塌 → 依預先登記的規則，判為共同邊界，不可歸因單一元件。**
+
+但有一個必須一併記下的觀察：**`L0` 的 1.1% 已經是 chance**
+（exact match 的 chance 是 1/120 = **0.83%**）。executor 在 k=8 完全沒有餘裕，
+所以 `oracle+zdelta` 的 0.0% **無法用來評價 delivery** ——
+那不是「delivery 也壞了」的證據，而是「在 executor 已無餘裕之處 delivery 不可測」。
+這個區別不改變預先登記的裁決，只限制它能被引用的方式。
+
+**k=1 的 `halluc` 6.2%（2/32）是唯一非零的安全數字**，而 k=2/4 都是 0%。
+n 太小（32），不足以支撐「k 越小越不安全」的說法；記為**待複製的觀察**，
+不作為結論。可能的機制是 k=1 的 retrieval view 上下文最短
+（`| x=STATE | f3 求?`），support head 的線索最少。
+
+### 這個 audit 支持與不支持的
+
+**支持：** 在已建立的範圍內（4 個 query 身分、`f0..f31` 可定址、`k ≤ 4`），
+**store 容量不是瓶頸** —— 8 → 31 完全平坦，`R_abstain` 維持 100%、`halluc` 0%。
+
+**不支持：** 任何關於 **k > 4** 的記憶系統宣稱。那裡 executor 已在 chance，
+本設計看不到記憶系統的行為。要往深度走，得先換一個**更深的 core**
+（`num_loops` 更大），而不是改記憶模組。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

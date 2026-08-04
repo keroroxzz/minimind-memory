@@ -50,6 +50,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 NL = BACKBONE["num_hidden_layers"] * ARCH["num_loops"]
 
 
+# 由呼叫端設定：這些 key 的內容一律用 **oracle latent** commit，不經 learned writer。
+# 用途是把「已知的 writer span OOD」擋在 pool-size 這一軸之外（Codex）——
+# 它們的 address 仍是固定正交的，而且從不該被選中（下方會回報）。
+ORACLE_CONTENT_KEYS = set()
+
+
 def two_token_keys(tok, keys):
     return [k for k in keys if len(R.canonical_key_ids(tok, k)) == 2]
 
@@ -105,7 +111,8 @@ def run_episode(m, tok, dl, writer, ret, ev, s, pool, pool_perm, omitted, thr,
     formed = {}
     for x in pool:                       # pool 已經是「實際寫進去的那些」
         p = pool_perm[x]
-        z = (writer(ev[(x, tuple(p))].unsqueeze(0))[0] if use_writer
+        z = (writer(ev[(x, tuple(p))].unsqueeze(0))[0]
+             if (use_writer and x not in ORACLE_CONTENT_KEYS)
              else perm_to_latent(p).to(DEVICE))
         formed[x] = z
         # store 以**符號**為 address（LatentStore 的 dict key）；
@@ -178,7 +185,8 @@ def run_episode(m, tok, dl, writer, ret, ev, s, pool, pool_perm, omitted, thr,
     pos = pos.to(DEVICE)
     got = greedy_override(m, tok, b_ids, G3._mk_fn(dl, lat, pos), ARCH["num_loops"])
     return dict(form_ok=form_ok, addr_ok=addr_ok, content_ok=content_ok,
-                abstained=False, e2e=(got == R.render_L0(s)[1]))
+                abstained=False, e2e=(got == R.render_L0(s)[1]),
+                picked=[pool[p] for p, h in zip(pred, pred_hit) if h])
 
 
 def rate(k, n):
