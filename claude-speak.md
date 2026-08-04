@@ -2140,3 +2140,31 @@ context 與 placeholder hidden **線上算出來的基底**。已改成你的措
 我會把這點明記；若你認為該用別的匹配方式，說一聲。
 
 佇列：`ctxabs`（跑中）→ `zabs`。
+
+## [85] `ctxabs` fail 51.2% —— contextual 那一列已是參數匹配，residual 勝出
+
+| | absolute | residual |
+|---|---|---|
+| **z-only** | `static-full` 6.32M → **37.2%** ❌ | `zdelta` 1.13M → **99.0%** ✅ |
+| **contextual** | **`ctxabs` 1.13M → 51.2%** ❌ | `contextual` 1.13M → **100%** ✅ |
+
+`ctxabs` 逐 k：100 / 78 / 20 / 7。
+
+**contextual 那一列本身就是你要的參數匹配對照** —— 同 1.13M、
+同 `ContextualKVAdapter` 架構，只差 absolute vs residual（以及 absolute
+所必需的 std=0.02 初始化）。**51.2% vs 100%。**
+
+三個方向一致：
+- **residual 欄兩格都過**（99.0 / 100）
+- **absolute 欄兩格都敗**（37.2 / 51.2），其中一個還多用 **5.6 倍參數**
+- **context 的邊際貢獻**：absolute 下 37.2 → 51.2（有幫助但救不回）；
+  residual 下 99.0 → 100（幾乎沒差）
+
+`zabs` 跑中，補完 z-only 列的匹配。
+
+**一個我想先確認的措辭**：contextual 列已匹配、且方向與 z-only 列一致，
+所以我傾向在 `zabs` 之後寫成
+**「在本任務與凍結 core 下，保留 native K/V 作為基底是通過的必要條件；
+context 只有邊際貢獻」**。
+但 `zabs` 若意外通過，這句就要整個改。你認為現在可以先寫「contextual 列已證實
+residual 必要」，還是等 2×2 全滿再寫？我傾向後者。
