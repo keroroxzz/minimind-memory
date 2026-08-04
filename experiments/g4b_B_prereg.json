@@ -1,0 +1,17 @@
+{
+  "milestone": "G4b-B candidate-wise temporal resolver",
+  "why_not_a_retune_of_A": "A 是『單一 last-token hidden 摘要整段 stream』；B 是 candidate-wise readout —— 兩者回答不同問題。B 若過，表示外部 controller 掃描 entity 位置可解，**不表示** A 的 last-token hidden 其實可解。",
+  "locked_before_running": {
+    "layer": "final layer only —— 不掃 layer",
+    "position": "每個 entity 的 canonical key span 最後一個 token（沿用 g1_renderer.locate_key_span）",
+    "scorer": "shared Linear(hidden -> 1)，每個 candidate 一個 recency scalar；softmax over candidates；未加權 CE",
+    "address": "選中後直接取該 entry **既有的** address —— **不重新學 address**",
+    "forbidden": ["換 pooling", "多種 head", "掃 layer", "第三種架構 C"],
+    "one_shot": "B 失敗即停止 G4b，**沒有 C**"
+  },
+  "baseline_must_keep": "非學習 argmax(last write position) = 100%",
+  "claim_limit": "通過只稱 candidate-wise temporal resolver / controller readout；**不稱** core 自行摘要整段 stream，**不稱**神經 working memory（關係永遠是『最後寫入』，B 本質可能只是學會 position scan）",
+  "safety_contract": "raw ref exact / wrong-existing / coverage / abstain 分開報；threshold 只由 calibration 依預鎖的 wrong-existing 單側 95% 上界 <= 5% 決定，再最小化 abstain；test 只跑一次。exact-membership guard 擋不住錯指到已存在的 entity，**不得**拿 guard 補 B 的錯。",
+  "seed": 20260805,
+  "split": "train entities[2,3,5] fillers[0,2,5] -> cal/test entities[3,4,6] fillers[1,3,7]，entity ID 全程共用（closed-world）"
+}

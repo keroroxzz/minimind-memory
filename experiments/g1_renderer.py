@@ -619,6 +619,26 @@ def render_reference_view(stream: str) -> str:
     return f"{stream} 求?（前者）"
 
 
+def reference_view_key_positions(tok, stream, writes):
+    """G4b-B：reference view 裡**每個 entity 各自** canonical key span 的最後一個 token。
+
+    與 G2b 的 `retrieval_view_key_positions` 同構 —— 這是本專案既有的 readout 介面。
+    ⚠️ 同一個 key 若在 stream 裡出現多次，取**第一次**（`make_reference_episode`
+       用 `rng.sample`，本來就不重複）。
+    """
+    view = render_reference_view(stream)
+    ids = tok(tok.bos_token + view, add_special_tokens=False).input_ids
+    pos = []
+    for kx, _ in writes:
+        kid = canonical_key_ids(tok, kx)
+        for i in range(len(ids) - len(kid) + 1):
+            if ids[i:i + len(kid)] == kid:
+                pos.append(i + len(kid) - 1); break
+        else:
+            raise AssertionError(f"{kx} 的 canonical span 不在 reference view 裡")
+    return torch.tensor(ids), pos
+
+
 def make_reference_episode(rng, keys, perms, n_entity, n_filler, k=1):
     """回傳 (stream, writes, target, s)。
 

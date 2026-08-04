@@ -1,0 +1,15 @@
+{
+  "arch": "B",
+  "stage": "probe",
+  "train": {
+    "exact": 1.0,
+    "n": 4000,
+    "wrong": 0
+  },
+  "test": {
+    "exact": 1.0,
+    "n": 600,
+    "wrong": 0
+  },
+  "baseline": 1.0
+}

@@ -48,7 +48,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 class Resolver(nn.Module):
-    """`hidden → address 空間` 的線性打分。**address 本身仍是 deterministic 的。**"""
+    """**A（已 FAIL）**：單一 last-token hidden → address 空間的線性打分。"""
 
     def __init__(self, in_dim, addr_dim=ADDR_DIM):
         super().__init__()
@@ -59,6 +59,51 @@ class Resolver(nn.Module):
         q = F.normalize(self.q(h), dim=-1)
         a = F.normalize(addrs, dim=-1)
         return torch.einsum("bd,bnd->bn", q, a) * self.log_temp.exp()
+
+
+class CandidateResolver(nn.Module):
+    """**B**：candidate-wise readout —— 每個 entity 各自位置的 hidden → 一個 recency scalar。
+
+    ⚠️ 這**不是** A 的另一個 token 超參，是**不同的讀取架構**，兩者回答不同問題：
+       B 若過，只表示**外部 controller 掃描 entity 位置可解**，
+       **不表示** A 的 last-token hidden 其實可解（Codex）。
+    ⚠️ **不重新學 address** —— 選中後直接取該 entry 既有的 address。
+       這裡只輸出 recency 分數，address 不進 loss。
+    """
+
+    def __init__(self, in_dim):
+        super().__init__()
+        self.score = nn.Linear(in_dim, 1)          # shared，逐 candidate 套用
+
+    def forward(self, h):                          # (B, N, H) -> (B, N)
+        return self.score(h).squeeze(-1)
+
+
+@torch.no_grad()
+def cand_hidden(m, tok, eps, max_e, bs=32):
+    """**B**：每個 entity 各自 canonical key span 最後一個 token 的**最終層** hidden。
+
+    回傳 (B, max_e, H) 與 mask。位置由 `reference_view_key_positions` 決定 ——
+    那是本專案既有的 readout 介面（G2b 的 `retrieval_view_key_positions` 同構），
+    **不是**看到 A 的結果後才挑的 token。
+    """
+    H = torch.zeros(len(eps), max_e, G3D.BACKBONE["hidden_size"], device=G3D.DEVICE)
+    M = torch.zeros(len(eps), max_e, dtype=torch.bool, device=G3D.DEVICE)
+    by_len = defaultdict(list)
+    cache = {}
+    for i, e in enumerate(eps):
+        ids, pos = R.reference_view_key_positions(tok, e[0], e[1])
+        cache[i] = (ids, pos)
+        by_len[len(ids)].append(i)
+    for _, idxs in by_len.items():
+        for c in range(0, len(idxs), bs):
+            ch = idxs[c:c + bs]
+            ids = torch.stack([cache[i][0] for i in ch]).to(G3D.DEVICE)
+            h, _, _, _ = m.model(ids, num_loops=G3D.ARCH["num_loops"])
+            for j, i in enumerate(ch):
+                pos = cache[i][1]
+                H[i, :len(pos)] = h[j, pos]; M[i, :len(pos)] = True
+    return H, M
 
 
 @torch.no_grad()
@@ -102,10 +147,16 @@ def batchify(eps, H, idxs, max_e):
     return h, addrs, mask, tgt
 
 
-def evaluate(res, eps, H, idxs, max_e, thr=None):
+def score(res, h, addrs, mask, M=None):
+    return res(h) if M is not None else res(h, addrs)
+
+
+def evaluate(res, eps, H, idxs, max_e, thr=None, M=None):
     h, addrs, mask, tgt = batchify(eps, H, idxs, max_e)
+    if M is not None:
+        mask = M[idxs]
     with torch.no_grad():
-        lg = res(h, addrs).masked_fill(~mask, float("-inf"))
+        lg = score(res, h, addrs, mask, M).masked_fill(~mask, float("-inf"))
         p = lg.softmax(-1)
         conf, pred = p.max(-1)
     ok = (pred == tgt)
@@ -121,6 +172,9 @@ def evaluate(res, eps, H, idxs, max_e, thr=None):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--arch", default="A", choices=["A", "B"],
+                    help="A=單一 last-token hidden（已 FAIL）；"
+                         "B=candidate-wise readout（另立預先登記，只准一次）")
     ap.add_argument("--stage", default="probe", choices=["probe", "formal"])
     ap.add_argument("--steps", type=int, default=1500)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -147,9 +201,17 @@ def main():
     te = build(rng, two, perms, a.n_test, TE_E, TE_F)
     max_e = max(max(TR_E), max(TE_E))
 
-    print(f"  **凍結 core**；resolver 只有 `Linear({G3D.BACKBONE['hidden_size']}→{ADDR_DIM})`"
-          f" + temperature")
-    print(f"  輸入 = reference view **最後一個 token** 的**最終層** hidden（事前固定）")
+    if a.arch == "B":
+        print(f"  **凍結 core**；resolver = shared `Linear({G3D.BACKBONE['hidden_size']}→1)`"
+              f"（每個 candidate 一個 recency scalar）")
+        print(f"  輸入 = **每個 entity 各自** canonical key span 末端的**最終層** hidden")
+        print(f"  ⚠️ **不重新學 address** —— 選中後直接取該 entry 既有的 address")
+        print(f"  ⚠️ B **不是** A 的 token 超參，是**不同的讀取架構**；"
+              f"B 若過只表示 controller 掃描 entity 位置可解，**不表示** A 其實可解")
+    else:
+        print(f"  **凍結 core**；resolver 只有 `Linear({G3D.BACKBONE['hidden_size']}→{ADDR_DIM})`"
+              f" + temperature")
+        print(f"  輸入 = reference view **最後一個 token** 的**最終層** hidden（事前固定）")
     print(f"  entity ID 全程共用（closed-world）；泛化軸 = 排列 / 距離 / filler 數")
     print(f"  train entities{TR_E} fillers{TR_F}  →  cal/test entities{TE_E} fillers{TE_F}")
 
@@ -159,21 +221,30 @@ def main():
           f"\n  learned 通過只能宣稱「凍結 hidden 支援學到 recency 關係」，"
           f"\n  **不能**宣稱這個規則無法由 controller 直接實作。\n")
 
-    Htr, Hcal, Hte = (ref_hidden(m, tok, [e[0] for e in x]) for x in (tr, cal, te))
-    res = Resolver(G3D.BACKBONE["hidden_size"]).to(G3D.DEVICE)
+    if a.arch == "B":
+        Htr, Mtr = cand_hidden(m, tok, tr, max_e)
+        Hcal, Mcal = cand_hidden(m, tok, cal, max_e)
+        Hte, Mte = cand_hidden(m, tok, te, max_e)
+        res = CandidateResolver(G3D.BACKBONE["hidden_size"]).to(G3D.DEVICE)
+    else:
+        Htr, Hcal, Hte = (ref_hidden(m, tok, [e[0] for e in x]) for x in (tr, cal, te))
+        Mtr = Mcal = Mte = None
+        res = Resolver(G3D.BACKBONE["hidden_size"]).to(G3D.DEVICE)
     opt = torch.optim.AdamW(res.parameters(), lr=a.lr, weight_decay=0.01)
     g = torch.Generator().manual_seed(a.seed)
     for step in range(1, a.steps + 1):
         idx = torch.randint(len(tr), (128,), generator=g).tolist()
         h, addrs, mask, tgt = batchify(tr, Htr, idx, max_e)
-        lg = res(h, addrs).masked_fill(~mask, float("-inf"))
+        if Mtr is not None:
+            mask = Mtr[idx]
+        lg = score(res, h, addrs, mask, Mtr).masked_fill(~mask, float("-inf"))
         loss = F.cross_entropy(lg, tgt)          # **未加權 CE**（Codex）
         opt.zero_grad(set_to_none=True); loss.backward(); opt.step()
         if step % 300 == 0:
             print(f"  step {step:5d} loss={loss.item():.4f}", flush=True)
 
-    tr_r = evaluate(res, tr, Htr, list(range(len(tr))), max_e)
-    te_r = evaluate(res, te, Hte, list(range(len(te))), max_e)
+    tr_r = evaluate(res, tr, Htr, list(range(len(tr))), max_e, M=Mtr)
+    te_r = evaluate(res, te, Hte, list(range(len(te))), max_e, M=Mte)
     print(f"\n  raw resolver exact：train {tr_r['exact']:.1%} / **test {te_r['exact']:.1%}**"
           f" (n={te_r['n']})")
 
@@ -182,14 +253,19 @@ def main():
               f"**不可**與正式結果累加成獨立證據。")
         print(f"  判讀：train 都學不起來 → **表示問題**（hidden 沒編碼 recency），"
               f"不是學習問題。")
-        json.dump({"stage": "probe", "train": tr_r, "test": te_r, "baseline": base},
-                  open(os.path.join(HERE, "results_g4b_probe.json"), "w"), indent=2)
-        print(f"  -> results_g4b_probe.json"); return
+        json.dump({"arch": a.arch, "stage": "probe", "train": tr_r, "test": te_r,
+                   "baseline": base},
+                  open(os.path.join(HERE, f"results_g4b_probe_{a.arch}.json"), "w"),
+                  indent=2)
+        print(f"  -> results_g4b_probe_{a.arch}.json"); return
 
     # ---- 事前鎖死的 selective policy：cal 選 threshold，test 只跑一次 ----
-    h, addrs, mask, tgt = batchify(cal, Hcal, list(range(len(cal))), max_e)
+    ci = list(range(len(cal)))
+    h, addrs, mask, tgt = batchify(cal, Hcal, ci, max_e)
+    if Mcal is not None:
+        mask = Mcal[ci]
     with torch.no_grad():
-        p = res(h, addrs).masked_fill(~mask, float("-inf")).softmax(-1)
+        p = score(res, h, addrs, mask, Mcal).masked_fill(~mask, float("-inf")).softmax(-1)
         conf, pred = p.max(-1)
     ok = (pred == tgt)
     cand = sorted(set(conf.tolist()))
@@ -208,7 +284,7 @@ def main():
     print(f"\n  cal 選出 threshold = {thr:.4f}（wrong-existing 上界 ≤ {a.risk_cap:.0%} 下"
           f" abstain 最小 = {best:.1%}）")
 
-    r = evaluate(res, te, Hte, list(range(len(te))), max_e, thr=thr)
+    r = evaluate(res, te, Hte, list(range(len(te))), max_e, thr=thr, M=Mte)
     ub = cp_upper(r["wrong_existing"], max(r["kept"], 1))
     print(f"\n  **test（只跑一次，n={r['n']}）**")
     print(f"    raw resolver exact        {r['exact']:6.1%}")
@@ -225,8 +301,8 @@ def main():
     json.dump({"stage": "formal", "threshold": thr, "test": r, "halluc_ub95": ub,
                "baseline_last_written": base, "train": tr_r,
                "verdict": "PASS" if ok_ else "FAIL"},
-              open(os.path.join(HERE, "results_g4b_formal.json"), "w"), indent=2)
-    print(f"  -> results_g4b_formal.json")
+              open(os.path.join(HERE, f"results_g4b_formal_{a.arch}.json"), "w"), indent=2)
+    print(f"  -> results_g4b_formal_{a.arch}.json")
 
 
 if __name__ == "__main__":

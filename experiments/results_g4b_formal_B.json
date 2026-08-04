@@ -1,0 +1,20 @@
+{
+  "stage": "formal",
+  "threshold": 0.8726860582828522,
+  "test": {
+    "exact": 0.9450000524520874,
+    "n": 600,
+    "coverage": 0.8483333587646484,
+    "abstain": 0.15166667103767395,
+    "wrong_existing": 8,
+    "kept": 509
+  },
+  "halluc_ub95": 0.028179709291139277,
+  "baseline_last_written": 1.0,
+  "train": {
+    "exact": 1.0,
+    "n": 4000,
+    "wrong": 0
+  },
+  "verdict": "PASS"
+}

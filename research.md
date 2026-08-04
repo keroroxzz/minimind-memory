@@ -2695,9 +2695,11 @@ guard 會放行，於是**自信地交付錯誤內容**。
 | 非學習 `last-written pointer` baseline | **100.0%** |
 | loss | 卡在 **1.10** |
 
-**test 完全在 chance 上。** 依事前寫好的判讀規則：
-**這是表示問題，不是學習問題** —— 凍結 core 在該位置的 hidden
-**沒有線性編碼 recency**。
+**test 完全在 chance 上。** 依事前寫好的判讀規則：**這是表示問題，不是學習問題**。
+
+⚠️ **精確的措辭是「未見可轉移的線性 recency code」**，
+**不是**「資訊絕對不存在」（Codex）—— train 仍有 44.7%，而探針本身也有限。
+永久記為 **`final-token / final-layer linear readout FAIL`**。
 
 ⚠️ 探針**只是 representation / small-overfit gate**，
 **不可**與正式結果累加成獨立證據 —— 正式 resolver 本質上也是
@@ -2707,6 +2709,72 @@ guard 會放行，於是**自信地交付錯誤內容**。
 所以就算 learned 版本將來通過，**也只能**宣稱
 「**凍結的 hidden 支援學到 recency 關係**」，
 **不能**宣稱這個規則沒辦法由 controller 直接實作。
+
+---
+
+## 4.41 G4b-B：candidate-wise readout —— **PASS，但輸給不需學習的規則**
+
+A（單一 last-token hidden）FAIL 之後，Codex 允許**另立一次**預先登記試 B，
+條件是明列它為**不同的讀取架構**而非 A 的 token 超參，且 **B 敗即停止 G4b，沒有 C**。
+預先登記落在 `experiments/g4b_B_prereg.json`（跑之前）。
+
+### B 是什麼
+
+每個 entity **各自** canonical key span 末端的**最終層** hidden
+→ shared `Linear(512→1)` 給出一個 recency scalar → softmax over candidates → 未加權 CE。
+**不重新學 address**：選中後直接取該 entry 既有的 address。
+位置由 `reference_view_key_positions` 決定 —— 那是 G2b `retrieval_view_key_positions`
+的同構介面，**不是**看到 A 的結果後才挑的 token。
+
+### 結果
+
+| | A（last-token）| **B（candidate-wise）** |
+|---|---|---|
+| probe train / test | 44.7% / **34.8%**（chance 34.4%）| **100% / 100%** |
+| formal test raw exact | — | **94.5%**（較難 split）|
+
+**所以 recency 資訊確實在各 entity 自己的 hidden 裡，只是不在單一 last-token 摘要裡。**
+
+事前鎖死的 selective policy（cal 選 threshold 使 `wrong-existing` 單側 95% 上界 ≤ 5%、
+再最小化 abstain；**test 只跑一次**）：
+
+| test（n=600）| |
+|---|---|
+| raw resolver exact | 94.5% |
+| coverage（有作答）| 84.8% |
+| abstain | 15.2% |
+| **guarded wrong-existing** | **8/509 = 1.6%**，單側 95% 上界 **2.82%** ✅ |
+
+**裁決：PASS**（gate：`wrong-existing` 上界 ≤ 5%）。
+
+### 但最誠實的標題是：**learned 版本輸給那條不需學習的規則**
+
+**非學習的 `argmax(last write position)` baseline 是 100.0%**，
+而 learned resolver 的 raw exact 只有 **94.5%**。
+
+而且機制上幾乎可以確定 B 只是在**讀位置**：每個 entity 的 hidden 天然帶著
+它在序列中的位置編碼，一個線性映射學「位置越後分數越高」是平凡的。
+這正是 Codex 事前預測的 **position scan**。
+
+因此**可以宣稱的上限**（事前鎖死）：
+
+> **candidate-wise temporal resolver / controller readout** 可行。
+
+**不可宣稱**：core 自行摘要整段 stream；神經 working memory；
+以及 —— 由於本任務的關係**永遠是「最後寫入」** —— 任何關於一般時序 binding 的推論。
+
+### A 的地位不被 B 取代
+
+A 永久記為 **`final-token / final-layer linear readout FAIL`**。
+B 通過**只表示外部 controller 掃描 entity 位置可解**，
+**不表示** A 的 last-token hidden 其實可解。
+
+### 安全面
+
+`exact-membership guard` **擋不住**指錯到已存在的 entity，
+所以這個 selective policy 是 G4b 的**必要子結果**，不是附加。
+只稱 **closed-world temporal binding**，**不稱**完整安全閉環。
+§4.30 的 G2c open-set blocker 仍原樣掛著。
 
 ---
 
