@@ -16,6 +16,8 @@
     "guard_badread": 0,
     "guard_wrongkey": 0
   },
+  "contract_c_injected_n": 60,
+  "contract_c_delivered": 0,
   "verdict": "SEALED",
   "milestone": "exact-membership guarded closure"
 }

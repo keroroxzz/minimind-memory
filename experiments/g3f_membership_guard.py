@@ -61,11 +61,21 @@ class GuardAbort(Exception):
 
 
 @torch.no_grad()
-def run_guarded(m, tok, dl, writer, ret, ev, s, pool, pool_perm, omitted, thr, stats):
+def run_guarded(m, tok, dl, writer, ret, ev, s, pool, pool_perm, omitted, thr, stats,
+                corrupt_key=False):
     store = LatentStore()
     for x in pool:
         z = writer(ev[(x, tuple(pool_perm[x]))].unsqueeze(0))[0]
         store.commit([MemoryEntry(x, z, {"key": x})])
+    if corrupt_key:
+        # ⚠️ 契約 C 的**刻意注入**：自然評測裡 `wrongkey` 從未觸發（retriever 沒選錯），
+        #    那只證明「guard 沒掩蓋檢索錯誤」，**不證明 fail-closed 分支有效**（Codex）。
+        #    這裡把某個 entry 的 address 欄改成別的 key，讓 read 回來的東西
+        #    與請求不符 —— 必須被擋下、零交付。
+        victim = s.chain[0]
+        other = next(x for x in pool if x != victim)
+        e = store._entries[victim]
+        store._entries[victim] = MemoryEntry(other, e.latent.clone(), e.metadata, e.version)
 
     addrs = torch.stack([address_vector(x) for x in pool]).to(DEVICE)
     cues = core_hidden_cue(m, tok, s)
@@ -82,6 +92,7 @@ def run_guarded(m, tok, dl, writer, ret, ev, s, pool, pool_perm, omitted, thr, s
                 raise GuardAbort(f"{key} 不在 store 裡")
             e = store.read([key])[0]
             if e is None or e.address != key or e.latent.shape != (LATENT_DIM,):
+                # `e.address != key` 就是契約 C：取回的 entry 與請求不符
                 stats["guard_badread"] += 1
                 raise GuardAbort(f"{key} 的讀取違反契約")
             # ---- learned retriever 仍負責選址，但要被 guard 覆核 ----
@@ -160,11 +171,23 @@ def main():
     print(f"    A. present 不誤擋      false_abstain {fa}/{na}"
           f"{'  ✅' if fa == 0 else '  ❌'}")
     print(f"    B. absent 零交付        halluc {hal}/{nm}{'  ✅' if hal == 0 else '  ❌'}")
-    print(f"    C. wrong-key fail-closed  觸發 {st['guard_wrongkey']} 次"
-          f"（不是錯誤，是 guard 在做事）")
+    print(f"    C. wrong-key fail-closed  自然評測觸發 {st['guard_wrongkey']} 次"
+          f"\n       ⚠️ 這**只**表示 retriever 沒選錯 → guard 沒掩蓋檢索錯誤；"
+          f"\n          **不證明 fail-closed 分支有效**，那要靠下面的刻意注入")
     print(f"       guard 明細：absent {st['guard_absent']} / badread "
           f"{st['guard_badread']} / wrongkey {st['guard_wrongkey']}")
-    sealed = (fa == 0 and hal == 0)
+    # ---- 契約 C 的刻意注入測試（不需重跑 300 題）----
+    cst = {"guard_absent": 0, "guard_badread": 0, "guard_wrongkey": 0}
+    c_delivered = 0
+    n_c = min(60, len(ans))
+    for s_, pool, pp, om in ans[:n_c]:
+        r = run_guarded(m, tok, dl, writer, ret, ev, s_, pool, pp, om, thr, cst,
+                        corrupt_key=True)
+        c_delivered += int(not r["abstained"])
+    print(f"\n  **契約 C 的刻意注入**（把 read 回來的 entry key 換錯，n={n_c}）")
+    print(f"    交付次數 {c_delivered}/{n_c}{'  ✅ 零交付' if c_delivered == 0 else '  ❌'}"
+          f"   guard 觸發：badread {cst['guard_badread']}")
+    sealed = (fa == 0 and hal == 0 and c_delivered == 0)
     print(f"\n  裁決：**{'SEALED —— exact-membership guarded closure' if sealed else 'FAIL'}**")
     print(f"  ⚠️ 這**不解決 open-set 的語意問題**：query 沒有可靠 canonical key、"
           f"\n     key extraction 出錯、或要找語意相關而非同 ID 時，store 無法直接回答。"
@@ -174,7 +197,9 @@ def main():
                "threshold_shadow_only": thr, "R_abstain": R_ab, "halluc": hal,
                "halluc_ub95": cp_upper(hal, nm), "A_ans": ok, "false_abstain": fa,
                "shadow_false_accept": shadow_fa, "shadow_false_block": shadow_wrong,
-               "guard": st, "verdict": "SEALED" if sealed else "FAIL",
+               "guard": st, "contract_c_injected_n": n_c,
+               "contract_c_delivered": c_delivered,
+               "verdict": "SEALED" if sealed else "FAIL",
                "milestone": "exact-membership guarded closure"},
               open(os.path.join(HERE, "results_g3f.json"), "w"), indent=2,
               ensure_ascii=False)

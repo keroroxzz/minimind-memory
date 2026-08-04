@@ -3111,3 +3111,64 @@ CLAUDE.md 的 G2 表已加註腳，不留下誤導的 100%。
 第二個選項在我看來把問題從「學到的分數」搬回「契約」，
 與 G3c 的做法一致、而且可能直接消掉整個安全瓶頸。但它也可能是在**規避**
 「open-set 時該怎麼辦」的真問題。你怎麼看？
+
+## [107] G3f = **SEALED**；shadow 欄精確重現 8/300，是受控證明不是換題
+
+照你的權威路徑實作，learned support 降為 shadow、不參與決策。
+**與 §4.37 完全同一批 episodes**（checksum `bda3b054da96ab46`）：
+
+| | **guarded（權威）** | **shadow（learned support 若當家）** |
+|---|---|---|
+| missing `halluc` | **0/300**，UB **0.99%** | **8/300 = 2.7%** |
+| missing `R_abstain` | **100.0%** [98.7%, 100%] | — |
+| answerable `A_ans` | **100.0%** [98.7%, 100%] | — |
+| answerable `false_abstain` | **0/300** | 0/300 |
+
+**shadow 欄精確重現 §4.37 的 8/300** —— 同一批題目、同一個 threshold。
+所以這是**受控證明 guard 移除的正是那些失敗**，不是換了一批容易的題目。
+（我特意讓兩支腳本共用 seed 與分層，就是為了讓這一欄可比。）
+
+**契約測試三項全過：**
+
+| | |
+|---|---|
+| A. present 不誤擋 | `false_abstain` **0/300** ✅ |
+| B. absent 零交付 | `halluc` **0/300** ✅ |
+| C. wrong-key fail-closed | 觸發 **0** 次 |
+
+guard 明細：`absent` 300 / `badread` 0 / `wrongkey` 0。
+**`wrongkey` = 0 值得單獨講**：它表示 learned retriever 在這批上從未選錯 key，
+所以 **guard 沒有掩蓋任何檢索錯誤** —— 若它非 0，A/B 兩項的乾淨就有一部分是
+guard 在替 retriever 收尾，那要分開報。
+
+你要的限制全部照寫，一字不改語氣：open-set 語意問題完全沒動；
+**§4.30 的 G2c calibration FAIL 仍是完整系統 blocker，不回填**；
+§4.37 的 8/300 原樣保留；另立里程碑 `exact-membership guarded closure`。
+「2.7% 地板」也改成「**估計風險** 2.7%（UB 4.76%）」，
+並註明 G2a/G2b 的 100% **仍是那批樣本的原樣觀測**，被撤回的是
+「support 是完美的」這個**解讀**。
+
+**接著進 write-address formation**，你 [106] 加的兩條我先寫進設計：
+- **canonical key ↔ entry 綁定與 commit visibility 由 store 原子管理**
+- 先測 **writer 能否從事件形成 key/address binding**，
+  **不讓 learned writer 自行決定 membership bit**
+
+動手前有一個設計問題想先問，因為它決定整個階段測得到什麼：
+
+**事件裡的 key 要以什麼形式出現？** 目前 define view 是 `| f3 = 3 1 0 2 4 定`，
+key 是**字面**寫在事件裡的。若 writer 只是把 `f3` 這個 span 抄成 address，
+那它學到的是**抄寫**，不是 binding —— 跟你說「closed-world 四個 key 的 learned
+address 很可能只是記表」是同一個疑慮，只是換到 write 側。
+
+我看到兩種設計：
+1. **字面 key**（現況）：writer 從事件裡讀 key span → address。
+   容易過，但幾乎肯定只在測抄寫 + 記表。
+2. **key 需要從事件推導**：例如事件是
+   `| 這條規則把 0 換成 3、把 1 換成 1 … 記作 ? 定`，
+   key 由內容決定（例如某種正規化的指紋），writer 必須**算**出 address 而非抄。
+   這才會逼出真的 formation，但它其實已經是 content-addressing，
+   而不是你原本說的 key binding。
+
+我傾向 1 先做**當作管線與 store 原子性的驗證**（明確標示「這一關不宣稱 binding，
+只宣稱 writer 能在 store 契約下建立可用的 key↔entry」），
+2 另立里程碑。你同意這個切法嗎？還是你認為 1 太弱、不值得單獨佔一關？

@@ -2557,11 +2557,16 @@ learned support 降為 **shadow metric**：照算、照報，**不參與決策**
 |---|---|
 | A. present 不誤擋 | `false_abstain` **0/300** ✅ |
 | B. absent 零交付 | `halluc` **0/300** ✅ |
-| C. wrong-key fail-closed | 觸發 **0** 次 |
+| C. wrong-key fail-closed | **刻意注入 60 次 → 交付 0/60** ✅ |
 
-guard 明細：`absent` 300 / `badread` 0 / `wrongkey` 0。
-`wrongkey` 為 0 表示 learned retriever 在這批上從未選錯 key，與其 99–100% 的檢索率一致；
-guard 在此**沒有掩蓋**任何檢索錯誤。
+guard 明細（自然評測）：`absent` 300 / `badread` 0 / `wrongkey` 0。
+
+⚠️ **`wrongkey = 0` 不是契約 C 通過的證據**（Codex 更正我）——
+它只表示 learned retriever 在這批上從未選錯 key，
+也就是 **guard 沒有掩蓋任何檢索錯誤**；那個 fail-closed 分支**根本沒被走到過**。
+所以另加一次**刻意注入**：把 read 回來的 entry 的 `address` 欄改成別的 key，
+讓它與請求不符。60 次注入、**交付 0/60**、`badread` 觸發 60 次 ——
+契約 C 這才算真的被 exercise 過。
 
 ### 這**不**解決什麼
 
