@@ -3026,6 +3026,89 @@ recurrent delivery loss（訓練時 unroll 多次並對每 hop 保真）**」—
 
 ---
 
+## 4.46 G6a `zdelta-v2`：**配置泛化完美，horizon 外推失敗且退步**
+
+**命名紀律**：`zdelta-v2` 是新 checkpoint／新 hash／新章節。
+§4.25 的 **`zdelta-v1` 與 G1/G3/G5 全部維持當時權重與裁決 —— 不重算、不覆寫**。
+v2 只列為對 v1 的 **prospective comparison**；即使通過也**不能**反向把舊 FAIL 改成 PASS。
+第一階段**只訓 delivery**，core/writer/store/retriever 全凍結。
+
+兩個訓練目標**沒有拆成兩個 loss** —— 同一批 factorial episode 同時交叉
+`j` 與 carrier 配置（否則模型會從沒看過真正失敗的交互格）。
+train 只覆蓋 5 格，held-out 含 **`j` 外推**（train `j≤2`、test `j=3`）。
+**primary 是「追平 `text carry`」，不是「贏過 v1」。**
+
+| 格子 | v1 | **v2** | text | v2−text |
+|---|---|---|---|---|
+| `j=0` allph / mixed | 100% / 100% | 100% / 100% | 100% | +0.0pp |
+| `j=1` allph / mixed | 100% / 89% | 100% / **100%** | 100% | +0.0pp |
+| `j=2` allph | 100% | 100% | 100% | +0.0pp |
+| **`j=2` mixed** HELD | 79% | **100%** | 100% | **+0.0pp** |
+| **`j=3` allph** HELD | **90%** | **82%** | 100% | **−18.0pp** |
+| **`j=3` mixed** HELD | 56% | 75% | 100% | −25.0pp |
+
+**兩件事同時成立：**
+
+1. **配置泛化完美。** 未見的配置組合 `j=2 mixed` 從 79% → **100%**，追平 `text`。
+2. **horizon 外推失敗，而且退步。** `j=3 allph` **90% → 82%** ——
+   在它原本就擅長的配置上，訓練 `j≤2` 反而**傷害**了更長的未見 horizon。
+
+**依事前鎖死的判讀：`zdelta-v2` 是 finite-horizon coverage repair，
+不是 composition-stable delivery。**
+
+⚠️ 措辭收窄（Codex）：不可寫成「只記住見過的格子」——
+**配置組合有遷移**，**不外推的是合成深度**。
+
+### 兩個被推翻的機制假說（都是我提的）
+
+**假說 1「v2 把 `j` 當條件變數」—— 被程式碼證偽。**
+`ContextualKVAdapter(use_context=False)` 的 delta 只是 `(slot, z)` 的函數，
+不看 native K/V，**交付的 delta 跨 `j` 逐位元相同** —— 字面上不可能 condition on `j`。
+
+**假說 2「executor dynamics 對交付偏移有增益 >1」—— 被數據證偽。**
+
+| j | ‖h_交付 − h_文字‖ | 相對 | 逐步增益 |
+|---|---|---|---|
+| 0 | 20.57 | 0.423 | — |
+| 1 | 19.46 | 0.400 | 0.946 |
+| 2 | 17.22 | 0.354 | 0.885 |
+| 3 | 17.84 | 0.365 | 1.036 |
+
+**沒有放大**，且 `j=0` 的分歧已達相對 **0.42** 卻仍 **100% 正確**。
+
+### 下一個**可證偽**的模型（尚非結論）
+
+⚠️ **不可**寫成「margin < hidden 偏移」——**不同空間、不同單位**，
+`20.57` 的 hidden L2 與 logit margin **不可比較**（Codex）。
+固定範數也可能因**方向**或下游 Jacobian 不同而有完全不同的決策效應。
+
+正確的量法是 **paired logit decomposition**（teacher-forced，避免前位錯誤污染後位）：
+
+    m_text = logit(correct) − max_wrong
+    Δm     = m_delivery − m_text
+    翻錯的精確條件： m_text + Δm < 0
+
+**假說只有在**「`m_text` 隨 `j` 系統下降」**且**「`Δm` 的條件分布大致不隨 `j`」
+**且**「`m_text + Δm < 0` 幾乎逐題預測翻錯」時才成立。
+若 `Δm` 也隨 `j`/config 改變 → 機制仍是 **task-relevant directional interaction**；
+若 margin 不降 → **直接推翻**。
+`mixed` 較差也要先問它是不是**更負的 `Δm`**，**不能**由 hidden norm 猜「偏移更大」。
+
+### 工程方向**不得**現在鎖定
+
+「壓 hidden 偏移、放棄擴大 `j`」**目前不成立**：
+- 「v2 確實在壓偏移」未經驗證（需要 paired v1/v2 hidden divergence，
+  且即使 L2 變小也要證明 `Δm` 改善）。
+- **`j=0` 相對 0.42 仍 100%**，反而說明**全空間 hidden matching 可能不是對的目標** ——
+  大量差異可能落在 **task-null directions**。
+- 若 margin 模型成立，首選是 **task-functional alignment**
+  （logit／attention distillation、margin-preserving loss，跨 `j` 評測），
+  **不是**盲目的 hidden-MSE；而**擴大 `j` 覆蓋仍可能**教模型壓低 decision-relevant 的 `Δm`。
+
+**正式 margin 診斷之後才選 v3。在那之前不改訓練、不開 v3。**
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
