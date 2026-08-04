@@ -543,3 +543,42 @@ if __name__ == "__main__":
     print("\n" + "=" * 62)
     print(f"  {'全部通過' if ok else '有失敗'}")
     sys.exit(0 if ok else 1)
+
+
+# --------------------------------------------------------- G3a：write formation 的資料層
+
+def render_define_view(key: str, perm) -> str:
+    """G3a：writer 觀察到的**事件**（一次寫入的來源）。
+
+        | f3 = 3 1 0 2 4 定
+
+    writer 必須從這裡**形成** latent，而不是直接拿 `perm_to_latent(perm)`。
+    形成出來的 latent 要能被**凍結的、獨立訓練過的** `zdelta` 交付介面消費 ——
+    那才是「可分離、可抽換的記憶模組」這個主張的實測。
+
+    ⚠️ 這裡刻意**不含 chain、不含 state** —— 寫入是 per-entry 的，
+       不可以偷看下游要問什麼，否則測到的是「看題目寫答案」而非 write formation。
+    """
+    return f"| {key} = {_nums(perm)} 定"
+
+
+def define_view_value_span(tok, key, perm):
+    """define view 裡 permutation 那 5 個 token 的位置（writer 的讀取點）。"""
+    view = render_define_view(key, perm)
+    head = f"| {key} ="
+    base = len(tok(tok.bos_token + head, add_special_tokens=False).input_ids)
+    n = len(tok(" " + _nums(perm), add_special_tokens=False).input_ids)
+    assert n == PERM_N, f"value span 應為 {PERM_N} 個 token，實得 {n}：{perm}"
+    return view, list(range(base, base + n))
+
+
+# G3a 的 **permutation** 三分：train/val 用不交的置換集合，測 write 的泛化。
+# （key 身分的泛化是 G2c 的事，已判 open-set calibration fail；這裡固定用 f0..f3。）
+def perm_splits(seed=20260804, n_val=24):
+    """S₅ 的 119 個非恆等置換（`make_canonical` 排除恆等），切成 train / val。"""
+    import itertools
+    allp = [list(p) for p in itertools.permutations(range(PERM_N))
+            if list(p) != list(range(PERM_N))]
+    rng = random.Random(seed)
+    rng.shuffle(allp)
+    return allp[n_val:], allp[:n_val]

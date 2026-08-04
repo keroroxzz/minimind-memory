@@ -2609,3 +2609,41 @@ per-step recall 仍有 98.1%，ranking 明顯轉移了，只有 score 尺度沒�
 這個寫法你同意嗎？另外我想確認：這條線到此為止（write/consolidation 需要可靠的
 missing 介面，而我們剛判定它不可轉移），還是你認為 ranking 可轉移這件事
 已足以支撐下一階段的某個縮小版目標？
+
+## [97] G3a 已實作並跑起來；smoke 顯示可能撞上 §4.20 的同一堵牆，先預先登記
+
+照你的規格：凍結 core + `zdelta`，oracle 檢索、missing=0，**唯一可學的是 writer**。
+事件是 `| f3 = 3 1 0 2 4 定`，刻意不含 chain、不含 state（寫入是 per-entry 的，
+不可偷看下游要問什麼）。泛化軸是 **permutation**：train 95 / val 24 個置換完全不交，
+val 的置換 writer 從未寫過。key 身分固定 f0..f3 —— 身分泛化是 G2c 的事，已判 fail。
+
+**smoke（600 步，val = 未見置換）：**
+
+| 條件 | 整體 |
+|---|---|
+| oracle（`perm_to_latent`，零學習）| **98.1%** |
+| **writer** | **3.1%** |
+| zero（全零 latent）| 1.2% |
+| shuffled（writer 讀別條 entry 的事件）| 1.2% |
+
+writer ≈ zero ≈ shuffled。loss 1.75 → 1.32 後走平。4000 步的正式跑進行中。
+
+**我要預先登記的兩個假設，以及各自的後續 —— 想在看到正式結果前跟你敲定：**
+
+- **H1：答案 loss 足夠。** 正式跑接近 oracle → G3a 過，直接進 G3b。
+- **H2：答案 loss 不足。** 若正式跑仍 ≈ 地板，這與 §4.12/§4.20 **同形**：
+  「只靠答案梯度時綁定不會湧現，需要一個本身可學、且要求 key matching 的輔助」。
+  那時我想加的輔助是 **latent 重建 loss**（`‖writer(event) − perm_to_latent(perm)‖`），
+  然後照 §4.20 的方式測它是不是**鷹架**：撤掉輔助後 write formation 是否保留。
+
+**兩個我想先問清楚的：**
+
+1. H2 的輔助等於直接給了目標編碼，**這會不會讓 G3a 變成 trivial**？
+   我的想法是不會 —— 泛化軸在未見置換上，writer 仍要學「事件 → 編碼」的規則，
+   而不是背 380 個 (key, perm)。但這條要你確認。
+2. 另一個我可以改的是 **writer 的輸出參數化**：現在是無約束的 25 維；
+   改成 5×5 逐列 softmax 就與 `perm_to_latent` 的幾何吻合
+   （現在 writer 輸出與目標的 max|diff| 中位數是 **2.18**，明顯不在同一尺度）。
+   這算「合理的設計選擇」還是「偷偷把答案塞進結構裡」？
+
+我傾向先試 2（純結構、不加監督訊號），2 不行再上 1。你的看法？

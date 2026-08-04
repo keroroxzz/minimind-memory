@@ -1951,13 +1951,19 @@ v2 測的**不只是未見身分，是結構不同的身分族群**。
 softmax 正規化又讓 3-token key 的權重是 **0.14 / 0.34 / 0.52**、
 2-token 是 **0.29 / 0.71** —— 兩個不同的 pooling regime，score 尺度自然偏移。
 
-### 因此結論寫成
+### 因此結論寫成（Codex 收窄後的版本）
 
-> 在**跨越 span 結構**的未見身分族群上，凍結的 support score 無法用單一 threshold
-> 同時滿足風險與可用性；**threshold 不可轉移**。
+> encoder 主要在 **2-token identities** 上訓練，而 cal2/test2 主要是 **3-token**；
+> 在 **identity shift ＋ span-structure shift 的聯合位移**下，凍結的 support score
+> 不存在能同時滿足 5% 風險與 5% 效用的 global threshold。
+> **此設計無法分離** identity shift、span-length shift 與兩者的交互作用。
+
+`pos_logit[2]` 的診斷是**相容機制，不是已識別原因** —— 本設計沒有能力做這個歸因。
 
 **不寫成**「對任何未見身分都不可轉移」—— v1 的 test（3-token 佔 8/10）
 per-step recall 仍有 98.1%，**ranking 明顯轉移了，只有 score 尺度沒有**。
+
+**G2c-cal-v2 永久記為 FAIL。** 事後發現 span shift 不構成把它改判 invalid 或重跑的理由。
 
 ### 整條 G2c 線的總結
 
@@ -1967,9 +1973,79 @@ per-step recall 仍有 98.1%，**ranking 明顯轉移了，只有 score 尺度�
 | 未見身分的 ordered / per-step retrieval | **過** —— 97.0/96.2%、98.1%/98.1% |
 | 未見身分的 open-set abstention calibration | **不過** —— v1 73.3/81.5%，v2 兩道 gate 各倒一道 |
 
-依預先登記：**停止調參**。不換 threshold、不擴 cal、不開第三版。
+依預先登記：**停止調參**。不換 threshold、不擴 cal、不開第三版，
+也**不做**不平衡 length 重訓或 length-conditioned threshold。
 這與 §4.20 呈現**一致的分裂形狀**（能力可轉移、棄答校準不可轉移），
 但**不宣稱是同一機制已複現**。
+
+### 記入設計債（不在本階段償還）
+
+- **canonical encoder 的訓練必須覆蓋 tokenization 結構** ——
+  身分集合按數字範圍切分時，span 長度會系統性偏斜。
+- **support 必須對結構位移穩健**，不能只在 score 尺度不變的前提下校準。
+
+### 這條線之後往哪走
+
+完整 C 層仍卡在「跨 identity／structure 的 missing calibration」，
+但 **write 元件本身可以獨立取得證據**，所以下一階段縮小成：
+
+- **G3a：oracle retrieval、missing=0 下的 write formation。**
+  凍結 core ＋ `zdelta`，**地址與 commit 位置由 oracle 固定**，
+  只訓 writer 從事件形成 latent，先用**下游答案 loss** 驗證寫入的內容可被消費。
+  這樣就把 write 隔離出來，不需要尚未可靠的 open-set threshold。
+- **G3b（G3a 過後才做）：closed-world 閉環。** 接回**已通過**的 G2a/G2b
+  固定 key retriever／support。**不得接 G2c**，也**不得宣稱 open-set 閉環**。
+
+---
+
+## 4.31 G3a 方法與預先登記（2026-08-04，結果未定）
+
+問題收斂成一句：
+
+> writer 能不能從一個**事件**形成 latent，讓**凍結的、獨立訓練過的** `zdelta`
+> 交付介面消費，而下游凍結的 core 仍答得對？
+
+這是「可分離、可抽換的記憶模組」這個主張的直接測試 —— **writer 從沒看過 `zdelta`，
+`zdelta` 也從沒看過 writer**。
+
+**隔離掉的東西：** 檢索（oracle 直接指定該步用哪一條）、missing（p=0）、
+交付（`zdelta` 凍結）、core（凍結）。**唯一可學的是 writer。**
+
+**事件**是 `| f3 = 3 1 0 2 4 定`，刻意**不含 chain、不含 state** ——
+寫入是 per-entry 的，不可偷看下游要問什麼，否則測到的是「看題目寫答案」。
+
+**泛化軸是 permutation**（不是 key 身分 —— 那是 G2c 的事，已判 open-set fail）：
+train 95 / val 24 個置換完全不交，val 的置換 writer 從未寫過。
+key 固定 f0..f3。置換每樣本重抽，所以沒有東西可以背。
+
+**四個條件缺一不可判讀：**
+
+| 條件 | 意義 |
+|---|---|
+| `oracle` | `perm_to_latent`，零學習 —— **天花板** |
+| `writer` | 學到的 —— 主條件 |
+| `zero` | 全零 latent —— **地板** |
+| `shuffled` | writer 讀**別條 entry** 的事件 —— 若也高分則結果無效 |
+
+### smoke（600 步）與兩個預先登記的假設
+
+| 條件 | 整體（val = 未見置換）|
+|---|---|
+| oracle | **98.1%** |
+| **writer** | **3.1%** |
+| zero | 1.2% |
+| shuffled | 1.2% |
+
+writer ≈ zero ≈ shuffled。**在看到正式跑的結果前**登記：
+
+- **H1：答案 loss 足夠。** 正式跑接近 oracle → G3a 過，進 G3b。
+- **H2：答案 loss 不足。** 若仍 ≈ 地板，這與 §4.12/§4.20 **同形**
+  （只靠答案梯度時綁定不會湧現）。屆時的處置依序是：
+  1. 先改 **writer 的輸出參數化**（5×5 逐列 softmax，與 `perm_to_latent` 的幾何吻合；
+     目前 writer 輸出與目標的 max\|diff\| 中位數是 **2.18**，明顯不在同一尺度）——
+     **純結構，不加任何監督訊號**。
+  2. 仍不行才加 **latent 重建輔助**，並照 §4.20 的方式測它是不是**鷹架**：
+     撤掉輔助後 write formation 是否保留。
 
 ---
 
