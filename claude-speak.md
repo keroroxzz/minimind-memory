@@ -2332,3 +2332,133 @@ query   = Q(cue)           # 仍只訓 query 側
 但那樣 address 之間就不再正交，**檢索難度會真正上升**，這正是我們要測的。
 
 pool scaling 我打算放在 G2c 之後，你先前也是這個順序。有異議嗎？
+
+## [91] G2c 卡在一個實質問題：**凍結的 core 分不出 f-key**
+
+照你的設計實作 tied encoder 時，先量了 write-view hidden 的可分離度：
+
+| 表示 | 兩兩 \|cos\| 中位數 | 最大 | >0.99 的配對數 |
+|---|---|---|---|
+| **write-view hidden**（`\| f41 存` 的 key 位置）| 0.967 | **1.000** | **28 對** |
+| 扣掉平均後 | 0.872 | **1.000** | — |
+| **token embedding** | **0.794** | 1.000 | **1 對** |
+
+**28 對 key 在 core 的表示裡完全無法區分**（例：`f7↔f8`、`f8↔f15`、`f8↔f30`），
+扣掉共用成分後最大仍是 1.000。
+
+**我認為原因是：凍結的 core 從未見過 f-key。**
+它是 `g1_L0`，訓練資料是 `| x=… | 3 1 0 2 4 | … 求x=` —— **純數字、零個 f-key**。
+那些 token 對它是 OOD，於是被映射到相近區域。
+
+（順帶：我一開始還取錯位置 —— 取序列最後一個 token，
+但那是「存」、對所有 key 相同，中位數 0.995。改取 key 自己的最後一個 token
+才降到 0.967。兩者都不夠。）
+
+**所以「tied encoder over 凍結 core hidden」的前提在這個 setup 下不成立。**
+
+**三個選項，想聽你的：**
+
+1. **tied encoder over token embedding**（兩側都用）——
+   可分離度好得多，仍滿足「tied weights + unseen identities」。
+   但 query 就失去 context，退回 G2a 式的線索。
+2. **改用見過 f-key 的 core** —— 但我們沒有；重訓一個會動到已封板的 delivery。
+3. **write view 加長／重複 key** 讓 core 被迫區分 ——
+   但那是在繞過「core 本來就不編碼 key 身分」這個事實，
+   而且 unseen key 的表示仍可能塌在一起。
+
+我傾向 **1**，並把「core 不編碼未訓練過的符號身分」本身記為一個發現 ——
+它對 §6 閉環有實質含意：**retrieval 的 address 不能假設 core 會替你編碼 key**。
+你怎麼看？
+
+## [92] 資料閘結果：你擋對了，[91] 的歸因**撤回**
+
+`experiments/g2c_identity_gate.py`，四關全過。三件事：
+
+**1. 閘門抓到真 bug —— canonical span 必須含前導空白。**
+這個 tokenizer 是 context-dependent 的：`"f0"→[105,51]` 但 `" f0"→[341,51]`。
+key 在 write／retrieval view 裡**一律**前面有空白，我 [91] 卻用不帶空白的形式量。
+改正後：**碰撞 28 對 → 7 對**。（既有的 `retrieval_view_key_positions` 本來就用 `" "+g`，
+是我的量測腳本錯，不是 renderer 錯。）關 1b 已 assert 兩側切法一致：write 48 個 +
+retrieval 400 次定位全部原樣命中。
+
+**2. 那 7 對**不是**精確重疊 —— [91] 的「core 未見 f-key」歸因撤回。**
+
+```
+f8↔f12  [341,59] vs [341,2208]   raw max|diff| 6.38e-02   ‖h‖ 41.33
+f17↔f18 [341,4321] vs [341,3398] raw max|diff| 1.51e-01   ‖h‖ 41.34
+```
+相對差 ~3e-3，比 float32 eps 大四個數量級。真實情況是
+**共用成分極大、身分訊號只佔範數 0.3%**，不是 core 不編碼身分。
+
+**3. 但選 1 仍然正確 —— 理由改成條件數：**
+
+| 基底 | 扣平均後 max\|cos\| | rank | σ_min/σ_max |
+|---|---|---|---|
+| write hidden | 1.000（241 對 >0.99）| 47/48 | **1.65e-4** |
+| emb 位置加權 | **0.959**（0 對）| 32/48 | **1.09e-1** |
+
+hidden 技術上滿秩、身分**在**，但條件數差 660 倍 —— 要靠極微小方向分辨，unseen key 上不可靠。
+§6 的寫法照你的限縮：「**此凍結 numeric-L0 core 的所測 hidden，其身分方向條件數過差，
+不適合直接作 address**」，不宣稱 core 永不編碼未見符號。
+
+**4. 對你 spec 的一個修正：pooling 不能用 mean。**
+emb mean 唯一那對 cos=1.000 是 `f34↔f43` = `[341,54,55]` vs `[341,55,54]` ——
+**anagram**，mean-pool 丟掉順序造成的假碰撞。所以「mean/attention pooling」要收斂成
+**order-aware**：我打算用可學的 per-position 權重（span ≤3），它同時涵蓋 mean 與位置加權。
+
+**5. split 可分性**（位置加權基底）：
+TRAIN 組內 max 0.914 / CAL 0.866 / TEST 0.880；**TEST↔TRAIN 跨組 max 0.964**。
+
+**兩個問題：**
+- 跨組 0.964 你接受嗎？還是要在訓練前加一道 margin gate（例如要求 address 間
+  min pairwise 距離 ≥ 某值，不過就先報告而非硬跑）？
+- order-aware pooling 的修正你同意嗎？
+
+同意的話我直接實作 tied encoder（完整 canonical span → 可學位置權重 → shared projection
+→ L2 norm），train/cal/test 按 key identity 不交，encoder 訓完 freeze 才 commit test address，
+threshold 只由 calibration 定。
+
+## [93] G2c 已實作並跑起來；另外先報一個我自己改掉的資料設計 bug
+
+**四條要求都照做了：**
+1. canonical span 的前導空白**升格為 renderer invariant** ——
+   `g1_renderer.canonical_key_ids` / `locate_key_span` 是唯一定義來源，
+   量測腳本只是轉出來用。
+2. artifact 存了：`g2c_identity_artifact.pt`（完整 pairwise 分布、canonical 切法、
+   splits、跨組 max 0.964）。身分凍結，不按 margin 篩。
+3. threshold 只由 calibration 定（既有機制未動）。
+4. 訓完在 untouched test 報 address 兩兩 |cos| 與**按 nearest-impostor cosine 分箱的 hit/miss**。
+
+**一個我在實作時發現、自己改掉的資料設計 bug（要跟你報備，因為它動到剛凍結的 split）：**
+原本 `KEYS_CAL`/`KEYS_TEST` 各 **8 個 = POOL_SIZE**。但 missing 題要
+**把 dropped key 排除在 pool 外、又把 pool 補滿 8 條**（基數恆為 8 是為了不讓模型
+用「少一條」判 missing）—— split 恰好 8 時 others 湊不滿，`build_pool` 的 assert 會炸。
+每個 split 至少要 **POOL_SIZE + 1**。已改成 **28 / 10 / 10** 並加 assert 擋住，
+artifact 重生成。改動發生在**任何 G2c 訓練之前**，不是看到結果才調。
+
+**smoke（800 步、unseen keys、untouched test）：**
+
+| 指標 | |
+|---|---|
+| ordered / per-step / hit-miss | **100% / 100% / 100%** |
+| R_abstain（缺資料正確拒絕） | **100%**（n=29） |
+| halluc | **0%** |
+| test 10 個未見 key 的 address 兩兩 \|cos\| | min 0.000 / 中位 0.123 / **max 0.718** |
+| 輸入端基準（emb 位置加權）跨組 max | 0.964 |
+
+**分箱（nearest-impostor cosine）：**
+```
+[-1.00,+0.30)  n= 29  acc 100.0%
+[+0.30,+0.60)  n=329  acc 100.0%
+[+0.60,+0.80)  n=242  acc 100.0%
+```
+最難的箱（n=242）也是 100%。encoder 把輸入端 0.964 的未見 key 推開到 0.718。
+
+正式跑（4000 步）**兩個 seed** 進行中 —— 你之前提的 replication debt，這條先付。
+
+**一個我想先講清楚的解讀限制**（不等結果）：
+miss 的 step 落在 `[-1.00,+0.30)` 箱，代表「查的 key 不在 pool 裡 → 與所有 pool address
+的最大相似度就是低」。missing 之所以可偵測，機制是**未見身分被推得夠開**，
+不是 support head 學到什麼額外判準。這跟你預鎖的措辭一致，但我想寫進 research.md 時
+講得更死一點：G2c 證的是 **address 建構的分離度**，missing calibration 是它的推論，
+不是獨立的第二項能力。你同意這個寫法嗎？

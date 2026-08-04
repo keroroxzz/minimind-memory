@@ -59,18 +59,23 @@ class CanonicalSample:
         return hashlib.sha256(core.encode()).hexdigest()[:16]
 
 
-def make_canonical(k, rng, n_present=2):
-    """產生一個 canonical 樣本。與 `synth_depth_task.make_absent(p_missing=0)` 同構。"""
-    present = sorted(rng.sample(range(len(KEYS)), n_present))
+def make_canonical(k, rng, n_present=2, keys=None):
+    """產生一個 canonical 樣本。與 `synth_depth_task.make_absent(p_missing=0)` 同構。
+
+    `keys` 指定可用的 key 身分集合（G2c 用來讓 train/cal/test 完全不交）；
+    None 時沿用 G1/G2a/G2b 的 f0..f3。
+    """
+    KEYS_ = keys if keys is not None else KEYS
+    present = sorted(rng.sample(range(len(KEYS_)), n_present))
     defs, seen = {}, set()
     for i in present:
         while True:
             q = list(range(PERM_N)); rng.shuffle(q); t = tuple(q)
             if q != list(range(PERM_N)) and t not in seen:
-                seen.add(t); defs[KEYS[i]] = q; break
-    order = [KEYS[i] for i in present]; rng.shuffle(order)
+                seen.add(t); defs[KEYS_[i]] = q; break
+    order = [KEYS_[i] for i in present]; rng.shuffle(order)
     state = list(range(PERM_N)); rng.shuffle(state)
-    chain = [KEYS[rng.choice(present)] for _ in range(k)]
+    chain = [KEYS_[rng.choice(present)] for _ in range(k)]
     st = list(state)
     for g in chain:
         st = [st[defs[g][i]] for i in range(PERM_N)]
@@ -127,10 +132,10 @@ def render_latent(s: CanonicalSample):
 # --------------------------------------------------------- G2a：retrieve 的資料層
 
 POOL_SIZE = 8            # 固定 8 條 —— missing 題也補到 8，避免用「數量」判 missing
-ALL_KEYS = [f"f{i}" for i in range(16)]
+ALL_KEYS = [f"f{i}" for i in range(48)]      # G2c 需要每個 split 各 ≥8 個 key
 
 
-def build_pool(s: CanonicalSample, rng, missing: bool = False):
+def build_pool(s: CanonicalSample, rng, missing: bool = False, keys=None):
     """回傳 (pool_symbols, addr_bank, latents_by_symbol, query_keys, target_idx, hit)。
 
     ⚠️ **render 完全不動**（仍是 5 個 dot）—— key 走 out-of-band metadata（Codex）。
@@ -141,7 +146,8 @@ def build_pool(s: CanonicalSample, rng, missing: bool = False):
        否則模型可以用「pool 少了一條」判 missing，而不是真的比對。
     """
     required = list(dict.fromkeys(s.chain))                 # 有序去重
-    others = [k for k in ALL_KEYS if k not in required]
+    universe = keys if keys is not None else ALL_KEYS
+    others = [k for k in universe if k not in required]
     rng.shuffle(others)
     dropped = None
     if missing and required:
@@ -197,6 +203,54 @@ def retrieval_view_key_positions(tok, s):
     return view, torch.tensor(pos)
 
 
+def render_write_view(key: str) -> str:
+    """G2c：write 時用來產生該 key **身分表示**的 canonical 序列。
+
+    與 retrieval view 分開，且**不含任何 context** —— address 只依賴 key 身分，
+    這樣同一個 key 在不同題目裡的 address 才會一致。
+    """
+    return f"| {key} 存"
+
+
+# ---- canonical key span：**renderer invariant，不是量測腳本的細節**（Codex [92] ACK）
+
+def canonical_key_ids(tok, key):
+    """key 的 canonical token 序列 —— **必須含前導空白**。
+
+    這個 tokenizer 是 context-dependent 的：`"f0"→[105,51]` 但 `" f0"→[341,51]`。
+    key 在 write view (`| f41 存`) 與 retrieval view (`| x=… | f3 f0 f1 求?`) 裡
+    **一律**前面有空白，所以 canonical 形式取 `" "+key`。
+    用不帶空白的形式量測，會虛報碰撞（[91] 一度報 28 對，實為 7 對且非精確重疊）。
+    tied encoder 的「兩側同一切法」前提就靠這個函式唯一化。
+    """
+    return tok(" " + key, add_special_tokens=False).input_ids
+
+
+def locate_key_span(tok, view: str, key: str):
+    """在任一 view 裡定位 key 的完整 canonical span，回傳 (ids, positions)。"""
+    ids = tok(tok.bos_token + view, add_special_tokens=False).input_ids
+    kid = canonical_key_ids(tok, key)
+    for i in range(len(ids) - len(kid) + 1):
+        if ids[i:i + len(kid)] == kid:
+            return torch.tensor(ids), list(range(i, i + len(kid)))
+    raise AssertionError(f"{key}: canonical span {kid} 不在 {view!r} → {ids} 裡 —— 切法不一致")
+
+
+# G2c 的 key 身分切分：train / cal / test **完全不交**，才測得到 unseen-key 泛化。
+#
+# ⚠️ 每個 split 至少要 **POOL_SIZE + 1** 個，不是 POOL_SIZE：
+#    missing 題要把 dropped key 排除在 pool 之外、又得把 pool 補滿 8 條
+#    （基數恆為 8 是為了不讓模型用「少一條」判 missing）。
+#    split 恰好 8 個時 others 湊不滿，`build_pool` 的 assert 會直接失敗。
+KEYS_TRAIN = [f"f{i}" for i in range(28)]
+KEYS_CAL = [f"f{i}" for i in range(28, 38)]
+KEYS_TEST = [f"f{i}" for i in range(38, 48)]
+assert not (set(KEYS_TRAIN) & set(KEYS_CAL)) and not (set(KEYS_CAL) & set(KEYS_TEST)) \
+    and not (set(KEYS_TRAIN) & set(KEYS_TEST))
+for _n, _s in (("train", KEYS_TRAIN), ("cal", KEYS_CAL), ("test", KEYS_TEST)):
+    assert len(_s) > POOL_SIZE, f"{_n} split 只有 {len(_s)} 個 key，missing 題補不滿 pool"
+
+
 def build_store(s: CanonicalSample) -> LatentStore:
     """每樣本重建 store —— 定義每樣本重抽，背進權重無用且有害。
 
@@ -215,7 +269,7 @@ def resolve_chain(s: CanonicalSample):
 
 # ----------------------------------------------------------------------- 資料集
 
-def build_dataset(max_k, n_per_k, seed, exclude=None):
+def build_dataset(max_k, n_per_k, seed, exclude=None, keys=None):
     """去重與跨 split 排除都用 **`delivery_id`**。
 
     - 不可用 render 出來的字串：render 形式會影響抽樣（§4.18 的同一個病）
@@ -231,7 +285,7 @@ def build_dataset(max_k, n_per_k, seed, exclude=None):
         made = attempts = 0
         while made < n_per_k and attempts < n_per_k * 50:
             attempts += 1
-            s = make_canonical(k, rng)
+            s = make_canonical(k, rng, keys=keys)
             did = s.delivery_id
             if did in seen or did in exclude:
                 continue

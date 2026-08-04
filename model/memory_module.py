@@ -142,6 +142,69 @@ class OracleMemoryInterface:
         return entries, support
 
 
+class TiedAddressEncoder(nn.Module):
+    """G2c：address 與 query **共用同一個 encoder**（tied weights）。
+
+        a = normalize(E(span(" f41")))      # write 時由 key 身分產生
+        q = normalize(E(span(" f41")))      # query 時由 context 中出現的同一 key 產生
+
+    兩側吃的是**凍結 core 的 token embedding**、完整 canonical span、完全同一切法。
+    改用 embedding 而非 core hidden 是量測結果（g2c_identity_gate）：
+    write-view hidden 雖滿秩（47/48），但身分方向的條件數 σ_min/σ_max = 1.65e-4，
+    比 embedding 的 1.09e-1 差 660 倍 —— 身分**在**，只是佔範數 0.3%，
+    要靠極微小方向分辨，unseen key 上不可靠。
+    這只說明「**此凍結 numeric-L0 core 的所測 hidden** 不適合直接作 address」，
+    不宣稱 core 永不編碼未見符號。
+
+    ⚠️ **不可用 `Enc(latent)` 當 address**（Codex）：本任務 key↔permutation 的綁定
+       是**任意的**，cue 推導不出 content；且 S₅ 只有 120 種內容，
+       不同 key 會共享同一 value → content-only address **會碰撞**，
+       也無法表達同 key 的更新。那會把 unseen-key 設成資訊論上不可解。
+
+    ⚠️ 先前以為「address 與 query 不可共同學」——**錯了**。真正的約束是
+       **tied weights + unseen identities**：共享權重下兩塔無法漂移成私有暗號，
+       而 train/cal/test 的 key 身分完全不交才是泛化的檢驗。
+
+    ⚠️ **pooling 必須 order-aware，不可用 mean**（g2c_identity_gate 關 3）：
+       key 的 canonical span 有 2~3 個 token，而 `f34`=[341,54,55] 與 `f43`=[341,55,54]
+       是 **anagram** —— mean pooling 下兩者 |cos|=1.000，身分在池化階段就被抹掉。
+       這裡用可學的 per-position 權重（softmax over 有效位置），初始化成遞增斜坡，
+       所以起手就是量測過可分的「位置加權」，而非碰撞的 mean。
+
+    ⚠️ span **必須含前導空白**（`" f41"` 而非 `"f41"`）：這個 tokenizer 是
+       context-dependent 的（`"f0"→[105,51]` 但 `" f0"→[341,51]`），而 key 在
+       write 與 retrieval view 裡一律前面有空白。兩側切法不同的話，
+       「tied」就只是名義上的。
+    """
+
+    MAX_SPAN = 4          # canonical key span 實測 2~3 token，留一格餘裕
+
+    def __init__(self, in_dim: int, addr_dim: int = ADDR_DIM, width: int = 256,
+                 max_span: int = MAX_SPAN):
+        super().__init__()
+        # 遞增斜坡：softmax 後近似量測基準的位置加權（max|cos| 0.959、零碰撞），
+        # 而不是 mean（max|cos| 1.000）。仍可學，只是不從碰撞點起手。
+        self.pos_logit = nn.Parameter(torch.arange(max_span, dtype=torch.float32) * 0.5)
+        self.enc = nn.Sequential(
+            nn.Linear(in_dim, width), nn.GELU(), nn.Linear(width, addr_dim))
+
+    def pool(self, spans, mask):
+        """(B, S, in_dim) + (B, S) bool → (B, in_dim)，order-aware。"""
+        assert spans.size(1) <= self.pos_logit.numel(), \
+            f"span 長度 {spans.size(1)} 超過 MAX_SPAN {self.pos_logit.numel()}"
+        w = self.pos_logit[:spans.size(1)].unsqueeze(0).expand(spans.size(0), -1)
+        w = w.masked_fill(~mask, float("-inf")).softmax(-1)
+        return (spans * w.unsqueeze(-1)).sum(1)
+
+    def forward(self, x, mask=None):
+        """x 為 (B, in_dim) 時直接編碼；為 (B, S, in_dim) 時先做 order-aware pooling。"""
+        if x.dim() == 3:
+            if mask is None:
+                mask = torch.ones(x.shape[:2], dtype=torch.bool, device=x.device)
+            x = self.pool(x, mask)
+        return torch.nn.functional.normalize(self.enc(x), dim=-1)
+
+
 class Retriever(nn.Module):
     """query/address/selector —— retrieve 階段**唯一可學**的組件。
 
@@ -161,9 +224,14 @@ class Retriever(nn.Module):
         self.support = nn.Sequential(nn.Linear(3, 32), nn.GELU(), nn.Linear(32, 1))
         self.log_temp = nn.Parameter(torch.zeros(()))
 
-    def forward(self, cue, addr_bank):
-        """cue (B,k,in_dim)；addr_bank (B,N,addr_dim) → logits (B,k,N)、support (B,k)。"""
-        q = torch.nn.functional.normalize(self.q(cue), dim=-1)
+    def forward(self, cue, addr_bank, query=None):
+        """cue (B,k,in_dim)；addr_bank (B,N,addr_dim) → logits (B,k,N)、support (B,k)。
+
+        `query` 給定時**跳過 `self.q`**，直接把它當 query 用 —— 這是 G2c 的
+        tied 路徑：query 與 address 都由同一個 `TiedAddressEncoder` 從**同一份
+        canonical span** 算出，`self.q` 若還在中間就不是 tied 了。
+        """
+        q = torch.nn.functional.normalize(query if query is not None else self.q(cue), dim=-1)
         a = torch.nn.functional.normalize(addr_bank, dim=-1)
         logits = torch.einsum("bkd,bnd->bkn", q, a) * self.log_temp.exp()
         top2 = logits.topk(2, dim=-1).values

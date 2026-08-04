@@ -11,7 +11,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from model.memory_module import (LATENT_DIM, PERM_N, ActiveWorkspace, LatentSlotAdapter,
                                  LatentSlotsDelivery, LatentStore, MemoryEntry,
                                  OracleMemoryInterface, SyntheticKVAdapter,
-                                 SyntheticKVDelivery, latent_to_perm, perm_to_latent)
+                                 SyntheticKVDelivery, TiedAddressEncoder,
+                                 latent_to_perm, perm_to_latent)
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
 BACKBONE = dict(hidden_size=512, num_hidden_layers=8, num_attention_heads=8,
@@ -344,6 +345,53 @@ def test_gradient_boundaries():
     check("adapter 參數收到梯度", all(p.grad is not None for p in ad.parameters()))
 
 
+def test_tied_encoder_is_order_aware():
+    """G2c：pooling 不得抹掉 token 順序。
+
+    canonical key span 有 2~3 個 token，而 `f34`=[341,54,55] 與 `f43`=[341,55,54]
+    是 anagram —— mean pooling 下 |cos|=1.000，身分在池化階段就死了
+    （experiments/g2c_identity_gate.py 關 3 實測）。
+    """
+    print("\n\nG2c tied encoder（g2c_identity_gate 關 3/關 4）：")
+    torch.manual_seed(0)
+    enc = TiedAddressEncoder(in_dim=8, addr_dim=6, width=16)
+    e = torch.randn(3, 8)                                  # 三個 token 的 embedding
+    a = torch.stack([e[0], e[1], e[2]]).unsqueeze(0)       # " f34"
+    b = torch.stack([e[0], e[2], e[1]]).unsqueeze(0)       # " f43"，同集合、順序相反
+    za, zb = enc(a), enc(b)
+    cos = (za * zb).sum().abs().item()
+    check("anagram span 不得產生同一 address", cos < 0.999, f"|cos|={cos:.4f}")
+
+    m = torch.tensor([[True, True, True]])
+    w = enc.pos_logit[:3].masked_fill(~m[0], float("-inf")).softmax(-1)
+    check("位置權重初始化為遞增斜坡（非 mean）", bool((w[1] > w[0]) and (w[2] > w[1])),
+          f"w={w.tolist()}")
+
+
+def test_tied_encoder_masks_padding():
+    """短 span 補到同長後，padding 位置不得影響 address（否則長度洩漏成身分）。"""
+    torch.manual_seed(0)
+    enc = TiedAddressEncoder(in_dim=8, addr_dim=6, width=16)
+    e = torch.randn(2, 8)
+    two = torch.stack([e[0], e[1], torch.randn(8)]).unsqueeze(0)      # 第三格是垃圾
+    two2 = torch.stack([e[0], e[1], torch.randn(8) * 99]).unsqueeze(0)  # 換成別的垃圾
+    m = torch.tensor([[True, True, False]])
+    z1, z2 = enc(two, m), enc(two2, m)
+    check("masked padding 不影響 address", torch.allclose(z1, z2, atol=1e-6),
+          f"max|diff|={(z1 - z2).abs().max().item():.2e}")
+
+
+def test_tied_encoder_is_actually_tied():
+    """address 與 query 必須是同一組權重 —— 否則兩塔可以漂成私有暗號。"""
+    torch.manual_seed(0)
+    enc = TiedAddressEncoder(in_dim=8, addr_dim=6, width=16)
+    span = torch.randn(1, 3, 8)
+    a = enc(span)                       # write 側
+    q = enc(span)                       # query 側，同一個 module
+    check("同一 span 兩側產生完全相同的向量", torch.equal(a, q))
+    check("address 為單位長度", abs(a.norm().item() - 1.0) < 1e-5)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("  C 層 G1 invariants（design_c_layer.md §4）")
@@ -363,6 +411,9 @@ if __name__ == "__main__":
     test_per_position_scale_and_runtime_rms()
     test_synthetic_kv_backward()
     test_gradient_boundaries()
+    test_tied_encoder_is_order_aware()
+    test_tied_encoder_masks_padding()
+    test_tied_encoder_is_actually_tied()
     print("\n" + "=" * 60)
     print(f"  通過 {_pass} / 失敗 {_fail}")
     print("=" * 60)
