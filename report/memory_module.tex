@@ -1,0 +1,1094 @@
+% !TeX program = xelatex
+%
+% 編譯：xelatex memory_module.tex（跑兩次以生成目錄與交叉引用）
+% 需要：ctex 套件 + Noto CJK 字型（本機已確認存在）
+%
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[UTF8, fontset=none]{ctex}
+\setCJKmainfont{Noto Serif CJK TC}
+\setCJKsansfont{Noto Sans CJK TC}
+\setCJKmonofont{Noto Sans Mono CJK TC}
+\setmainfont{DejaVu Serif}
+\setmonofont{DejaVu Sans Mono}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black,
+            citecolor=blue!50!black]{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{caption}
+
+\captionsetup{font=small, labelfont=bf}
+\setlist[itemize]{itemsep=2pt, topsep=3pt}
+\setlist[enumerate]{itemsep=2pt, topsep=3pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small 可分離記憶模組的實證研究}
+\fancyhead[R]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\PASS}{\textcolor{green!45!black}{\textbf{PASS}}}
+\newcommand{\FAIL}{\textcolor{red!70!black}{\textbf{FAIL}}}
+\newcommand{\INVALID}{\textcolor{orange!80!black}{\textbf{INVALID}}}
+\newcommand{\SEALED}{\textcolor{blue!60!black}{\textbf{SEALED}}}
+
+\title{\textbf{可分離記憶模組的實證研究}\\[4pt]
+\large 在凍結的 29M 語言模型上測試\\
+「能力 $=$ 推理 $\times$ 知識」的可分解性}
+\author{MiniMind 研究分支\\\small 雙代理協作（實作代理 + 審查代理）}
+\date{2026 年 8 月 4 日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+本報告記錄一系列在**凍結**的 29M 參數語言模型上進行的受控實驗，測試以下假說：
+語言模型的能力可分解為「推理」與「知識」兩軸，且知識軸可被外部化成一個
+\textbf{可分離、可抽換}的記憶模組。
+
+我們建立了完整的記憶管線 —— 事件 $\to$ 寫入 $\to$ 儲存 $\to$ 檢索 $\to$ 交付 $\to$ 作答 ——
+並在 $S_5$ 置換合成任務（其字詞問題為 NC$^1$-complete）上逐元件驗證。
+
+\textbf{主要結果。}
+(i) 一個從未見過交付介面的 writer，僅憑下游答案梯度，就能形成該介面可精確消費的
+潛在表示（99.0\%，未見置換），且交付本身僅需 1.13M 參數、可離線預算；
+(ii) 完整閉環達 98.2\%，恰等於執行器天花板，\textbf{整合在可作答路徑上零成本}；
+(iii) 記憶使準確率與提示長度\textbf{解耦}（延遲 128 事件後仍 100\%，而保留在上下文中者崩至 0\%）。
+
+\textbf{主要否定結果。}
+(i) 開放集合的棄答校準\textbf{不可轉移}（校準集讀 99.3\%，未觸碰測試集掉至 73.3\%），
+兩個預先登記的版本皆失敗；
+(ii) 被交付的值\textbf{參與後續合成}時顯著劣於同一值以文字給出，
+且此損失隨合成步數累積 —— 兩次修復嘗試皆因規格無效而未能裁決。
+
+\textbf{方法論發現。}
+本研究中，最乾淨的成果皆來自\textbf{將職責從學習元件搬回契約或確定性規則}；
+而四個由實作代理提出的機制假說\textbf{全部被後續量測推翻}。
+我們記錄了預先登記（pre-registration）與對抗式審查如何逐一攔截這些過度推論。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{研究問題}
+%==============================================================================
+
+\subsection{假說}
+
+本研究測試的假說是：模型能力可分解為
+
+\[
+\text{能力} \;=\; \text{推理深度} \;\times\; \text{知識儲量}
+\]
+
+且\textbf{知識軸可被完全外部化}。若此假說成立，一個小型骨幹網路只需擅長\emph{推理}，
+知識則由外部模組提供，從而以極少的參數達成大型模型的邏輯能力。
+
+這個假說要成立，外部模組必須滿足四個條件，本研究逐一檢驗：
+
+\begin{enumerate}
+  \item \textbf{可交付}：外部表示能被骨幹網路實際使用，而非僅僅拼接在輸入端。
+  \item \textbf{可檢索}：能在多個候選中找到正確的那一條，並在資料缺失時安全棄答。
+  \item \textbf{可寫入}：能從觀察到的事件形成該表示，而不需人工編碼。
+  \item \textbf{可組合}：取回的知識能參與後續推理，而不只是被讀出。
+\end{enumerate}
+
+\subsection{為什麼用凍結的骨幹}
+
+所有實驗中，\textbf{骨幹網路（core）全程凍結}。這是刻意的設計：若允許骨幹一起訓練，
+「模組可分離」的主張就無法成立 —— 我們無法區分是模組適配了骨幹，還是骨幹適配了模組。
+凍結骨幹使得任何成功都必然歸因於\textbf{介面本身}。
+
+\subsection{為什麼用 $S_5$ 置換合成}
+
+任務選擇經過三次修正，前兩版皆被判定無效並撤回（\autoref{sec:retract}）：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccl}
+\toprule
+任務 & 非交換？ & 熵守恆？ & 判定 \\
+\midrule
+混合算術 $(+-\times)$ & 是 & \textbf{否} $3.08 \to 0.62$ bit & 長鏈獎勵猜測；乘法準確率反隨深度\emph{上升} \\
+純加減 & \textbf{否}（塌成 $v_0 + \sum \pm r$）& 是 & 求和是一層注意力（TC$^0$）；8 層在 $k{=}12$ 得 90\% \\
+\textbf{$S_5$ 置換合成} & 是 & 是（雙射保持均勻）& \textbf{現行} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$S_5$ 的字詞問題為 \textbf{NC$^1$-complete}，因此固定深度的 transformer（$\approx$ TC$^0$）
+在理論上\emph{無法}解任意長度的合成；而加法落在 TC$^0$ 內 —— 這正是純加減版本看不到深度天花板的原因。
+
+在 29M 骨幹（512 維 / 8 層 / 8 頭 / 2 KV 頭）上實測的深度天花板：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcccccccc}
+\toprule
+$k$ & 1 & 2 & 3 & 4 & 5 & 6 & 8 & 12 \\
+\midrule
+完全匹配 & 99.3\% & 96.7\% & \textbf{62.7\%} & \textbf{11.3\%} & 1.3\% & 0.0\% & 0.7\% & 0.7\% \\
+逐位置 & 99.7\% & 98.9\% & 82.8\% & 44.0\% & 28.0\% & 22.5\% & 19.5\% & 18.9\% \\
+\bottomrule
+\end{tabular}
+\caption{$S_5$ 合成的深度天花板。完全匹配的隨機基準為 $1/120 = 0.8\%$，逐位置為 20\%。
+天花板在 $k \approx 3$，$k{=}5$ 已達隨機水準。}
+\end{table}
+
+\subsection{迴圈式 transformer：推理軸的參考點}
+
+作為對照，我們量測了在\emph{不}外部化知識的情況下，單純增加序列計算的效果。
+四個條件由同一個預訓練檢查點出發，且 loop2/3/4 攜帶\textbf{完全相同}的參數量（29.50M），
+因此只有計算量不同：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+& 序列步數 & 整體準確率 & 天花板 $k^*$ & $k^*/\text{步數}$ & VRAM \\
+\midrule
+loop1 & 8 & 10.3\% & 2.69 & 0.34 & 2.54 G \\
+loop2 & 16 & 20.1\% & 4.83 & 0.30 & 4.18 G \\
+loop3 & 24 & 73.2\% & \textbf{17.92} & \textbf{0.75} & 5.84 G \\
+loop4 & 32 & \textbf{99.1\%} & \textbf{$>$24} & $>$0.75 & 7.50 G \\
+\bottomrule
+\end{tabular}
+\caption{迴圈深度買到的推理能力。\textbf{+0.9\% 參數換來 $>9\times$ 推理深度}，代價是 $3\times$ VRAM。
+非線性且不平滑：loop2$\to$loop3 是 1.5$\times$ 計算換 3.7$\times$ 天花板，$k^*/$步數 由 0.30 跳到 0.75，
+疑似策略上的相變。}
+\end{table}
+
+本報告後續所有記憶實驗均在 \textbf{loop2}（16 個序列步）的骨幹上進行，其單次深度天花板約 $k^* \approx 4.83$。
+
+%==============================================================================
+\section{方法論紀律}\label{sec:method}
+%==============================================================================
+
+本研究採用雙代理協作：一個實作代理負責設計與執行，一個審查代理負責在\textbf{看到結果之前}
+鎖定判讀規則。以下紀律在多處直接改變了結論，因此本身構成研究成果的一部分。
+
+\subsection{預先登記}
+
+每個實驗在執行前將以下項目落盤：判讀規則、通過門檻、資料身分與 checksum、
+以及\textbf{失敗時的處置}。已登記的門檻在看到結果後\textbf{不得修改}。
+
+\subsection{效用閘（utility gate）}
+
+僅設風險上限會被「永遠棄答」這個退化解通過。因此所有安全性實驗
+\textbf{同時}設風險閘與效用閘。此設計在 \autoref{sec:g2c} 直接攔截了一個
+「看起來完美」的假結果。
+
+\subsection{上界而非點估計}
+
+小樣本的零錯誤不代表低風險。所有幻覺率均報\textbf{單側 95\% Clopper--Pearson 上界}。
+此紀律使我們發現早期宣稱的「100\% 命中/未命中判別」實為\textbf{檢定力不足}
+（見 \autoref{sec:g3e}）。
+
+\subsection{可辨識性閘（identifiability gate）}
+
+介入必須先被證明\textbf{與基準可分辨}，才值得跑長訓練。此閘在 \autoref{sec:g6}
+攔截了兩次無效的規格。
+
+\subsection{絕不回填里程碑}
+
+失敗的預先登記結果永久保留。後續版本另立名稱與章節，\textbf{不得}反向將舊的失敗改為通過。
+
+%==============================================================================
+\section{實驗基礎設施}
+%==============================================================================
+
+\subsection{正則化的鍵跨度（canonical key span）}
+
+本專案使用自訂的 6400 詞彙 BPE tokenizer，其切分\textbf{與上下文相關}：
+\verb|"f0"| $\to$ \verb|[105,51]| 但 \verb|" f0"| $\to$ \verb|[341,51]|。
+
+由於鍵在所有 view 中\textbf{一律}前置空白，正則形式必須含前導空白。
+最初以不含空白的形式量測，虛報了 28 對「完全重疊」的隱藏狀態，並由此產生了一個
+錯誤的主張（見 \autoref{sec:retract}）。修正後僅 7 對，且原始 \verb|max|diff|| 為
+$6\times10^{-2} \sim 1.5\times10^{-1}$（相對 $\|h\| = 41.3$）—— \textbf{並非精確重疊}。
+
+此後 \verb|canonical_key_ids| 與 \verb|locate_key_span| 成為唯一定義來源，
+任何符號身分的比較都必須經過它們。
+
+\subsection{資料完整性閘}
+
+以下規則皆因曾經造成錯誤結論而設立：
+
+\begin{itemize}
+  \item \textbf{絕不靜默跳過資料列}。原本對超長樣本 \verb|continue| 的作法會\emph{優先}
+        移除最深的樣本 —— 正是深度實驗要量的區段。改為逐 $k$ 計數並拋錯。
+  \item \textbf{配對比較需要指紋，而非共用種子}。三個宣稱「同種子」的條件只是\emph{論證}相同。
+        現以正則潛在流的 SHA 作為指紋，且驗證該指紋隨種子改變（恆定的雜湊也會「匹配」）。
+  \item \textbf{以 \texttt{delivery\_id} 去重，而非 \texttt{sample\_id}}。後者包含模型看不到的欄位，
+        兩個不同的 \verb|sample_id| 可能渲染成完全相同的可見內容。此修正實際攔截到一筆跨切分洩漏。
+\end{itemize}
+
+%==============================================================================
+\section{G1：交付}
+%==============================================================================
+
+\subsection{問題}
+
+凍結的骨幹在\emph{顯式數值}上訓練（記為 L0，100\%）。現在要求它改為消費一個
+25 維的無損潛在表示，由學習到的轉接器交付。選擇為 oracle、儲存凍結，
+因此\textbf{只有交付受測}，失敗可定位。
+
+\subsection{結果}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccr}
+\toprule
+交付方式 & 位置 & 參數 & 整體 \\
+\midrule
+\verb|oracle_inline| / \verb|teacher_kv|（原生內容，同位置）& 就地 & \textbf{0} & \textbf{100\%} \\
+\verb|InlineLatent|（潛在 $\to$ embedding）& 就地 & 1.33M & \textbf{100\%} \\
+\verb|contextual|（潛在 + 原生 KV $\to$ \textbf{KV 差量}）& 就地 & 1.13M & \textbf{100\%} \\
+\verb|zdelta|（潛在 $\to$ \textbf{KV 差量}，無上下文）& 就地 & 1.13M & \textbf{99.0\%} \\
+\verb|static-full|（潛在 $\to$ \textbf{絕對} KV，16 頭）& 就地 & 6.32M & 37.2\% \\
+\verb|SyntheticKV|（潛在 $\to$ 絕對 KV）& \textbf{前綴} & 1.06M & 34.8\% \\
+\verb|LatentSlots|（潛在 $\to$ 載體 token）& \textbf{前綴} & 0.14M & 3.3\% \\
+無 & --- & --- & 1.2\% \\
+\bottomrule
+\end{tabular}
+\caption{交付方式比較。關鍵對比：\textbf{6.32M 的絕對 KV 失敗，而 1.13M 的殘差 KV 成功} ——
+容量不是瓶頸。}
+\end{table}
+
+\subsection{成立的主張}
+
+凍結的骨幹\textbf{可以}以 100\% 消費學習到的潛在交付，形式為\textbf{值位置的 embedding}
+或\textbf{殘差 KV 修正}。交付是 embedding 或 KV，\textbf{不是文字} ——
+「記憶必須以 token 進入」為假。
+
+\subsection{封板的介面}
+
+後續階段的預設介面定為 \verb|zdelta|：
+\[
+K' = K_{\text{native}} + f_{\text{slot}}(z)
+\]
+於值 token 位置、全部 16 個 (loop, layer) 快取槽，1.13M 參數，骨幹凍結，99.0\%。
+\textbf{$f(z)$ 在檢索後可離線預算}，線上只付原生 scaffold 前向與逐位置加法。
+
+\subsection{已撤回的主張}
+
+以下曾被認為成立，現已\textbf{永久撤回}：交付必須即時串流（\verb|padded k≤4| = 100\% 反例）；
+記憶必須流經骨幹（\verb|zdelta| 逐層注入且得 99.0\%）；合成器必須看見層狀態
+（\verb|zdelta| 無上下文輸入）。
+
+%==============================================================================
+\section{G2：檢索}
+%==============================================================================
+
+\subsection{三個階段}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llll}
+\toprule
+階段 & 位址來源 & 鍵身分 & 結果 \\
+\midrule
+G2a & 固定隨機正交 & 固定 \verb|f0..f3| & \textbf{100\%} 有序 / 逐步 / 命中判別$^\dagger$ \\
+G2b & 同上，query 取自凍結骨幹隱藏態 & 固定 & \textbf{100\%}$^\dagger$ \\
+G2c & \textbf{綁定編碼器於正則鍵跨度} & \textbf{train/cal/test 不交} & 檢索 \textbf{98.1\%}，命中判別 \textbf{73.3\% / 81.5\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$^\dagger$ \textbf{此 100\% 為檢定力不足}，見 \autoref{sec:g3e}。
+
+\subsection{G2c：分裂的結果}\label{sec:g2c}
+
+\textbf{通過的部分}：未見身分的\emph{排序}可轉移 —— 兩個種子的逐步召回率皆為 98.1\%，
+且編碼器將輸入端最大 $|\cos|$ 由 0.964 推開至 0.824。
+
+\textbf{不通過的部分}：單一支持度\textbf{門檻不可轉移} ——
+校準集讀 99.3--99.5\%，未觸碰的測試集掉至 73.3--81.5\%。
+
+診斷顯示\emph{分數}本身可分（oracle 門檻可達 96.3--98.0\%），
+因此差距\textbf{完全在門檻位置}：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+種子 & 集合 & 凍結門檻 & oracle 上界 & 落差 & $>0.8$ 的步數 & 其中準確率 \\
+\midrule
+42 & TRAIN & 100.0\% & 100.0\% & 0.0\% & 0 & --- \\
+42 & CAL & 99.6\% & 99.6\% & 0.0\% & \textbf{0} & --- \\
+42 & TEST & 73.5\% & \textbf{96.3\%} & \textbf{22.8\%} & 269 & 9.7\% \\
+43 & CAL & 99.5\% & 99.5\% & 0.0\% & \textbf{182} & \textbf{100.0\%} \\
+43 & TEST & 84.6\% & \textbf{98.0\%} & \textbf{13.4\%} & 153 & 9.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{一個中途撤回的假設}
+
+我們一度認為原因是「校準集不含困難情況」—— 種子 42 的校準集確實一對 $>0.8$ 都沒有。
+\textbf{但種子 43 推翻了它}：其校準集有 182 個困難步且在凍結門檻下 100\% 正確，
+同一門檻在測試集的 153 個困難步上卻只有 9.8\%。
+\textbf{分數的尺度隨身分集合而移，不是覆蓋問題。}
+
+據此提出的「按 cosine 分箱納入校準」也一併撤回 —— 箱界 0.8 是\emph{看見測試集崩點後}
+才形成的，用它挑選校準集會使修法退化成困難負例的策展。
+
+\subsection{G2c-cal-v2：\FAIL{}，永久}
+
+一次預先登記的重新校準，使用 40 個全新身分，兩個種子皆失敗：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+& 種子 42 & 種子 43 \\
+\midrule
+校準集缺失樣本數 & 122（零錯上界 2.4\%）& 126（2.3\%）\\
+選出的門檻 & $+16.985$ & $+16.295$ \\
+\textbf{校準集上可達的最小假棄答} & \textbf{98.1\%} & \textbf{97.6\%} \\
+測試集 幻覺單側 95\% 上界 & 2.9\% \PASS{} & \textbf{6.6\%} \FAIL{} \\
+測試集 假棄答 & \textbf{97.3\%} \FAIL{} & \textbf{98.2\%} \FAIL{} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{效用閘攔截到的正是退化解}：在幻覺上界 $\leq 5\%$ 的約束下，
+\emph{校準集上}可達的最小假棄答已是 98\%。
+\textbf{沒有效用閘的話，這會以「正確拒絕 100\%、幻覺 0\%」的面貌通過} —— 那是一個永遠棄答的門檻。
+
+\subsection{混淆與限制}
+
+$v2$ 的身分集合幾乎全為 3-token 跨度，而訓練身分幾乎全為 2-token，
+因此失敗發生在\textbf{身分位移與跨度結構位移的聯合}之下，本設計\textbf{無法分離}兩者。
+
+記錄的設計債：正則編碼器的訓練必須涵蓋它將遇到的切分結構；支持度分數必須對結構位移穩健。
+
+%==============================================================================
+\section{G3：寫入、閉環、故障與邊界}
+%==============================================================================
+
+\subsection{G3a：寫入形成}
+
+\textbf{問題}：writer 能否從一個\emph{事件}形成潛在表示，讓\textbf{凍結的、獨立訓練過的}
+交付介面消費？writer 從未見過 \verb|zdelta|，\verb|zdelta| 也從未見過 writer。
+
+事件形如 \verb :| f3 = 3 1 0 2 4 定: ，刻意不含推理鏈與狀態。
+泛化軸是\textbf{置換}（train 95 / val 24，不交），非鍵身分。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+版本 & writer 輸出 & 端到端（未見置換）& 逐列 argmax & 合法置換率 & 潛在距離 \\
+\midrule
+oracle & \verb|perm_to_latent| & \textbf{99.0\%} & --- & --- & 0 \\
+\textbf{v1} & 無約束 25 維 & \textbf{3.5\%} \FAIL{} & 37.1\% & 0.0\% & 2.32 \\
+\textbf{v2} & \textbf{$5\times5$ 逐列 softmax} & \textbf{99.0\%} \PASS{} & \textbf{100\%} & \textbf{100\%} & \textbf{0.001} \\
+zero / shuffled & --- & 0.5\% / 0.8\% & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{v2 的 writer 與 oracle 逐格相同}，且將 \verb|perm_to_latent| 重建至 0.001 ——
+而它\textbf{從未被監督去複製該編碼}，只有下游答案損失。
+
+\textbf{只看端到端無法判讀}：v1 的逐列 argmax 為 37.1\%（隨機為 20\%），
+是部分形成，在 3.5\% 的端到端數字中完全看不見。
+
+\textbf{可宣稱}：逐列 categorical 的參數化使 task-loss-only 的寫入形成\emph{變得可優化}。
+逐列 softmax \emph{只}保證每列非負且和為 1；100\% 的合法置換率與 0.005 的列熵是\textbf{學出來的}，
+不是結構保證 —— 這使結果更強而非更弱。
+
+\textbf{不可宣稱}：不可僅歸因於流形不匹配（v1$\to$v2 同時改變了輸出約束\emph{與}梯度幾何/尺度）；
+不可說「無先驗下自然湧現」，結論限定在已知的 $S_5$ 潛在 schema。
+
+\subsection{G3b：閉環}
+
+四個元件全部載入凍結權重，\textbf{零訓練}，串接
+事件 $\to$ writer $\to$ commit $\to$ 檢索 $\to$ read $\to$ 交付 $\to$ 作答，400 個 episode。
+
+\textbf{範圍必須明寫}：僅 \textbf{4 個 query 身分}與最多 \textbf{32 個正交位址}
+（\verb|address_vector| 取自 \verb|address_bank|，故 \verb|f32| 以上根本沒有位址）。
+位址仍由已知的鍵規則提供，因此\textbf{寫入位址的形成尚未受測}。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+指標鏈 & primary（2-token）& stress（3-token，探索性）\\
+\midrule
+1. writer 形成完全正確（\textbf{無條件}）& \textbf{100.0\%} ($n{=}904$) & 95.7\% ($n{=}897$) \\
+2. 位址檢索完全正確 & \textbf{99.6\%} ($n{=}1000$) & \textbf{7.9\%} ($n{=}1000$) \\
+3. 取回內容忠實度 $\mid$ 位址正確 & \textbf{100.0\%} ($n{=}904$) & --- \\
+4. 執行器 $\mid$ 位址+內容皆正確 & \textbf{98.2\%} ($n{=}341$) & --- \\
+5. \textbf{端到端} & \textbf{98.2\%} ($n{=}341$) & \textbf{0.0\%} ($n{=}339$) \\
+正確拒絕 / 幻覺 / 假棄答 & 94.9\% / 5.1\% / 0.0\% & 90.2\% / 9.8\% / 85.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{在可作答路徑上整合零成本}：$2\times2$ 介入的\emph{每一格}
+（oracle/learned writer $\times$ oracle/learned 檢索）端到端皆為 \textbf{98.2\%}，
+\textbf{包含 oracle $\times$ oracle} —— 因此缺少的 1.8\% 是共同的執行器天花板
+（G1 的 \verb|zdelta| 為 99.0\%），\textbf{不是整合損失}。
+直送與 store 往返亦完全相同，故\textbf{store 往返在數值上免費}。
+
+\textbf{但不可泛稱「整合免費」}：棄答是唯一會動的格（oracle 檢索 100\% vs learned 94.9\%），
+將 \textbf{3/59 $=$ 5.1\% 的幻覺}完全歸於 G2b 的支持度頭。此數字\textbf{不併入 PASS}。
+
+store 契約逐位驗證 3200 次 commit$\to$read：形狀 3200/3200、\verb|max|diff|| \textbf{0.00e+00}、
+detach 3200/3200、位址$\leftrightarrow$內容綁定 3200/3200。
+
+\textbf{三行宣稱，互不抵銷}：
+\emph{in-distribution 2-token 可作答/元件閉環} $=$ \PASS{}（98.2\%，等於執行器天花板）；
+\emph{缺失安全性} $=$ 未達乾淨可靠（正確拒絕 94.9\%，幻覺 5.1\%），分開報；
+\emph{3-token 跨度位移穩健性} $=$ \FAIL{}。
+
+\subsection{G3c：儲存故障注入 —— \SEALED{}}
+
+先釘死契約：\emph{位址可見} $\Leftrightarrow$ \emph{已提交內容可讀}（原子性）；
+讀到不一致時控制器必須 \textbf{fail-closed 成棄答}。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrr}
+\toprule
+注入 & fail-closed & 作答率 & 答對 $\mid$ 作答 & \textbf{幻覺} \\
+\midrule
+\verb|none| & 是 & \textbf{100.0\%} & \textbf{99.2\%} & 0.0\% ($n{=}0$) \\
+\verb|dangling| & 是 & 0.0\% & --- & \textbf{0.0\%} ($n{=}240$) \\
+\verb|torn_commit| & 是 & 0.0\% & --- & \textbf{0.0\%} ($n{=}240$) \\
+\verb|stale| & 是 & 0.0\% & --- & \textbf{0.0\%} ($n{=}240$) \\
+\verb|dangling| & \textbf{否（對照）} & 100.0\% & 0.8\% & \textbf{100.0\%} \\
+\verb|torn_commit| & \textbf{否（對照）} & 100.0\% & 11.2\% & \textbf{100.0\%} \\
+\verb|stale| & \textbf{否（對照）} & 100.0\% & 7.9\% & \textbf{100.0\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{兩件事同時成立才算封板}：fail-closed 下幻覺全為 0；\textbf{且} \verb|none| 基準為
+100\% 作答、99.2\% 答對 —— 守衛\textbf{不會誤觸發}，不是另一個「永遠棄答」的退化解。
+
+此處 \emph{幻覺}定義為「\textbf{讀到損壞內容卻仍然作答}」，而非「作答且答錯」 ——
+碰巧答對一樣不安全。
+
+\textbf{一個中途修掉的無效測試}：\verb|stale| 最初只改中繼資料的版本號、未改內容，
+無防護對照因此 100\% 答對 —— 那只證明版本檢查有接線，未證明它擋下任何危害。
+改為注入\emph{發散的舊值}後，對照掉至 7.9\%，測試才有意義。
+
+\textbf{契約 C 的刻意注入}：自然評測中「取回的 entry 與請求不符」從未觸發，
+那\emph{只}表示檢索器沒選錯，\textbf{不證明 fail-closed 分支有效}。
+另加 60 次刻意注入，交付 \textbf{0/60}，該分支才算真的被走過。
+
+\subsection{G3d：邊界稽核}
+
+兩個\textbf{單變因}、全凍結、不重校的掃描。$k$ 軸的歸因需要\textbf{三列}而非兩列 ——
+\verb|oracle+zdelta| 那列\emph{仍然}經過只在 $k \leq 4$ 訓練過的 \verb|zdelta|，
+故必須並列 \verb|L0|（值寫在提示中、完全不經交付）。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+pool & L0 & oracle+zdelta & learned 端到端 & 檢索 & 正確拒絕 & 幻覺 \\
+\midrule
+8 & 100.0\% & 95.3\% & 95.3\% & 99.8\% & 100.0\% & 0.0\% \\
+16 & 100.0\% & 96.4\% & 97.0\% & 100.0\% & 100.0\% & 0.0\% \\
+\textbf{31} & 100.0\% & 95.0\% & \textbf{95.0\%} & 100.0\% & \textbf{100.0\%} & \textbf{0.0\%} \\
+\bottomrule
+\end{tabular}
+\caption{store 由 8 條擴至 31 條\textbf{完全平坦}。31 是可測上限：缺失題需要
+「pool 內 31 條 $+$ 被漏掉的 1 條」，而後者不得留在 pool 內。}
+\end{table}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+$k$ & L0 & oracle+zdelta & learned 端到端 & 正確拒絕 & 幻覺 \\
+\midrule
+1 & 100.0\% & 100.0\% & 100.0\% & \textbf{93.8\%} (30/32) & \textbf{6.2\%} \\
+2 & 100.0\% & 99.4\% & 99.4\% & 100.0\% & 0.0\% \\
+4 & 100.0\% & 95.3\% & 95.3\% & 100.0\% & 0.0\% \\
+\textbf{8} & \textbf{1.1\%} & \textbf{0.0\%} & （未跑）& --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+$k{=}8$ 時兩列同塌，依預先登記判為\textbf{共同邊界}。但須一併記下：
+\verb|L0| 的 1.1\% \textbf{已是隨機水準}（$1/120 = 0.83\%$），
+因此 $k{=}8$ 的交付結果\textbf{被骨幹天花板審查（censored）}—— 該格
+\textbf{既不能支持 \texttt{zdelta} 失敗，也不能支持其成功}。
+可引用的正面證據只有一句：\emph{此骨幹在 $k{=}8$ 沒有可用的執行器餘裕}。
+
+\textbf{要「pool 大小是唯一變因」需要兩條獨立證據}：
+(i) distractor 被選中 \textbf{0 次}（排除其內容污染執行器）；
+(ii) \textbf{標籤置換不變性逐位相同}（120 episodes：檢索 logits 與支持度分數差
+\textbf{0.000e+00}，決策與 top-1 零不一致）—— 排除跨度/標籤污染支持度。
+單靠 (i) 不足：支持度頭讀的是\emph{完整} logit 幾何（top1、top1$-$top2、logsumexp），
+一個從未成為 top-1 的位址仍可改變門檻決策。
+
+\subsection{G3e：安全數字的複驗}\label{sec:g3e}
+
+$k{=}1$ 的幻覺 2/32 與 G3b 的 3/59 已是兩次小樣本非零，故執行一次\textbf{分層固定}的複驗：
+300 缺失 $+$ 300 可作答，全凍結、不重校、不選種子、不重跑。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+缺失條件（$n{=}300$）& \\
+\midrule
+正確拒絕 & 97.3\% [94.8\%, 98.6\%] \\
+\textbf{幻覺} & \textbf{2.7\%（8/300）}，\textbf{單側 95\% CP 上界 4.76\%} \\
+\midrule
+可作答條件（$n{=}300$）& \\
+\midrule
+資料齊全時答對 & \textbf{100.0\%} [98.7\%, 100.0\%] \\
+假棄答 & \textbf{0.0\%} [0.0\%, 1.3\%] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+三次獨立量測方向一致（2/32、3/59、8/300）$\Rightarrow$
+\textbf{closed-world 的支持度有稀有但真實的失敗}。
+
+\textbf{因此必須回頭修正一個先前的數字}：G2a/G2b 的「命中判別 100\%」是\textbf{檢定力不足}。
+那批驗證集只有約 60 個缺失樣本，而 $P(\text{0 次幻覺} \mid n{=}60,\, p{=}0.027) \approx 0.19$
+—— 與 2.7\% 的真實率\textbf{完全相容}。該 100\% 從來不是「完美」，只是\textbf{沒有檢定力看見 2.7\%}。
+觀測值保留，被撤回的是「支持度是完美的」這個\emph{解讀}。
+
+\subsection{G3f：把成員資格搬回契約 —— \SEALED{}}
+
+在本任務中 query 攜帶正則的精確鍵、store 也以同鍵提交，因此
+$\texttt{contains}(key)$ 是\textbf{可判定的資料結構事實} ——
+以學習到的相似度去猜它是\textbf{職責錯置}。搬回契約\textbf{不是規避，是正確分型}。
+
+權威路徑：$\text{canonicalize}(key) \to \texttt{store.contains}(key)$；
+不存在則\textbf{硬棄答}（連檢索都不允許），存在才放行；讀後斷言鍵一致且內容確實提交，
+否則 fail-closed。學習到的支持度降為\textbf{影子指標}，\textbf{不得覆蓋}守衛。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+（與 G3e \textbf{完全同一批} episodes）& \textbf{受守衛（權威）} & \textbf{影子（若由學習支持度當家）} \\
+\midrule
+缺失 正確拒絕 & \textbf{100.0\%} [98.7\%, 100\%] & --- \\
+缺失 \textbf{幻覺} & \textbf{0/300}，上界 \textbf{0.99\%} & \textbf{8/300 $=$ 2.7\%} \\
+可作答 答對 & \textbf{100.0\%} & --- \\
+可作答 假棄答 & \textbf{0/300} & 0/300 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{影子欄精確重現了 G3e 的 8/300} —— 同一批題目、同一門檻。
+這是受控的直接證明：\textbf{守衛移除的正是那些失敗}，而不是換了一批容易的題目。
+
+\textbf{不解決的部分}：開放集合的語意問題完全未動。query 沒有可靠正則鍵、鍵抽取出錯、
+或要找「語意相關」而非同一 ID 時，store 無法直接回答。
+\textbf{G2c 的校準失敗仍是完整系統的阻礙，且不被回填。}
+
+%==============================================================================
+\section{G4：位址與時序綁定}
+%==============================================================================
+
+\subsection{G4a：寫入位址管線 —— \PASS{}}
+
+職責切分才是重點：\textbf{writer 只形成內容 $z$}（不輸出成員資格位元）、
+鍵抽取器處理字面鍵、\textbf{store 負責原子綁定與成員資格}。
+位址為 \verb|address_vector(key)|，\textbf{零可學參數} ——
+不用 MLP 在少數封閉鍵上「學位址」再稱之為形成，那只是記表。
+
+使用\textbf{未見的 25 個 2-token 身分}，且\textbf{每個 episode 隨機重配鍵$\leftrightarrow$置換}：
+鍵抽取完全正確 \textbf{100.0\%}（3200/3200）；位址$\leftrightarrow$內容綁定 \textbf{100.0\%}（3200/3200）；
+缺失 正確拒絕 100.0\% / 幻覺 \textbf{0/200}（上界 1.49\%）；可作答 答對 \textbf{100.0\%} / 假棄答 0.0\%。
+
+\textbf{只證明可以建立可用的條目}。不證明語意綁定、不證明內容定址、不證明未見跨度結構的泛化。
+
+\subsection{G4b：時序/指稱綁定}
+
+事件為一段\textbf{有序串流}，query 用\textbf{指稱}（「前者」$=$ 最後被寫入的實體）而非字面鍵。
+
+\textbf{指稱必須放在讀取端}：G3f 的成員資格守衛只能擋\emph{不存在}的鍵，
+\textbf{擋不住指稱解析器錯指到另一個已存在的實體} —— 那個鍵確實在 store 內，守衛會放行，
+於是\textbf{自信地交付錯誤內容}。因此 \emph{wrong-existing-entity} 是本關唯一的危險錯誤。
+
+\textbf{oracle 天花板}：9 格（2/3/5 實體 $\times$ 0/2/5 填充）全部 \textbf{100\%} 端到端。
+
+\textbf{oracle 這一階當場攔截了一個設計錯誤}：第一版天花板是 \textbf{0.0\%} ——
+因為串流前綴與指稱後綴被直接塞進\emph{交付用}的提示，而凍結骨幹只在
+\verb :| x=… | … 求x=: 上訓練過。這違反了先前已立的不變量：
+\textbf{指稱/檢索 view 必須獨立於交付提示}。若此錯誤混在學習型解析器中，
+會表現成「時序綁定學不起來」，但真正原因與綁定無關。
+
+\textbf{兩種讀取架構}：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrr}
+\toprule
+& A（單一末 token 摘要）& \textbf{B（逐候選讀取）} \\
+\midrule
+探針 train / test & 44.7\% / \textbf{34.8\%}（隨機 34.4\%）& \textbf{100\% / 100\%} \\
+正式 test 原始準確率 & --- & \textbf{94.5\%}（較難切分）\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{時序資訊確實在各實體自己的隱藏態中，只是不在單一末 token 摘要裡。}
+A 永久記為 \emph{final-token/final-layer linear readout} \FAIL{}，且\textbf{不被 B 取代}。
+
+事前鎖定的選擇性策略（校準集選門檻使 wrong-existing 單側 95\% 上界 $\leq 5\%$、再最小化棄答；
+測試集只跑一次）：覆蓋率 84.8\%、棄答 15.2\%、
+\textbf{受守衛的 wrong-existing 8/509 $=$ 1.6\%}（上界 2.82\%）$\Rightarrow$ \PASS{}。
+
+\textbf{但最誠實的標題是：學習版輸給不需學習的規則。}
+非學習的 $\arg\max(\text{最後寫入位置})$ 基準為 \textbf{100.0\%}，而學習型解析器原始準確率僅 94.5\%。
+機制上幾乎可確定 B 只是在\emph{讀位置}（每個實體的隱藏態天然帶序列位置編碼）。
+因此可宣稱的上限是「\textbf{逐候選時序解析器 / 控制器讀取}可行」，
+\textbf{不稱}骨幹自行摘要整段串流、\textbf{不稱}神經工作記憶。
+
+%==============================================================================
+\section{G5：能力面 —— 記憶到底買到什麼}
+%==============================================================================
+
+\subsection{G5a：資訊保持 / 上下文擴展 —— \PASS{}}
+
+本題\textbf{不冒充「推理變強」}。五個配對條件，同骨幹、同 query、同身分、同題目。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrrrr}
+\toprule
+$k$ & 條件 & $d{=}0$ & $d{=}16$ & $d{=}48$ & \textbf{$d{=}128$} & tokens@128 \\
+\midrule
+1 & \verb|full_context| & 98\% & 96\% & \textbf{65\%} & \textbf{0\%} & 414 \\
+1 & \textbf{\texttt{memory}} & 100\% & 100\% & 100\% & \textbf{100\%} & \textbf{19} \\
+2 & \verb|full_context| & 97\% & 98\% & \textbf{16\%} & \textbf{0\%} & 425 \\
+2 & \textbf{\texttt{memory}} & 100\% & 100\% & 100\% & \textbf{100\%} & \textbf{25} \\
+4 & \verb|full_context| & 90\% & 87\% & \textbf{0\%} & \textbf{0\%} & 441 \\
+4 & \textbf{\texttt{memory}} & 93\% & 93\% & 93\% & \textbf{93\%} & \textbf{37} \\
+\bottomrule
+\end{tabular}
+\caption{整體：\texttt{oracle\_L0} 100\% $\mid$ \textbf{\texttt{memory} 97.7\%} [96.6, 98.4]
+$\mid$ \texttt{full\_context} 53.9\% $\mid$ \texttt{shuffled} 6.3\% $\mid$ \texttt{no\_memory} \textbf{0\%}。
+兩個事前閘皆通過。}
+\end{table}
+
+\textbf{必須逐字寫入結論的一句}：
+\emph{本結果不支持記憶與長上下文訓練模型的比較；\texttt{full\_context} 的下降混合了
+$11$--$23\times$ 的長度分布外推。}
+骨幹的 \verb|max_position_embeddings| 為 1024，故 414 tokens \emph{在}位置範圍內 ——
+但訓練提示只有 19--37 tokens，$d{=}128$ 是訓練分布的 11--23 倍長。
+
+\textbf{成本措辭亦須收窄}：$11$--$23\times$ 是\textbf{每次 query 的骨幹提示成本}，
+\textbf{不是完整生命週期成本} —— 記憶之前仍付了 writer / commit / 檢索與事件處理。
+除非把寫入攤提到多次查詢，不得宣稱端到端總算力便宜 $11$--$23\times$。
+
+\textbf{可宣稱}：\emph{記憶把準確率與提示長度解耦}。對可用上下文很短的骨幹，這是很大的實務增益。
+
+\subsection{G5b：分段推理 —— 分段有效，記憶交付還接不上}
+
+代數先釘清楚：更新為 $st \leftarrow st \circ p$，故從單位元出發跑 $p_1..p_j$ 得到\emph{合成置換}
+$P_j$，而 $st_0 \circ P_j = st_j$。因此檢查點可以是\textbf{一個置換、放進值槽} ——
+那正是 \verb|zdelta| 唯一訓練過的角色。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrrc}
+\toprule
+$K$ & \textcircled{1} \verb|monolithic| & \textcircled{2} \verb|oracle_ckpt| & \textcircled{3} \verb|pred_text| & \textcircled{4} \verb|pred_memory| & 混合交付次數 \\
+\midrule
+4 & 100.0\% & 100.0\% & 100.0\% & \textbf{100.0\%} & \textbf{0} \\
+8 & \textbf{0.0\%} & 100.0\% & 100.0\% & \textbf{59.0\%} & 2 \\
+12 & \textbf{3.0\%} & \textbf{100.0\%} & \textbf{100.0\%} & \textbf{20.0\%} & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+  \item \textcircled{1} vs \textcircled{3}：$0\% \to 100\%$（$K{=}8$）、$3\% \to 100\%$（$K{=}12$）。
+        分段 $+$ 顯式檢查點\textbf{繞過了此骨幹的整體鏈長邊界}，而\textbf{每次呼叫仍 $k \leq 4$、
+        單次深度完全沒有被突破}。
+  \item \textcircled{2} vs \textcircled{3}：\textbf{中間誤差傳播為零}。
+  \item \textcircled{3} vs \textcircled{4}：損失隨混合交付次數累積。
+\end{itemize}
+
+\textbf{嚴格說 \textcircled{1} vs \textcircled{3} 證明的是「分段」有效，不是「記憶」有效} ——
+\textcircled{3} 是純文字傳遞、完全沒用到記憶。記憶的價值要靠 \textcircled{4} 追上 \textcircled{3} 才成立。
+
+措辭鎖定：只能說「\emph{多次骨幹呼叫 $+$ 顯式檢查點的分段計算繞過了整體鏈長}」，
+\textbf{不能}說單次執行器變深；兩者\textbf{計算量不同}，這是系統能力/計算量權衡，
+不是等算力的模型能力比較。
+
+\subsection{G5b confirmatory：\FAIL{}}
+
+探索性條件「全 placeholder 配置」得 96.7\%（$n{=}60$），但那是\emph{看過 smoke 後才設計的}。
+以全新種子、未觸碰切分、$n{=}100$ 重跑：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+$K$ & \verb|pred_text| & \verb|pred_mem_allph| & 差 \\
+\midrule
+8 & \textbf{100.0\%} & \textbf{84.0\%} & \textbf{$+16.0$pp} \FAIL{} \\
+12 & \textbf{100.0\%} & \textbf{81.0\%} & $+19.0$pp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+事前鎖定的閘（記憶不得低於文字超過 5pp，且 $K{=}8$ 準確率 $\geq 95\%$）兩項皆不過。
+\textbf{探索性的 96.7\% 沒有複製出來。}
+
+\textbf{這是同一教訓的第二次出現}（第一次見 \autoref{sec:g3e}）：
+\emph{看過資料之後才設計的條件，數字會偏樂觀。}
+
+\subsection{G5c：真正的機制}
+
+兩個假設 ——「每次交付固定小損失」與「混合配置本身脆弱」—— 皆被推翻。
+
+\textbf{主表：語意恆等往返}（真值恆定，$d = 0..4$ 次交付）：
+\verb|text| / \verb|allph| / \verb|mixed| 三個配置\textbf{全部 100\%、零衰減}。
+
+\textbf{合成診斷}（交付 \emph{1} 次，變動其後的合成步數 $j$）：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+配置 & $j{=}0$ & $j{=}1$ & $j{=}2$ & $j{=}3$ \\
+\midrule
+\verb|text| & 100.0\% & \textbf{100.0\%} & \textbf{100.0\%} & \textbf{100.0\%} \\
+\verb|allph| & 100.0\% & 100.0\% & 99.3\% & \textbf{91.3\%} \\
+\verb|mixed| & 100.0\% & \textbf{84.7\%} & 76.7\% & \textbf{64.0\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{quote}
+\textbf{機制：一個「被交付進來」的值，參與後續合成時比同一個值以文字給出更差，
+且損失隨交付之後的合成步數累積。}
+\end{quote}
+
+$j{=}0$（純回聲）三者皆 100\% $\Rightarrow$ 交付保真度本身沒問題；
+\verb|text| 在所有 $j$ 皆 100\% $\Rightarrow$ 合成本身也沒問題；
+問題\textbf{只出現在兩者的交互}。且 \verb|mixed| 有\textbf{額外且獨立}的懲罰
+（$j{=}1$ 時光配置就值 15pp）。
+
+%==============================================================================
+\section{G6：修復嘗試與 logit 層的完整帳}\label{sec:g6}
+%==============================================================================
+
+\subsection{\texttt{zdelta-v2}：配置泛化完美，深度外推失敗且退步}
+
+只訓交付，骨幹/writer/store/檢索器全凍結。兩個訓練目標\textbf{不拆成兩個損失} ——
+用同一批 factorial episode 同時交叉 $j$ 與載體配置（否則模型從未看過真正失敗的交互格）。
+訓練只覆蓋 5 格，held-out 含\textbf{$j$ 外推}（train $j \leq 2$、test $j{=}3$）。
+\textbf{primary 是「追平文字傳遞」，不是「贏過 v1」。}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+格子 & v1 & \textbf{v2} & text & v2$-$text \\
+\midrule
+訓練過的 5 格 & 89--100\% & \textbf{全部 100\%} & 100\% & $+0.0$pp \\
+\textbf{$j{=}2$ mixed}（未見\emph{配置}組合）& 79\% & \textbf{100\%} & 100\% & \textbf{$+0.0$pp} \\
+\textbf{$j{=}3$ allph}（未見 $j$）& \textbf{90\%} & \textbf{82\%} & 100\% & \textbf{$-18.0$pp} \\
+\textbf{$j{=}3$ mixed}（未見 $j$）& 56\% & 75\% & 100\% & $-25.0$pp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+依事前鎖定的判讀：\texttt{zdelta-v2} 是\textbf{有限視界的覆蓋修補，不是合成穩定的交付}。
+措辭收窄：\textbf{配置組合有遷移，不外推的是合成深度}。
+
+\subsection{配對 logit 分解：帳算到 100\% 逐題對得上}
+
+以 teacher forcing 逐位置量測
+$m_{\text{text}} = \text{logit}(\text{correct}) - \max_{\text{wrong}}$、
+$\Delta m = m_{\text{delivery}} - m_{\text{text}}$，翻錯的\emph{精確}條件為
+$m_{\text{text}} + \Delta m < 0$。
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{llrrrrrrr}
+\toprule
+格子 & 版本 & $m_{\text{text}}$ 中位 & $m_{\text{text}}$ 最低 & \textbf{$\Delta m$ 中位} & \textbf{$\Delta m$ 最低} & $m{+}\Delta m{<}0$ & 實際翻錯 & 覆蓋 \\
+\midrule
+$j{=}0$ allph & v1 & 14.332 & 11.934 & $-2.283$ & $-8.509$ & 0 & 0 & --- \\
+$j{=}1$ allph & v1 & 14.381 & 10.953 & $-3.393$ & $-13.807$ & 1 & 1 & \textbf{100\%} \\
+$j{=}2$ allph & v1 & 14.890 & 9.624 & $-3.550$ & $-16.562$ & 3 & 3 & \textbf{100\%} \\
+$j{=}3$ allph & v1 & 14.784 & 9.740 & \textbf{$-4.277$} & $-19.841$ & 10 & 10 & \textbf{100\%} \\
+$j{=}3$ allph & \textbf{v2} & 14.784 & 9.740 & \textbf{$-5.856$} & $-18.565$ & \textbf{12} & \textbf{12} & \textbf{100\%} \\
+$j{=}1$ mixed & v1 & 14.381 & 10.953 & $-1.372$ & $-18.616$ & 8 & 8 & \textbf{100\%} \\
+$j{=}2$ mixed & v1 & 14.890 & 9.624 & $-1.375$ & \textbf{$-27.682$} & 15 & 15 & \textbf{100\%} \\
+$j{=}3$ mixed & v1 & 14.784 & 9.740 & $-2.506$ & \textbf{$-30.937$} & 30 & 30 & \textbf{100\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+三個預先鎖定的條件裁決：
+
+\begin{enumerate}
+  \item $m_{\text{text}}$ 隨 $j$ 系統下降？\textbf{否} —— 中位 $14.33 \to 14.38 \to 14.89 \to 14.78$，幾乎持平。
+  \item $\Delta m$ 條件分布不隨 $j$？\textbf{否} —— 明顯隨 $j$ 惡化。
+  \item $m_{\text{text}} + \Delta m < 0$ 預測翻錯？\textbf{是，覆蓋率 100\%（每一格）}。
+\end{enumerate}
+
+\begin{quote}
+\textbf{任務餘裕根本沒有縮小。惡化的是交付造成的餘裕位移 $\Delta m$，
+且負尾巴比中位數惡化得快得多。}
+\end{quote}
+
+\verb|allph| 的 $\Delta m$ 中位由 $-2.28$ 至 $-4.28$（約 2 倍）；
+\verb|mixed| 的 $\Delta m$ \emph{最低}由 $-8.5$ 至 $-30.9$（約 4 倍）。
+\verb|mixed| 較差\textbf{確實是更負的 $\Delta m$}，且主要體現在\textbf{尾巴}上 ——
+其中位 $\Delta m$ 反而比 \verb|allph| 溫和。\textbf{這是尾部風險，不是平均效應。}
+
+\textbf{這完整解釋了 v2 的退步}：$j{=}3$ allph 的 $\Delta m$ 中位由 $-4.277$ 惡化至 $-5.856$，
+而 $m{+}\Delta m{<}0$ 的題數（$10 \to 12$）與實際翻錯數（$10 \to 12$）\textbf{完全一致} ——
+有限視界過擬合在 logit 層被逐題對上。
+
+\subsection{兩次規格無效}
+
+\begin{itemize}
+  \item \texttt{v3-hinge}：\INVALID{} / 無有效介入。逐位置 hinge $\max(0, \varepsilon - m_{\text{delivery}})$，
+        $\varepsilon = 8.0$ 事前鎖定。\textbf{訓練期間 hinge $= 0.0000$ 全程} ——
+        訓練格的餘裕本來就 $> 8$。損失實質等同 v2 的純交叉熵。
+  \item \texttt{v3-distill}($T{=}1$)：\INVALID{} / 介入與基準不可分辨。
+        \textbf{KL 與交叉熵每一列完全相等}，原因是數學上的：文字教師的餘裕約 14、
+        分布實質是 one-hot，而 $\mathrm{KL}(\text{one-hot} \| \text{student}) =
+        -\log p_{\text{student}}(\text{gold}) = \mathrm{CE}$。$\lambda_{\mathrm{KL}}{=}1$ 只是把交叉熵加倍。
+\end{itemize}
+
+兩者的 $j{=}3$ 數字皆\textbf{不得}與 v2 作效果比較。
+\textbf{這是第一、第二個「規格無效」，不是第三、第四個失敗結果。}
+
+\subsection{一個必須記錄的資料檢查錯誤}
+
+第一次檢查 KL 時，取樣的步數幾乎都是 5 的倍數，而訓練格恰好有 5 格 ——
+\textbf{全部落在最簡單的一格}，因此誤判「KL 從頭就是 0」。逐格印出後才看到 KL 在困難格確實非零。
+\textbf{若未查此步，將會寫下一個錯誤的發現。}
+
+$\Rightarrow$ 此後所有 smoke gate 必須逐 $j \times$ 配置印出損失、梯度與樣本數，
+先確認介入可辨識，才跑長訓練。
+
+\subsection{裁決與措辭}
+
+暫停調整輸出端損失，另立結構性介面題。措辭必須收窄：
+
+\begin{quote}
+在目前訓練 $j \leq 2$、教師已飽和、交付準確率近滿的分布中，
+短視界的任務/logit 目標對「\emph{哪個表示可外推到 $j{=}3$}」是\textbf{不可辨識}的。
+\end{quote}
+
+\textbf{不可}寫成「任何輸出端損失都不可能有效」—— 交叉熵數值小\emph{不等於}梯度或方向性訊號必然無效。
+根因是\textbf{訓練分布本身不含要修的現象}，換損失修不掉這件事。
+
+%==============================================================================
+\section{已撤回的主張}\label{sec:retract}
+%==============================================================================
+
+本研究中，實作代理提出的機制假說\textbf{全部}被後續量測推翻。完整清單如下：
+
+\begin{longtable}{p{0.34\textwidth} p{0.30\textwidth} p{0.28\textwidth}}
+\toprule
+\textbf{曾經的主張} & \textbf{推翻方式} & \textbf{正確的說法} \\
+\midrule
+\endhead
+天花板在 $k \approx 8$，與層數相符 & 混合算術任務無效 $+$ 分布位移 & 天花板在 $k \approx 3$ \\
+進位傳播/狀態累積是真正瓶頸 & 十位數難是因為多位乘法難 & 與深度或狀態無關 \\
+交付必須即時串流 & \verb|padded k≤4| $=$ 100\% & 訓練分布效應 \\
+記憶必須流經骨幹 & \verb|zdelta| 逐層注入得 99.0\% & 為假 \\
+合成器必須看見層狀態 & \verb|zdelta| 無上下文輸入 & 為假 \\
+凍結骨幹不編碼未見符號 & \textbf{量測時漏了前導空白}；修正後 28 對$\to$7 對且非精確重疊 & 身分方向的\emph{條件數}過差（$1.65\times10^{-4}$）\\
+校準集缺乏困難區間覆蓋 & 種子 43 的校準集有 182 個困難步且 100\% 正確 & 分數尺度隨身分集合而移 \\
+G2a/G2b 的命中判別 100\% & $n{=}60$，$P(0 \mid p{=}0.027) \approx 0.19$ & 檢定力不足；真實率 2.7\% \\
+mixed-carrier 配置不轉移 & 恆等往返下 mixed 零損失 & 主機制是\emph{交付後的合成} \\
+v2 把 $j$ 當條件變數 & \textbf{程式碼證偽}：交付差量只是 (slot, $z$) 的函數 & 有限視界過擬合 \\
+執行器動態對交付偏移有增益 $>1$ & 逐步增益 $0.95/0.89/1.04$ & 無放大 \\
+餘裕隨 $j$ 縮小 & $m_{\text{text}}$ 平坦 & $\Delta m$ 的負尾巴惡化 \\
+任何輸出端損失訊號本質都小 & 交叉熵數值小 $\neq$ 梯度無效 & 在此分布下\emph{不可辨識} \\
+\bottomrule
+\end{longtable}
+
+\textbf{模式}：每一次錯誤都是「從一個數字直接跳到機制」。
+正確的做法始終相同 —— \textbf{先設計一個能證偽它的量測}。
+
+%==============================================================================
+\section{今天可以建成的系統}
+%==============================================================================
+
+\begin{quote}
+\textbf{一個 closed-world、精確鍵、以讀為主的外部記憶。}
+\end{quote}
+
+\begin{itemize}
+  \item 事實以字面正則跨度抽出鍵，\textbf{原子性}寫入，每鍵一次。
+  \item \textbf{成員資格由 store 回答，不由模型猜} $\Rightarrow$ 對不存在的鍵
+        \textbf{結構性零幻覺}（0/300，上界 0.99\%）。
+  \item 內容以\textbf{殘差 KV 修正}注入，\textbf{檢索後可離線預算}，
+        線上只付原生 scaffold 前向與一次加法。
+  \item \textbf{準確率與寫入時間距離無關} —— 延遲 128 個事件後仍 100\%，
+        而把同樣資訊留在上下文中會崩至 0\%。
+  \item \textbf{準確率與 store 大小無關}（8 $\to$ 31 完全平坦，31 為可定址上限）。
+  \item 讀到損壞/過期/懸空資料時 \textbf{fail-closed 成棄答}，且\textbf{不會誤觸發}。
+\end{itemize}
+
+\textbf{成本}：每次 query 的提示由 414 tokens 降至 19--37（$11$--$23\times$）——
+但這是\emph{每次查詢的骨幹提示成本}，非生命週期成本。
+
+\subsection{系統做不到的三件事}
+
+\begin{enumerate}
+  \item \textbf{開放集合 / 語意檢索}。G2c 兩版皆 \FAIL{}：排序可轉移，但\emph{單一門檻不轉移}。
+        這是完整系統唯一還擋著的阻礙。
+  \item \textbf{作為多步推理的檢查點}。被交付的值參與其後合成時劣於文字值。
+        分段推理本身有效（$K{=}8$ 由 $0\% \to 100\%$），但那是\emph{文字}傳遞。
+  \item \textbf{超過骨幹單次深度的推理}。$k{=}8$ 時執行器本身已在隨機水準。
+\end{enumerate}
+
+%==============================================================================
+\section{對主假說的回答}
+%==============================================================================
+
+\subsection{可分離性：成立，且比預期更強}
+
+一個從未見過交付介面的 writer，僅憑下游答案梯度，就形成了該介面能\emph{精確}消費的表示，
+並泛化到未見置換。這是「可分離、可抽換」的直接證據。
+
+而且成立得比預期更強：\textbf{最乾淨的幾塊 —— 成員資格、位址、時序指標 ——
+最後都證明根本不需要學}，搬回契約或確定性規則反而更好、更安全。
+
+\subsection{但必須收窄一句}
+
+\begin{quote}
+模組對「\textbf{儲存與取回事實}」是可分離的；對「\textbf{參與推理}」還不是。
+一旦取回的值需要跨多步合成，它就輸給同一個值以文字給出。
+\end{quote}
+
+\textbf{知識可以被外部化；知識參與推理的介面還沒有。}
+
+\subsection{一個貫穿全研究的觀察}
+
+每一次「讓神經網路自己學」的地方，不是輸給規則就是撞牆：
+
+\begin{itemize}
+  \item G2c 開放集合校準 $\to$ \FAIL{}（兩版）
+  \item G3a 無約束 writer（純任務損失）$\to$ \FAIL{}（需要結構先驗才可優化）
+  \item G4b-A 末 token 讀取 $\to$ \FAIL{}
+  \item G4b-B $\to$ \PASS{} 但\textbf{輸給 100\% 的確定性規則}
+  \item G6 v2/v3 $\to$ 覆蓋修補 / 規格無效
+\end{itemize}
+
+我們無法區分這是「任務太簡單所以規則夠用」還是「此 29M 凍結骨幹的表示不足」。
+但它對系統設計有明確含意：\textbf{凡是可判定的事實，就不該交給學習元件去猜。}
+
+%==============================================================================
+\section{限制與後續}
+%==============================================================================
+
+\subsection{全域限制}
+
+\begin{itemize}
+  \item 全部結果來自\textbf{單一} 29M 骨幹、$S_5$ 任務、$k \leq 4$、多數為單一種子。
+  \item 交付、寫入、檢索的成功皆限定在\textbf{已知的 $S_5$ 潛在 schema}；
+        異質中間狀態未受測。
+  \item 閉環的範圍是 \textbf{4 個 query 身分、最多 32 個正交位址}，非一般 pool 容量。
+  \item 覆寫 / 再固化 / 陳舊快照\textbf{刻意排除}，尚未受測。
+\end{itemize}
+
+\subsection{待付的設計債}
+
+\begin{itemize}
+  \item 正則編碼器的訓練必須涵蓋它將遇到的切分結構。
+  \item 需要一個\textbf{在長提示上訓練過的骨幹}作對照，才能把 G5a 的長度分布外推混淆拆開。
+  \item \verb|zdelta| 的複驗仍為單一種子。
+\end{itemize}
+
+\subsection{兩條後續路線}
+
+\begin{enumerate}
+  \item \textbf{結構性介面}：primary 必須\emph{直接改變可外推性}，而非換損失 ——
+        例如讓載體在後續合成中保持可辨識、週期性重新錨定，或\textbf{顯式分離記憶狀態與執行器狀態}。
+  \item \textbf{更深的骨幹}：$k{=}8$ 時執行器在隨機水準，故往深度走要換更大的 \verb|num_loops|。
+        \textbf{新骨幹必須先讓顯式數值的 L0 離開隨機水準}，才有資格重測交付。
+\end{enumerate}
+
+%==============================================================================
+\appendix
+\section{程式碼對照}
+%==============================================================================
+
+\begin{longtable}{p{0.36\textwidth} p{0.58\textwidth}}
+\toprule
+檔案 & 內容 \\
+\midrule
+\endhead
+\verb|model/memory_module.py| & \verb|LatentStore|、\verb|MemoryEntry|、各交付轉接器、
+\verb|Retriever|、\verb|TiedAddressEncoder|、\verb|address_vector| \\
+\verb|model/model_minimind.py| & 骨幹；\verb|kv_override|、\verb|inputs_embeds|、
+\verb|memory_carriers| 三個掛載點（未使用時逐位元等價） \\
+\verb|experiments/g1_renderer.py| & 正則渲染器；\verb|canonical_key_ids|、\verb|locate_key_span|
+（切分的唯一定義來源）\\
+\verb|experiments/g1_train.py| & G1 交付訓練（9 種交付方式）\\
+\verb|experiments/g2_train.py| & G2a/b/c 檢索訓練，三分切分 \\
+\verb|experiments/g2c_identity_gate.py| & 身分可分離性資料閘（四關）\\
+\verb|experiments/g2c_cal_v2.py| & 預先登記的重新校準（Clopper--Pearson $+$ 效用閘）\\
+\verb|experiments/g3a_train.py| & 寫入形成（四條件）\\
+\verb|experiments/g3b_closure.py| & 閉環 $+$ $2\times2$ 介入 \\
+\verb|experiments/g3c_storage_fault.py| & 故障注入 $+$ fail-closed 契約 \\
+\verb|experiments/g3d_scale_audit.py| & 邊界稽核（pool 軸、$k$ 軸、三列歸因）\\
+\verb|experiments/g3e_k1_safety.py| & 分層固定的安全複驗 \\
+\verb|experiments/g3f_membership_guard.py| & 成員資格守衛 $+$ 影子指標 \\
+\verb|experiments/g4a_write_address_plumbing.py| & 寫入位址管線 \\
+\verb|experiments/g4b_reference_binding.py| & 時序/指稱綁定（oracle 天花板）\\
+\verb|experiments/g4b_resolver.py| & 讀取架構 A / B $+$ 選擇性策略 \\
+\verb|experiments/g5a_retention_value.py| & 資訊保持 / 上下文擴展 \\
+\verb|experiments/g5b_segmented_reasoning.py| & 分段推理（四條件 $+$ 診斷）\\
+\verb|experiments/g5c_delivery_decay.py| & 交付次數 $\times$ 配置 factorial \\
+\verb|experiments/g6a_zdelta_v2.py| & \verb|zdelta-v2| 訓練 \\
+\verb|experiments/g6c_margin.py| & 配對 logit 分解 \\
+\verb|test/test_memory_module.py| & 58 項不變量 \\
+\bottomrule
+\end{longtable}
+
+\vspace{1em}
+\noindent
+\textbf{完整實驗記錄}見 \verb|research.md| §4.23--4.48；
+\textbf{代理間的往返審查記錄}見 \verb|claude-speak.md| 與 \verb|codex-speak.md|。
+
+\end{document}
