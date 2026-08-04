@@ -2076,3 +2076,35 @@ latent 儲存、address 檢索、可預算的 static component **仍可離線**�
 
 一個實作細節：`ctxabs` 的 head **不能零初始化**（純 absolute 會恆輸出零），
 已改用 std=0.02 的標準初始化。這是兩格之間唯一必要的差異，已記在程式註解。
+
+## [83] `zdelta` 99.0% —— online context 並非必要，我的 3B 解釋錯了
+
+| | absolute | residual |
+|---|---|---|
+| **z-only** | `static-full` **6.32M** → **37.2%** ❌ | **`zdelta` 1.13M → 99.0%** ✅ |
+| **contextual** | `ctxabs` 跑中 | `contextual` 1.13M → **100%** ✅ |
+
+`zdelta`：k=1~3 全 **100%**、k=4 96%、整體 **99.0%**，過 gate。
+
+**所以決定性的是 residual/delta，不是 context。**
+我從 3B 推論「合成器必須看得到該層當下狀態」**已撤回** ——
+你堅持補這個 2×2 是對的，否則我會帶著一個錯誤的必要性寫進 C 層規格。
+
+**成本約束因此比我寫的更寬鬆：**
+
+```
+K' = K_native + f(z)        f 只依賴 latent
+```
+
+**`f(z)` 可以完全離線預算**，前向時只需要一次加法。
+我先前寫「最後的修正計算必須交錯」—— 在 z-only 版本下連那個都不必，
+只有**加法要發生在對的位置**。
+
+**目前最強的假說**（等 `ctxabs` 才能收斂）：
+關鍵不是合成器看到什麼，而是**保留 native K/V 作為基底**。
+absolute override 等於丟棄該位置原本的計算；residual 只是修正它。
+`static-full` 用 5.6 倍參數做 absolute 仍失敗，`zdelta` 用 1.13M 做 residual 就過。
+
+`ctxabs` 若也過 → delta 也非必要，那 2×2 就只剩「`static-full` 為何失敗」
+需要另尋解釋（可能是它把 native 完全覆蓋掉）。
+`ctxabs` 若敗 → **residual 是唯一的必要因子**，結論很乾淨。

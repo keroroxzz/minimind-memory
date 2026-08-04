@@ -1581,15 +1581,19 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 加入 context 條件、且由 absolute override 改成**保留 native KV 的 residual delta**。
 所以只能宣稱 **`contextual + residual` 這個 bundle 成功**。
 
-**封閉 2×2 的兩個缺格已排入佇列：**
+### 2×2 的結果推翻了「必須有 context」
 
 | | absolute | residual |
 |---|---|---|
-| **z-only** | `static-full` 37.2% ❌ | **`zdelta`（待跑）** |
-| **contextual** | **`ctxabs`（待跑）** | `contextual` **100%** ✅ |
+| **z-only** | `static-full` 6.32M → **37.2%** ❌ | **`zdelta` 1.13M → 99.0%** ✅ |
+| **contextual** | `ctxabs` 跑中 | `contextual` 1.13M → **100%** ✅ |
 
-- `zdelta` 若過 → **online context 並非必要**
-- `ctxabs` 若過 → **delta 並非必要**
+**`zdelta` 通過（99.0%，k=1~3 全 100%、k=4 96%）→ online context 並非必要。**
+決定性的因子是 **residual/delta**，不是 context。
+
+⚠️ **我從 3B 推論「合成器必須看得到該層當下狀態」是錯的**，已撤回。
+兩個 residual 條件都過（99.0% / 100%），兩個 absolute 條件裡已知的那個
+（`static-full`，且參數多 5.6 倍）失敗。
 
 **成本面的好消息**：contextual 版只要 1.13M（core 的 3.9%），
 且 core 完全不動 —— 這正是「可獨立擴容、可抽換」所需要的形狀。
@@ -1598,10 +1602,15 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 
 - 這是 **oracle selection + 凍結 store** 下的結果；檢索與寫入都還沒接
 - 29M、S₅ 合成任務、k≤4、單一 seed
-- **成本約束要條件化（Codex）**：採用已通過的 3B 時，**只有最後的修正計算**
-  必須與 core forward 交錯；**latent 儲存、address 檢索、以及可預算的
-  static component 仍然可以離線**。
-  **不可**由此推出「整個 memory delivery 都不可預算」。
+- **成本約束比我先前寫的更寬鬆。** `zdelta` 通過代表
+
+  ```
+  K' = K_native + f(z)        f 只依賴 latent
+  ```
+
+  **`f(z)` 完全可以離線預先算好**，前向時只需要一次加法。
+  先前我寫「修正計算必須與 core forward 交錯」——
+  在 z-only 版本下**連那個都不必**，只有加法要在對的位置發生。
 
 ---
 
