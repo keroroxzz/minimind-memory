@@ -2222,3 +2222,82 @@ context 的部分也只寫到「**顯式 context 輸入非成功的必要條件*
 **G1 到此我認為可以收了。** 下一個真正的缺口不是再切 delivery，
 而是 **retrieve 與 write** —— 目前全部結果都在 oracle selection + 凍結 store 之下。
 你認為還有哪一格值得補，還是同意轉向？
+
+## [88] Retrieve 階段的設計草案 —— 四個問題想先對齊
+
+依 §4.26：pool 與正確 latent 固定、core 與 `zdelta` 凍結、只訓 query/address/selector。
+
+**我的草案（render 與資料）：**
+
+```
+現在的 latent render：  | x=STATE | . . . . . | . . . . . 求x=
+retrieve render：       | x=STATE | f3 . . . . | f0 . . . . 求x=
+```
+
+也就是**在每個 step span 的第一個 token 放 key**，其餘 4 個仍是 placeholder。
+理由：span 長度、邊界、位置全部不變，`zdelta` 的注入契約完全沿用；
+唯一新增的是「該步要取哪一條」的線索。
+
+**四個問題：**
+
+1. **retriever 的 query 從哪裡來？**
+   (a) 該位置的 **key token embedding**（不需 core 前向，最乾淨、可離線）
+   (b) **凍結 core 在該位置的 hidden**（需先跑一次前向，較貼近真實 runtime）
+   (c) 兩者都試
+   我傾向 **(a) 當 primary**，因為它讓 retrieve 與 delivery 都能離線預算，
+   與 §4.25 選 `zdelta` 的理由一致。(b) 列為之後的變體。
+
+2. **address 用什麼形式？**
+   (a) exact symbol（等同查表，retrieval 幾乎必然 100%，測不出東西）
+   (b) **learned address embedding**，query 與 address 做內積 → top-1
+   我傾向 **(b)**，且 address 由 store 提供、**凍結不訓**（否則 query 與 address
+   會一起漂移，退化成任意編碼）。你同意凍結 address 嗎？
+
+3. **distractor / missing 怎麼配？**
+   目前 pool 是 4 個 key 取 2 個在場。我打算：
+   **pool 8 條、chain 只用其中 2 條**（6 條 distractor），
+   另加 15% 的 missing（沿用 §4.9 的比例）。
+   這樣 hit/miss 才有東西可測。你認為 distractor 數該多少？
+
+4. **`executor | retrieval correct` 怎麼算？**
+   我打算用 **oracle 覆蓋**：同一批題目，把 retriever 的輸出換成正確 latent 再跑一次，
+   得到的就是「檢索完全正確時的上界」——
+   它應該等於 `zdelta` 的 99.0%。若不等於，代表 render 改動本身動到了別的東西。
+   這樣算對嗎？
+
+我先實作與這四題無關的部分（store 的 address 欄位、五個指標的計算）。
+
+## [89] G2a 通過：檢索三項全 100%，`executor | retrieval correct` = 98.8%
+
+依你的規格全部實作完成，先報 **render gate**：oracle-retrieval ceiling = **99.0%**，
+與封板的 `zdelta` 相同 → 新資料層沒有動到 delivery，可以訓 retriever。
+
+**G2a 正式**（core+zdelta 凍結、address 固定正交、只訓 retriever 0.14M）：
+
+| k | ordered | per-step | hit/miss | end2end |
+|---|---|---|---|---|
+| 1–3 | 100% | 100% | 100% | 100% |
+| 4 | 100% | 100% | 100% | 95.5% |
+| **整體** | **100%** | **100%** | **100%** | **98.8%** |
+
+**`executor | retrieval correct` = 98.8%（n=342）**，在**實際 retriever 全對的子集**上算，
+與 oracle ceiling 99.0% 一致 —— 檢索正確時執行沒有額外損失。
+
+**我抓到並修掉的兩個問題：**
+
+1. **support head 原本只看 `cue`** —— 但「這個 key 在不在 pool」取決於 pool，
+   不是 key 本身，它拿不到判斷所需的資訊。實測退化成永遠預測多數類：
+   threshold 校到掃描邊界、準確率 90.8% **恰等於 hit 的基準率**。
+   改成由檢索 logits（top-1、top-1−top-2、logsumexp）產生後 → 100%。
+2. **threshold 選「掃描到的第一個最佳值」** 會停在邊界（−6.00，
+   而 miss 最高分是 −6.90）。已改成取**分離區間中點**。
+   實測 margin **+22.40**（hit 最低 +15.51 / miss 最高 −6.90），分離很乾淨。
+
+**我要主動說明這一關有多容易**：exact-key + 正交 address + 凍結 key embedding，
+retriever 學的其實是「key embedding → 對應正交向量」的線性映射。
+它證明的是**管線與指標建立起來了**，
+**不證明**語意查詢、未見 key 泛化、大 pool、或 address 不正交時的行為。
+
+**下一步我打算直接進 G2b**（query 改由**凍結 core 在該位置的 hidden** 產生，
+而非現成的 key embedding）—— 那才開始有 runtime 的味道。
+你若認為該先補別的（例如 pool scaling 或 unseen-key），現在說。

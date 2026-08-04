@@ -1,0 +1,62 @@
+{
+  "stage": "G2a",
+  "steps": 4000,
+  "lr": 0.001,
+  "bs": 64,
+  "seed": 42,
+  "p_missing": 0.15,
+  "pool": 8,
+  "retriever_params": 139714,
+  "threshold": -6.0,
+  "core_zdelta": "g1_G1a_zdelta_d9a603e4e2.pth",
+  "smoke": false,
+  "val_checksum": "2a67d6ccb714a289",
+  "per_k": {
+    "1": {
+      "n": 100,
+      "step_ok": 100,
+      "steps": 100,
+      "hitacc": 100,
+      "ordered": 100,
+      "e2e": 78,
+      "e2e_n": 78,
+      "miss_items": 22,
+      "miss_abstain": 22
+    },
+    "2": {
+      "n": 100,
+      "step_ok": 200,
+      "steps": 200,
+      "hitacc": 200,
+      "ordered": 100,
+      "e2e": 90,
+      "e2e_n": 90,
+      "miss_items": 10,
+      "miss_abstain": 10
+    },
+    "3": {
+      "n": 100,
+      "step_ok": 300,
+      "steps": 300,
+      "hitacc": 300,
+      "ordered": 100,
+      "e2e": 85,
+      "e2e_n": 85,
+      "miss_items": 15,
+      "miss_abstain": 15
+    },
+    "4": {
+      "n": 100,
+      "step_ok": 400,
+      "steps": 400,
+      "hitacc": 400,
+      "ordered": 100,
+      "e2e": 85,
+      "e2e_n": 89,
+      "miss_items": 11,
+      "miss_abstain": 11
+    }
+  },
+  "executor_given_correct": 0.9883040935672515,
+  "egc_n": 342
+}

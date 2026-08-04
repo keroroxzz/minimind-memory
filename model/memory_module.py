@@ -29,10 +29,44 @@ LATENT_DIM = PERM_N * PERM_N          # 25：5x5 permutation matrix 攤平
 @dataclass
 class MemoryEntry:
     """一條記憶。`latent` 是 position-neutral 的內容表示。"""
-    address: str                       # G1 用 exact key（'f0' 等）
+    address: str                       # 符號位址（'f0' 等）
     latent: torch.Tensor               # (LATENT_DIM,)
     metadata: dict = field(default_factory=dict)
     version: int = 0
+    addr_vec: torch.Tensor | None = None   # 檢索用的 address 向量（retrieve 階段）
+
+
+ADDR_DIM = 32
+
+
+_ADDR_CACHE = {}
+
+
+def address_bank(n: int = 16, dim: int = ADDR_DIM) -> torch.Tensor:
+    """n 個**互相正交**的固定 address（n ≤ dim）。
+
+    隨機單位向量在 32 維下 pairwise |cos| 約 0.18，最壞的一對可能更高 ——
+    那會讓「檢索失敗」與「兩個 address 太像」混在一起（Codex 要求檢查 margin）。
+    正交化直接把這個變因移除。
+    """
+    key = (n, dim)
+    if key not in _ADDR_CACHE:
+        assert n <= dim, f"{n} 個正交向量需要 dim ≥ {n}"
+        g = torch.Generator().manual_seed(20260804)     # 固定 seed，跨 process 穩定
+        q, _ = torch.linalg.qr(torch.randn(dim, n, generator=g))
+        _ADDR_CACHE[key] = q.T.contiguous()             # (n, dim)，列正交
+    return _ADDR_CACHE[key]
+
+
+def address_vector(symbol: str, dim: int = ADDR_DIM) -> torch.Tensor:
+    """`f<i>` → 第 i 個正交 address。**固定、不可訓練。**
+
+    retrieve 階段刻意不訓練 address —— 若 query 與 address 一起學，
+    兩者會共同漂移成任意編碼，那測到的就不是「能不能找到對的那條」，
+    而是「能不能自己約定一套暗號」。
+    """
+    i = int(symbol[1:])
+    return address_bank(max(16, i + 1), dim)[i]
 
 
 @dataclass
@@ -106,6 +140,36 @@ class OracleMemoryInterface:
         entries = self.store.read(chain)
         support = torch.tensor([0.0 if e is None else 1.0 for e in entries])
         return entries, support
+
+
+class Retriever(nn.Module):
+    """query/address/selector —— retrieve 階段**唯一可學**的組件。
+
+    query 由該 step 位置的線索算出，與 store 的 address 做內積 → top-1。
+    另有一個 support head 產出 hit/miss 分數：§4.12/§4.20 已證實
+    **只靠答案梯度時 binding 不會湧現**，所以 hit/miss 要直接監督。
+    """
+
+    def __init__(self, in_dim: int, addr_dim: int = ADDR_DIM, width: int = 256):
+        super().__init__()
+        self.q = nn.Sequential(nn.Linear(in_dim, width), nn.GELU(), nn.Linear(width, addr_dim))
+        # support **必須由檢索 logits 產生，不能只看 cue**。
+        # 「這個 key 在不在 pool 裡」取決於 pool，不是 key 本身 ——
+        # 只看 cue 的 head 拿不到判斷所需的資訊，實測退化成永遠預測多數類
+        # （threshold 校到搜尋邊界、準確率恰等於 hit 的基準率）。
+        # 用 top-1、top-2 與 logsumexp：那是「有沒有找到好匹配」的自然訊號。
+        self.support = nn.Sequential(nn.Linear(3, 32), nn.GELU(), nn.Linear(32, 1))
+        self.log_temp = nn.Parameter(torch.zeros(()))
+
+    def forward(self, cue, addr_bank):
+        """cue (B,k,in_dim)；addr_bank (B,N,addr_dim) → logits (B,k,N)、support (B,k)。"""
+        q = torch.nn.functional.normalize(self.q(cue), dim=-1)
+        a = torch.nn.functional.normalize(addr_bank, dim=-1)
+        logits = torch.einsum("bkd,bnd->bkn", q, a) * self.log_temp.exp()
+        top2 = logits.topk(2, dim=-1).values
+        feat = torch.stack([top2[..., 0], top2[..., 0] - top2[..., 1],
+                            logits.logsumexp(-1)], dim=-1)
+        return logits, self.support(feat).squeeze(-1)
 
 
 # --------------------------------------------------------------------------- Delivery

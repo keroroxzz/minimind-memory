@@ -124,6 +124,47 @@ def render_latent(s: CanonicalSample):
     return f"| x={_nums(s.state)} {steps} 求x=", _nums(s.answer)
 
 
+# --------------------------------------------------------- G2a：retrieve 的資料層
+
+POOL_SIZE = 8            # 固定 8 條 —— missing 題也補到 8，避免用「數量」判 missing
+ALL_KEYS = [f"f{i}" for i in range(16)]
+
+
+def build_pool(s: CanonicalSample, rng, missing: bool = False):
+    """回傳 (pool_symbols, addr_bank, latents_by_symbol, query_keys, target_idx, hit)。
+
+    ⚠️ **render 完全不動**（仍是 5 個 dot）—— key 走 out-of-band metadata（Codex）。
+       把首個 dot 換成 key 會同時改動 `zdelta` 依賴的 native scaffold，
+       那樣就不只是在測 retrieve。
+
+    ⚠️ **pool 基數恆為 8**：missing 題移除一條 required、補一條額外 distractor，
+       否則模型可以用「pool 少了一條」判 missing，而不是真的比對。
+    """
+    required = list(dict.fromkeys(s.chain))                 # 有序去重
+    others = [k for k in ALL_KEYS if k not in required]
+    rng.shuffle(others)
+    dropped = None
+    if missing and required:
+        dropped = required[rng.randrange(len(required))]
+        required = [k for k in required if k != dropped]
+    pool = required + others[:POOL_SIZE - len(required)]    # 恆為 8
+    assert len(pool) == POOL_SIZE
+    rng.shuffle(pool)
+
+    lat = {}
+    for k in pool:
+        lat[k] = perm_to_latent(s.defs[k]) if k in s.defs else _rand_perm_latent(k, rng)
+    target = [pool.index(g) if g in pool else -1 for g in s.chain]
+    hit = [t >= 0 for t in target]
+    return pool, lat, list(s.chain), target, hit, dropped
+
+
+def _rand_perm_latent(sym, rng):
+    """distractor 的內容 —— 隨機置換，與 required 同分布。"""
+    q = list(range(PERM_N)); rng.shuffle(q)
+    return perm_to_latent(q)
+
+
 def build_store(s: CanonicalSample) -> LatentStore:
     """每樣本重建 store —— 定義每樣本重抽，背進權重無用且有害。
 
