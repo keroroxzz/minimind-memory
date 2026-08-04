@@ -582,3 +582,56 @@ def perm_splits(seed=20260804, n_val=24):
     rng = random.Random(seed)
     rng.shuffle(allp)
     return allp[n_val:], allp[:n_val]
+
+
+# ------------------------------------------- G4b：指稱／時序 binding 的資料層
+
+FILLER = "| 略"          # 不引入任何 entity 的填充事件
+
+
+def render_stream(writes, n_filler):
+    """一段**有序的事件 stream**：若干次 literal 寫入 + 若干個填充事件。
+
+        | f2 = 4 0 1 3 2 定 | f9 = 1 2 0 4 3 定 | f7 = 3 1 0 2 4 定 | 略 | 略
+
+    最後一次寫入的 entity 就是「前者」的指涉對象；填充事件只拉開距離、
+    **不改變指涉**，這樣 `distance` 才是乾淨的分層變數。
+    """
+    ev = " ".join(render_define_view(k, p) for k, p in writes)
+    return (ev + " " + " ".join([FILLER] * n_filler)).strip()
+
+
+def render_reference_view(stream: str) -> str:
+    """G4b 的 **out-of-band 指稱 view** —— resolver 讀這裡，**交付的 prompt 不動**。
+
+    ⚠️ 這是 §4.27 就立過的 invariant：**交付用的 prompt 必須維持凍結 core
+       訓練過的格式**（`| x=… | … 求x=`）。第一版把 stream 前綴與 `（前者）`
+       後綴直接塞進交付 prompt，oracle resolver 的天花板因此掉到 **0.0%** ——
+       core 根本不認得那個格式。指稱要另開一段序列，與 G2b 的 retrieval view 同理。
+
+        | f4 = … 定 | f18 = … 定 | f29 = … 定 | 略 | 略 求?（前者）
+
+    ⚠️ 指稱放在**讀取端**是刻意的：錯指到**另一個已存在的 entity** 時，
+       exact-membership guard 會放行（那個 key 確實在 store 裡），
+       於是**自信地交付錯誤內容** —— 那才是這一關要測的危險錯誤。
+       若把指稱放在寫入端，錯指只會讓目標 key 沒有內容、退化成安全的 abstain。
+    """
+    return f"{stream} 求?（前者）"
+
+
+def make_reference_episode(rng, keys, perms, n_entity, n_filler, k=1):
+    """回傳 (stream, writes, target, s)。
+
+    `writes` 是**有序**的 (key, perm) 列表；`target` = 最後一次寫入的 key。
+    所有被寫入的 entity 都**真的進 store** —— 錯指才會落在「已存在的別條」上。
+    """
+    ks = rng.sample(keys, n_entity)
+    ws = [(k_, list(perms[rng.randrange(len(perms))])) for k_ in ks]
+    target, tperm = ws[-1]
+    state = list(range(PERM_N)); rng.shuffle(state)
+    st = list(state)
+    for _ in range(k):
+        st = [st[tperm[i]] for i in range(PERM_N)]
+    s = CanonicalSample(k=k, defs={target: tperm}, present=[target], state=state,
+                        chain=[target] * k, answer=st)
+    return render_stream(ws, n_filler), ws, target, s

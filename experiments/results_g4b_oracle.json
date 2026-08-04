@@ -1,0 +1,90 @@
+{
+  "stage": "oracle",
+  "k": 1,
+  "n_per_cell": 40,
+  "seed": 606,
+  "cells": {
+    "e2_f0": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e2_f2": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e2_f5": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e3_f0": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e3_f2": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e3_f5": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e5_f0": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e5_f2": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    },
+    "e5_f5": {
+      "ref_n": 40,
+      "ref_ok": 40,
+      "wrong_entity": 0,
+      "e2e": [
+        40,
+        40
+      ]
+    }
+  },
+  "checksum": "05939254ea9b"
+}

@@ -3229,3 +3229,49 @@ address 很可能只是記表」是同一個疑慮，只是換到 write 側。
 你覺得哪個是對的下一題？還是你認為在碰 identifier 之前，
 應該先回頭處理 **G2c 那個 open-set calibration blocker**——
 畢竟它才是完整系統唯一還擋著的東西？
+
+## [109] G4b 資料層與 oracle 天花板完成；**oracle 這一階當場抓到我一個設計錯誤**
+
+照你的規格切成最小版本：有序 stream（若干次 literal 寫入 + 填充事件）、
+固定 token-span、query 用**指稱**（`前者` = 最後被寫入的 entity）、
+writer/zdelta/store 全凍結、每 episode 嚴格 reset。
+
+**oracle resolver 第一版天花板是 0.0%** —— 不是研究結果，是我的設計錯誤：
+**我把 stream 前綴與 `（前者）` 後綴直接塞進了交付用的 prompt**。
+凍結的 core 只在 `| x=… | … 求x=` 上訓練過，根本不認得那個格式。
+
+這違反的是 **§4.27 就立過的 invariant**：**指稱／檢索 view 必須 out-of-band，
+交付的 prompt 不可動**（G2b 當初也是這樣處理的）。改成
+
+```
+reference view（out-of-band）  | f4 = … 定 | f18 = … 定 | f29 = … 定 | 略 | 略 求?（前者）
+delivery prompt（原封不動）    | x=STATE | . . . . . 求x=
+```
+
+之後，**oracle 天花板 = 9 格全部 100% E2E**：
+
+| entities | fillers | ref exact | E2E | **wrong-entity** | abstain |
+|---|---|---|---|---|---|
+| 2/3/5 | 0/2/5 | 100.0% | **100.0%** | 0.0% | 0.0% |
+
+整體 E2E 100.0% [98.9%, 100%]，n=360。
+
+**你堅持先跑 oracle ceiling 是對的** —— 這個錯誤若混在 learned resolver 裡，
+我會看到一個低分然後開始懷疑 temporal binding 學不起來，
+但真正的原因跟 binding 完全無關。
+
+接下來做 learned resolver。動手前有兩個設計決定想先跟你確認：
+
+1. **resolver 的輸入取哪裡？** 我打算取凍結 core 在 **reference view 最後一個 token**
+   （`前者` 的 span 末端）的 hidden，對候選 entity 的 **address 向量**做內積 ——
+   與 G2b 的 Retriever 同構。這樣它與既有元件的介面一致，
+   而且 address 仍是 deterministic 的、不會又變成「學一張表」。
+   但這也意味著 resolver 只能看到 core 對 stream 的編碼 ——
+   若 core 根本沒把「誰是最後寫入的」編進 hidden，這一階會失敗於**表示**而非**學習**。
+   要不要先加一個**線性可分性的探針**（像 §4.28 對 write hidden 做的條件數檢查），
+   在訓練前就知道訊號在不在？我傾向要，因為 §4.28 那次正是靠它避免了誤判。
+
+2. **`wrong-existing-entity` 要不要在訓練時被特別加權？**
+   它是唯一的危險錯誤，但若我在 loss 裡特別壓它，就等於預設了一個代價比例。
+   我傾向**訓練時不加權**（純 CE），把安全的取捨留在**事後的 threshold／abstain 策略**，
+   跟 §4.38 把 membership 搬回契約的思路一致。你同意嗎？
