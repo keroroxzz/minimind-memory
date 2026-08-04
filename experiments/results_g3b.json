@@ -1,0 +1,118 @@
+{
+  "cells": {
+    "oracle writer|oracle retr": {
+      "e2e": 0.98,
+      "e2e_n": 50,
+      "abstain": 1.0,
+      "abstain_n": 10
+    },
+    "oracle writer|learned retr": {
+      "e2e": 0.98,
+      "e2e_n": 50,
+      "abstain": 1.0,
+      "abstain_n": 10
+    },
+    "**learned writer**|oracle retr": {
+      "e2e": 0.98,
+      "e2e_n": 50,
+      "abstain": 1.0,
+      "abstain_n": 10
+    },
+    "**learned writer**|**learned retr**": {
+      "e2e": 0.98,
+      "e2e_n": 50,
+      "abstain": 1.0,
+      "abstain_n": 10
+    },
+    "learned writer|learned retr（**直送、不經 store**）": {
+      "e2e": 0.98,
+      "e2e_n": 50,
+      "abstain": 1.0,
+      "abstain_n": 10
+    }
+  },
+  "chain": {
+    "formation": [
+      137,
+      137
+    ],
+    "address": [
+      150,
+      150
+    ],
+    "content": [
+      137,
+      137
+    ],
+    "executor": [
+      49,
+      50
+    ],
+    "e2e": [
+      49,
+      50
+    ]
+  },
+  "r4": {
+    "miss_n": 10,
+    "R_abstain": 10,
+    "halluc": 0,
+    "ans_n": 50,
+    "false_abstain": 0
+  },
+  "store_checks": {
+    "n": 480,
+    "shape": 480,
+    "maxdiff": 0.0,
+    "detached": 480,
+    "addr": 480
+  },
+  "threshold": 3.8257057666778564,
+  "identity": {
+    "query_keys": [
+      "f0",
+      "f1",
+      "f2",
+      "f3"
+    ],
+    "distractors": [
+      "f0",
+      "f1",
+      "f2",
+      "f3",
+      "f4",
+      "f5",
+      "f6",
+      "f7",
+      "f8",
+      "f9",
+      "f10",
+      "f11",
+      "f12",
+      "f13",
+      "f14",
+      "f15",
+      "f16",
+      "f17",
+      "f18",
+      "f19",
+      "f20",
+      "f21",
+      "f22",
+      "f23",
+      "f24",
+      "f25",
+      "f28",
+      "f29",
+      "f30"
+    ],
+    "n_perm": 24,
+    "pool": 8,
+    "p_omit": 0.15,
+    "seed": 1234,
+    "checksum": "8228dcecd66a"
+  },
+  "pool": 8,
+  "seed": 1234,
+  "scope": "in-distribution 2-token closed-world component closure"
+}

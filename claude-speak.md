@@ -2796,3 +2796,49 @@ pool=8 綽綽有餘），理由是上表 —— 3-token 是**已知且已量化�
 - **primary 不再訓練**，全凍結串接；threshold 沿 G2b 凍結不重校
 - 15% omitted-write missing，沿 R4 四指標
 - 過了只稱 **closed-world component closure**
+
+## [101] G3b 已按你的規格串起來跑；途中一個 harness bug 差點被我當成發現
+
+你 [100] 的四條要求都照做了，其中**「primary key universe 必須是 2-token ∩ G2b 訓練過的身分」
+這條抓到了我的實作錯誤**：我原本用全部 32 個 2-token key 當 query，
+但 G2b 的 query 只在 `R.KEYS = f0..f3` 上訓練過（G2ab 走 `keys=None` → `make_canonical` 用 R.KEYS）。
+
+而且順著查下去還有一個更硬的界線：`address_vector` 的 bank 只有 `ADDR_DIM=32` 個正交向量，
+**f32 以上根本產不出 address** —— 所以 G2b 當初實際看過的 distractor 也只有 f0..f31。
+現在 primary 是 query `f0..f3` + distractor「f0..f31 裡的 29 個 2-token key」，
+身分清單與 checksum 已在開跑前落 `g3b_identity_prereg.json`。
+
+**一個我差點誤報成發現的 harness bug，想跟你確認我的修法：**
+
+第一版 smoke 出現 **R_abstain 0% / halluc 100%**，2×2 乾淨地指到 support head
+（`oracle retr` 棄答 100%、`learned retr` 棄答 0%）。看起來像「G2b 的 support 問的是
+『這個 key 在不在 pool 裡』，而 G3b 需要『在不在 store 裡』」的語意錯配 —— 很漂亮的結論。
+
+**但那是我的 bug。** 我先建 pool 再漏寫，等於在 address bank 裡留了一個
+**沒有內容的懸空 address**。真實系統裡 retriever 拿到的 address bank
+**就是 store 的內容**，沒寫進去的 key 根本不會出現在 bank 裡；G2b 也正是這樣訓練的。
+改成「**pool 由 store 的實際內容決定**」（漏寫的 key 不進 pool，另補一條 distractor
+維持基數 8）之後，smoke 全通過：
+
+```
+1. writer formation exact（unconditional）  100.0% (n=137)
+2. address retrieval exact                 100.0% (n=150)
+3. content fidelity | address 正確          100.0% (n=137)
+4. executor | address+content 皆正確          98.0% (n=50)
+5. end-to-end                                98.0% (n=50)
+R_abstain 100% / halluc 0% / false_abstain 0%
+store roundtrip 480 次：shape 480/480、max|diff| 0.00e+00、detach 480/480、
+                        address↔content 綁定 480/480
+2×2 五格全部 98.0% —— 沒有任何一格掉分
+```
+
+**但我想把那個 bug 記成一個「真實但未測試的情境」而不是單純刪掉：**
+「index 裡有 entry、但內容缺失」的 **dangling address** 是真系統會發生的
+（部分寫入失敗、GC 競態）。目前的 support head 在那個情境下 **halluc 100%**，
+因為它只看 address 匹配分數、拿不到「內容是否存在」的訊號。
+我想把它寫成 G3c 的一個待測項，而不是現在補救。你同意這個處理嗎？
+
+正式跑（primary 400 episodes + 3-token stress 400）進行中。
+stress 我照你的話標成 exploratory/diagnostic，並明寫
+**3-token query 同時讓 writer 與 retriever 離開分布，兩個混淆在本設計裡無法分離** ——
+只有 formation 一欄可單獨歸因 writer。

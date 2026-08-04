@@ -217,10 +217,12 @@ supervised formation.
 **Span-structure fragility is cross-cutting, not a G2c quirk.** The G3a writer generalises
 *perfectly* to unseen keys — but only to 2-token ones. `f4..f11` (all 2-token) score 100% exact
 permutation; `f41..f44/f46/f47` (all 3-token) score 58–96%, because the extra key token pushes
-the value span from index 5 to 6. This is the same failure that sank G2c-cal-v2, now in a
-completely different component, so treat it as a property of building on a frozen core with a
-context-dependent tokenizer: **any component reading a fixed span offset must be trained across
-the span structures it will meet**. Of `f0..f47`, 32 keys are 2-token and 16 are 3-token.
+the value span from index 5 to 6. G2c-cal-v2 failed under a shift of the same
+*kind*, but **the mechanism is not proven to be the same** — G2c's failing path was an
+order-aware embedding encoder plus support calibration, the writer's is event→latent, and G2c's
+primary never relied on core hidden. The shared, defensible statement is narrower: both are
+fragile to **tokenizer-induced span-length/position shift**. Do not elevate it to a theorem about
+frozen cores. Of `f0..f47`, 32 keys are 2-token and 16 are 3-token.
 
 **Next**: **G3b closed-world loop** — reconnect the **G2a/G2b** fixed-key retriever/support only,
 never G2c, and do not claim an open-set loop. The untested path is `writer → store → retriever →

@@ -147,10 +147,13 @@ class TestGQAPool(unittest.TestCase):
         attn = m.model.layers[0].self_attn
         real_forward = attn.forward
 
+        # **必須收 `**kw` 並原樣轉發**：Attention.forward 之後又長出了
+        # `kv_override`（C 層的 in-place KV 交付），窄簽名的 wrapper 會直接
+        # TypeError。這個 wrapper 只是要偷看 pool，不該綁死呼叫端的參數表。
         def wrapper(x, position_embeddings, past_key_value=None, use_cache=False,
-                    attention_mask=None, global_kv_pool=None, mems=None):
+                    attention_mask=None, global_kv_pool=None, mems=None, **kw):
             out = real_forward(x, position_embeddings, past_key_value, use_cache,
-                               attention_mask, global_kv_pool, mems)
+                               attention_mask, global_kv_pool, mems, **kw)
             if global_kv_pool:
                 pooled.append(global_kv_pool['k'][0].shape[1])
             return out
