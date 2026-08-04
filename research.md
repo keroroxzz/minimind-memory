@@ -3171,6 +3171,66 @@ finite-horizon overfit 在 logit 層被逐題對上了。
 
 ---
 
+## 4.48 v3 的兩次嘗試都是**規格無效**，不是第三、四個失敗結果
+
+### `v3-hinge`：**invalid / no effective intervention**
+
+逐位置 hinge `max(0, ε − m_delivery)`，`ε = 8.0` 事前鎖定。
+**訓練期間 `hinge = 0.0000` 全程** —— 訓練格（`j≤2`）的 margin 本來就 > 8。
+loss 實質等同 v2 的純 CE，`j=3` 的 82.5% **不得**與 v2 作效果比較。
+
+### `v3-distill(T=1)`：**invalid / intervention indistinguishable from CE**
+
+改成 text-teacher 的 stop-gradient KL（**不蒸餾 scalar margin** ——
+`max_wrong` 身分會切換且只留一個競爭者）。`T=1`、`λ_KL=1` 事前鎖定。
+
+```
+step 3 [j=1 mixed] ce=0.0346 KL=0.0346
+step 8 [j=1 mixed] ce=0.0856 KL=0.0856
+```
+
+**KL 與 CE 每一列完全相等**，原因是數學上的：text teacher 的 margin 約 14、
+分布實質是 one-hot，而 `KL(one-hot ‖ student) = −log p_student(gold) = CE`。
+`λ_KL=1` 只是把 CE 加倍。`j=3` 的數字同樣**不得**與 v2 比較。
+
+**這兩次是第一、第二個「規格無效」，不是第三、第四個失敗結果。**
+
+### 一個必須記錄的**資料檢查錯誤**（我的，不是模型的）
+
+第一次檢查 KL 時，我取的步數幾乎都是 5 的倍數，而 `TRAIN` 剛好有 5 格 ——
+**全部落在最簡單的 `j=0 allph`**，因此誤判「KL 從頭就是 0」。
+逐格印出後才看到 KL 在困難格確實非零。**若沒查這一步就會寫下一個錯的發現。**
+
+**→ 此後所有 smoke gate 必須逐 `j × config` 印出 loss、梯度與樣本數，
+先確認 intervention 可辨識，才跑長訓練。**
+
+### 裁決：暫停調 output loss，另立結構性介面題
+
+**措辭必須收窄**（Codex）：
+
+> 在目前 train `j≤2`、teacher 已飽和、delivery accuracy 近滿的分布中，
+> 短-horizon 的 task／logit objectives 對「**哪個表示可外推到 `j=3`**」
+> 是**不可辨識**的。
+
+**不可**寫成「任何 output-space loss 都不可能有效」——
+CE 數值小**不等於**梯度或 directional signal 必然無效。
+`T>1` 或非飽和 teacher **是可行的新介入**，但那會是第三次 loss/spec 探索，
+**仍只在容易的 horizon 有訊號**，沒有解決根因：**訓練分布本身不含要修的現象**。
+本輪**不開**。
+
+### 結構性題的要求
+
+primary 必須**直接改變可外推性**，而非換 loss。方向例如：
+
+- 讓 carrier 在**後續 composition 中保持可辨識**／**週期性 re-anchor**
+- **顯式分離 memory state 與 executor state**
+
+同時保留 frozen v1、text teacher 與 **`j=3` fresh test**。
+若日後重開 soft-teacher，**必須另名、另 prereg**，並提供**非飽和 teacher**
+與**真正未見-horizon 的訓練訊號**，**不得回填 v3**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

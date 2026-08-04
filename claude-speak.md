@@ -3817,3 +3817,48 @@ smoke 的 `j=3 allph` 82.5%（v2 是 95.0%）因此**只是 seed 噪聲，不是
 且它壓的正是 `Δm` 這個 decision-relevant 量。
 但這樣就不再是「tail-aware」，而是「全位置 functional distillation」——
 與你 [119] 說的「壓尾巴與保持多步可讀是同一目標的兩種描述」是否一致，我不確定。
+
+## [121] v3-distill 在 `T=1` 下**退化成 CE** —— 第二次 spec gate 失敗
+
+照你的規格改成 text-teacher stop-grad KL（不蒸餾 scalar margin）。
+smoke gate 逐格檢查後發現：
+
+```
+step 3 [j=1 mixed] ce=0.0346 KL=0.0346
+step 4 [j=2 allph] ce=0.0080 KL=0.0080
+step 8 [j=1 mixed] ce=0.0856 KL=0.0856
+```
+
+**KL 與 CE 在每一列完全相等。**
+
+原因是數學上的：**text teacher 的 margin 約 14，分布實質上就是 one-hot**，
+而 `KL(one-hot ‖ student) = −log p_student(gold) = CE`。
+所以 `T=1` 的 distillation **幾乎等同原本的 task CE**，
+`λ_KL=1` 只是把 CE 加倍 —— **沒有帶進任何新的 decision-geometry 資訊**。
+
+因此 `j=3` 的 80.0%/70.0% 同樣**不可與 v2 作效果比較**。
+記為 **`v3-distill(T=1) invalid / intervention indistinguishable from CE`** ——
+與 v3-hinge 的 `hinge=0` **同類**：第二次「介入與 baseline 不可分辨」。
+
+**另外我修正了自己的一個取樣 bug**：第一次檢查 KL 時取的步數幾乎都是 5 的倍數，
+而 `TRAIN` 剛好有 5 格 → 全部落在最簡單的 `j=0 allph`，我因此誤以為「KL 從頭就是 0」。
+逐格印出後才看到 KL 在困難格確實非零。**若沒查這一步，我會下錯結論。**
+
+**依紀律我不自行改 `T`。** 請你裁 —— 我看到三條路：
+
+1. **提高溫度**（例如 `T=4`），讓 teacher 的非 gold 尾部露出來。
+   這在程序上是「smoke gate 偵測到介入不可分辨」後的規格修正，
+   與看 `j=3` 調參不同 —— 但我要你確認這個區分成立，因為這已經是第二次了。
+2. **teacher 換成不飽和的來源** —— 例如對 teacher 也加溫度，
+   或改用 `j` 更大的 text carry 當 teacher（那裡 margin 較小、分布較有結構）。
+3. **接受你 [120] 事前寫好的結論**：
+   「**短 horizon 的 logit equivalence 不足以誘發長 horizon 穩定性**」，
+   停止調 loss，改為另立**結構性介面**的題目。
+
+我傾向 3 —— 但這次我想先講清楚我的理由，而不是又建一個機制敘事：
+**在 `j≤2`，v1 的交付本來就幾乎完美**（CE 與 KL 都在 1e-4 ~ 1e-2 量級），
+**所以任何 output-space 的目標在訓練格上能提供的訊號本質上都很小**。
+兩次失敗都是這件事的不同表現。若這個推理成立，
+那不是「還沒找到對的 loss」，而是**訓練分布本身不含要修的現象**。
+
+這個推理你認為站得住嗎？還是又是我在把兩次失敗編成一個故事？
