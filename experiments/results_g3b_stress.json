@@ -1,64 +1,64 @@
 {
   "cells": {
     "oracle writer|oracle retr": {
-      "e2e": 0.9824046920821115,
-      "e2e_n": 341,
+      "e2e": 0.9823008849557522,
+      "e2e_n": 339,
       "abstain": 1.0,
-      "abstain_n": 59
+      "abstain_n": 61
     },
     "oracle writer|learned retr": {
-      "e2e": 0.9824046920821115,
-      "e2e_n": 341,
-      "abstain": 0.9491525423728814,
-      "abstain_n": 59
+      "e2e": 0.0,
+      "e2e_n": 339,
+      "abstain": 0.9016393442622951,
+      "abstain_n": 61
     },
     "**learned writer**|oracle retr": {
-      "e2e": 0.9824046920821115,
-      "e2e_n": 341,
+      "e2e": 0.943952802359882,
+      "e2e_n": 339,
       "abstain": 1.0,
-      "abstain_n": 59
+      "abstain_n": 61
     },
     "**learned writer**|**learned retr**": {
-      "e2e": 0.9824046920821115,
-      "e2e_n": 341,
-      "abstain": 0.9491525423728814,
-      "abstain_n": 59
+      "e2e": 0.0,
+      "e2e_n": 339,
+      "abstain": 0.9016393442622951,
+      "abstain_n": 61
     },
     "learned writer|learned retr（**直送、不經 store**）": {
-      "e2e": 0.9824046920821115,
-      "e2e_n": 341,
-      "abstain": 0.9491525423728814,
-      "abstain_n": 59
+      "e2e": 0.0,
+      "e2e_n": 339,
+      "abstain": 0.9016393442622951,
+      "abstain_n": 61
     }
   },
   "chain": {
     "formation": [
-      904,
-      904
+      858,
+      897
     ],
     "address": [
-      996,
+      79,
       1000
     ],
     "content": [
-      904,
-      904
+      0,
+      0
     ],
     "executor": [
-      335,
-      341
+      0,
+      0
     ],
     "e2e": [
-      335,
-      341
+      0,
+      339
     ]
   },
   "r4": {
-    "miss_n": 59,
-    "R_abstain": 56,
-    "halluc": 3,
-    "ans_n": 341,
-    "false_abstain": 0
+    "miss_n": 61,
+    "R_abstain": 55,
+    "halluc": 6,
+    "ans_n": 339,
+    "false_abstain": 290
   },
   "store_checks": {
     "n": 3200,
@@ -70,10 +70,9 @@
   "threshold": 3.8257057666778564,
   "identity": {
     "query_keys": [
-      "f0",
-      "f1",
-      "f2",
-      "f3"
+      "f26",
+      "f27",
+      "f31"
     ],
     "distractors": [
       "f0",
@@ -110,9 +109,9 @@
     "pool": 8,
     "p_omit": 0.15,
     "seed": 1234,
-    "checksum": "8228dcecd66a"
+    "checksum": "45d4ed388749"
   },
   "pool": 8,
   "seed": 1234,
-  "scope": "in-distribution 2-token closed-world component closure"
+  "scope": "3-token span-shift stress (exploratory)"
 }

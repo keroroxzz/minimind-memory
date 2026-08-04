@@ -1,9 +1,8 @@
 {
   "query_keys": [
-    "f0",
-    "f1",
-    "f2",
-    "f3"
+    "f26",
+    "f27",
+    "f31"
   ],
   "distractors": [
     "f0",
@@ -40,5 +39,5 @@
   "pool": 8,
   "p_omit": 0.15,
   "seed": 1234,
-  "checksum": "8228dcecd66a"
+  "checksum": "45d4ed388749"
 }

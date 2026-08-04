@@ -2190,6 +2190,101 @@ v2 的 rowsoftmax 在結構上就保證了 entropy 與流形匹配，所以：
 
 ---
 
+## 4.34 G3b：**in-distribution 2-token closed-world component closure = PASS**
+
+全凍結、**零訓練**。四個元件載入既有權重直接串：
+
+    event → writer → store.commit → retrieve → store.read → delivery → answer
+
+### 範圍（必須明寫，不可含糊成一般能力）
+
+- **query 身分只有 4 個**（`f0..f3`）—— G2b 的 query 只在 `R.KEYS` 上訓練過。
+- **address bank 只有 `ADDR_DIM=32` 個正交向量**，`f32` 以上**產不出 address** ——
+  所以 G2b 當初實際看過的 distractor 也只有 `f0..f31`。
+  **這不是一般的 pool capacity。**
+- primary key universe = 「2-token」∩ 上述兩者；distractor 29 個，pool=8。
+- 置換用 G3a 的 **val split（24 個未見置換）**。
+- **address 仍由已知的 key 規則提供** —— **write-address formation 尚未測試**。
+- 每 key 最多寫一次、每 episode 清空 store ——
+  **刻意排除 overwrite / reconsolidation**，那是 G3c。
+- 身分與 checksum 在開跑前落 `g3b_identity_prereg.json`（`8228dcecd66a`）。
+
+### 指標鏈（learned writer × learned retrieval × store roundtrip，400 episodes）
+
+| | |
+|---|---|
+| 1. writer formation exact（**unconditional**）| **100.0%** (n=904) |
+| 2. address retrieval exact | **99.6%** (n=1000) |
+| 3. retrieved-content fidelity \| address 正確 | **100.0%** (n=904) |
+| 4. executor \| address + content 皆正確 | **98.2%** (n=341) |
+| 5. **end-to-end** | **98.2%** (n=341) |
+
+R4（漏寫由**實際 store membership** 驅動，14.8%）：
+`R_abstain` **94.9%** (n=59) / `halluc` **5.1%** / `false_abstain` **0.0%** (n=341)。
+
+### 2×2 介入：**沒有任何一格掉分**
+
+| writer | retrieval | end-to-end | 棄答正確 |
+|---|---|---|---|
+| oracle | oracle | 98.2% | 100.0% |
+| oracle | learned | 98.2% | 94.9% |
+| **learned** | oracle | 98.2% | 100.0% |
+| **learned** | **learned** | **98.2%** | 94.9% |
+| learned | learned（**直送、不經 store**）| 98.2% | 94.9% |
+
+**連 `oracle × oracle` 也是 98.2%** —— 那 1.8% 的缺口是**交付／執行本身**
+（G1 的 `zdelta` 天花板是 99.0%），不是任何一個學到的元件。
+**整合沒有付出代價。** `直送 vs store roundtrip` 也完全相同：**store 往返是免費的**。
+
+棄答的唯一差異在 retrieval（oracle 100% vs learned 94.9%），
+所以那 5.1% 的 halluc 完全來自 G2b 的 support head，與 write／delivery 無關。
+
+### store 契約逐位驗證
+
+3200 次 `commit → read`：shape 一致 **3200/3200**、`max|diff|` **0.00e+00**、
+detach **3200/3200**、**address↔content 綁定 3200/3200**。
+
+### 3-token span-shift stress stratum（**exploratory / diagnostic，不影響 primary gate**）
+
+query key = `f26, f27, f31`（可定址的 3-token key），其餘完全相同。
+
+| | |
+|---|---|
+| 1. writer formation exact | **95.7%** (n=897) |
+| 2. address retrieval exact | **7.9%** (n=1000) |
+| 5. end-to-end | **0.0%** (n=339) |
+| `false_abstain` | 85.5% |
+
+**⚠️ 雙重 OOD，本設計無法分離：** 3-token 的 query 同時讓 **writer**
+（value span 從 5 移到 6）與 **retriever**（G2b 只在 `f0..f3` 上訓練過 query）
+離開分布。依預先約定，**只有 formation 一欄可歸因 writer**，
+full-chain 的下降保持混淆、不再拆因果。
+
+就 formation 這一欄而言：**95.7%，writer 幾乎撐住了**。
+full-chain 的崩塌由 `address retrieval 7.9%` 主導。
+
+### 最終宣稱（兩行，互不抵銷）
+
+- **`in-distribution 2-token closed-world component closure` = PASS。**
+- **`3-token span-shift robustness` = FAIL。**
+
+**不稱** open-set，**不稱**持久學習閉環，**不稱**一般 pool capacity。
+
+### 本輪不補救、另立 G3c 的項目
+
+- **dangling address**（index 有 entry、內容缺失）—— 真系統會發生（部分寫入失敗、
+  GC 競態）。這是**儲存／索引一致性問題**，不該要求 learned support 從相似度
+  猜內容存不存在。先把契約釘成
+  **`address visible ⇔ committed content readable` + atomic commit**，
+  讀到 dangling 時 controller 必須 **fail-closed 成 missing/abstain**；
+  G3c 再故意破壞這個 invariant，測偵測、回滾／修復與零 halluc。
+  （harness 第一版曾誤造出這個情境並得到 halluc 100%，那只是
+  **bug 暴露的診斷案例**，不是模型結果，也不是 support 語意錯配的證據。）
+- **overwrite / reconsolidation**、stale snapshot。
+- **write-address formation**（目前 address 仍由已知 key 規則提供）。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

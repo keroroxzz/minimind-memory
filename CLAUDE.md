@@ -224,10 +224,52 @@ primary never relied on core hidden. The shared, defensible statement is narrowe
 fragile to **tokenizer-induced span-length/position shift**. Do not elevate it to a theorem about
 frozen cores. Of `f0..f47`, 32 keys are 2-token and 16 are 3-token.
 
-**Next**: **G3b closed-world loop** — reconnect the **G2a/G2b** fixed-key retriever/support only,
-never G2c, and do not claim an open-set loop. The untested path is `writer → store → retriever →
-delivery`: G3a feeds the writer's latent straight to delivery, so the store round-trip has never
-run end to end.
+## C layer — G3b closure, 2026-08-04
+
+`research.md` §4.34. All four components loaded frozen, **zero training**, wired as
+`event → writer → store.commit → retrieve → store.read → delivery → answer`, 400 episodes.
+
+**Scope — state it, do not generalise it**: only **4 query identities** (`f0..f3`, the set G2b
+actually trained queries on) and at most **32 orthogonal addresses** (`address_vector` draws from
+`address_bank`, so `f32`+ has no address at all — G2b never saw those either). Pool 8, 29
+distractors, permutations from G3a's unseen val split, `p_omit` 14.8%. Address still comes from
+the known key rule, so **write-address formation remains untested**. Each key written at most
+once, store cleared per episode: overwrite/reconsolidation is deliberately excluded.
+
+| chain step | primary (2-token) | stress (3-token, exploratory) |
+|---|---|---|
+| 1. writer formation exact (unconditional) | **100.0%** (n=904) | 95.7% (n=897) |
+| 2. address retrieval exact | **99.6%** (n=1000) | **7.9%** (n=1000) |
+| 3. content fidelity \| address correct | **100.0%** (n=904) | — (n=0) |
+| 4. executor \| address+content correct | **98.2%** (n=341) | — (n=0) |
+| 5. **end-to-end** | **98.2%** (n=341) | **0.0%** (n=339) |
+| R_abstain / halluc / false_abstain | 94.9% / 5.1% / 0.0% | 90.2% / 9.8% / 85.5% |
+
+**Integration costs nothing.** Every cell of the 2×2 intervention
+(`oracle|learned writer × oracle|learned retrieval`) scores **98.2%** end-to-end — including
+`oracle × oracle`, so the missing 1.8% is the delivery/executor itself (G1's `zdelta` ceiling is
+99.0%), not any learned component. Direct delivery and store round-trip are also identical, so
+**the store round-trip is free**. Abstention is the only cell that moves (oracle retrieval 100%
+vs learned 94.9%), which places the 5.1% hallucination entirely on G2b's support head.
+
+Store contract verified bitwise over 3200 `commit → read` pairs: shape 3200/3200,
+`max|diff|` **0.00e+00**, detached 3200/3200, address↔content binding 3200/3200.
+
+**The 3-token stress stratum is doubly OOD** — a 3-token query moves the writer's value span from
+index 5 to 6 *and* uses query identities G2b never trained on. Only the formation column may be
+attributed to the writer (95.7%, it nearly holds); the full-chain collapse is dominated by
+retrieval at 7.9% and stays confounded.
+
+**Two claims, neither cancelling the other**: `in-distribution 2-token closed-world component
+closure` = **PASS**; `3-token span-shift robustness` = **FAIL**. Not open-set, not a
+persistent-learning loop, not general pool capacity.
+
+**Next — G3c**, deliberately excluded here: **dangling address** (index has the entry, content is
+missing — partial write, GC race). Pin the contract first — `address visible ⇔ committed content
+readable`, atomic commit, controller **fails closed** to abstain on a dangling read — then break
+it on purpose and measure detection, repair, and zero hallucination. This is a storage/index
+consistency problem; do not ask a learned support head to infer existence from similarity. Also
+deferred: overwrite/reconsolidation, stale snapshots, write-address formation.
 
 **G1 is sealed.** The default interface for the next stage is `zdelta`:
 `K' = K_native + f_slot(z)` at the value token positions, all 16 (loop, layer) cache slots,
