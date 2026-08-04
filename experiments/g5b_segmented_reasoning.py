@@ -191,6 +191,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--Ks", type=int, nargs="+", default=[4, 8, 12])
+    ap.add_argument("--confirm", action="store_true",
+                    help="confirmatory：只跑 pred_text vs pred_mem_allph，"
+                         "新 seed／未觸碰 split，gate 事前鎖死")
     ap.add_argument("--diag", action="store_true",
                     help="加跑 ⑤/⑥ 的 exploratory diagnostic（不改 primary 四組）")
     ap.add_argument("--seed", type=int, default=90909)
@@ -208,6 +211,13 @@ def main():
     print(f"  （`zdelta` 唯一訓練過的交付角色；不去碰狀態位置）")
     print(f"  每一次 core 呼叫都 **k≤4** —— 單次深度完全沒有被突破\n")
 
+    conds = ("pred_text", "pred_mem_allph") if a.confirm else \
+        CONDS + (DIAG if a.diag else ())
+    if a.confirm:
+        print(f"  **confirmatory**（§4.44）：只跑 `pred_text` vs `pred_mem_allph`，"
+              f"新 seed {a.seed}、未觸碰 split")
+        print(f"  gate **事前鎖死**：memory 不得低於 text 超過 **5pp**，"
+              f"且 **K=8 accuracy ≥ 95%**；K=12 **不另改門檻**\n")
     rng = random.Random(a.seed)
     res = defaultdict(lambda: defaultdict(lambda: [0, 0]))
     calls = defaultdict(lambda: defaultdict(list))
@@ -219,7 +229,7 @@ def main():
             gold = st0
             for p in chain:
                 gold = compose(gold, p)
-            for c in CONDS + (DIAG if a.diag else ()):
+            for c in conds:
                 st = defaultdict(int)
                 if c == "monolithic":
                     got = call_core(m, tok, st0, chain); st["calls"] = 1
@@ -229,11 +239,32 @@ def main():
                 r = res[c][K]; r[1] += 1; r[0] += int(got == gold)
                 calls[c][K].append(st["calls"])
         print(f"  {'條件':<14s} {'accuracy':>9s} {'core calls':>11s}")
-        for c in CONDS + (DIAG if a.diag else ()):
+        for c in conds:
             r = res[c][K]; cl = calls[c][K]
             print(f"  {c:<14s} {r[0]/max(r[1],1):8.1%} {sum(cl)/max(len(cl),1):10.1f}")
         print()
 
+    if a.confirm:
+        t8 = res["pred_text"][8]; m8 = res["pred_mem_allph"][8]
+        acc_t8, acc_m8 = t8[0]/max(t8[1],1), m8[0]/max(m8[1],1)
+        g1 = (acc_t8 - acc_m8) <= 0.05
+        g2 = acc_m8 >= 0.95
+        print(f"  **gate（K=8）**：memory {acc_m8:.1%} vs text {acc_t8:.1%}"
+              f"  差 {(acc_t8-acc_m8)*100:+.1f}pp")
+        print(f"    ≤5pp {'✅' if g1 else '❌'}   ≥95% {'✅' if g2 else '❌'}"
+              f"   →  **{'PASS' if (g1 and g2) else 'FAIL'}**")
+        for K in a.Ks:
+            if K == 8: continue
+            t, mm = res["pred_text"][K], res["pred_mem_allph"][K]
+            print(f"    （K={K} 照報，不另設門檻：memory {mm[0]/max(mm[1],1):.1%}"
+                  f" vs text {t[0]/max(t[1],1):.1%}）")
+        json.dump({"confirm": True, "seed": a.seed, "n": a.n,
+                   "cells": {c: {str(K): res[c][K] for K in a.Ks} for c in conds},
+                   "gate_k8": {"memory": acc_m8, "text": acc_t8,
+                               "verdict": "PASS" if (g1 and g2) else "FAIL"}},
+                  open(os.path.join(HERE, "results_g5b_confirm.json"), "w"),
+                  indent=2, ensure_ascii=False)
+        print(f"  -> results_g5b_confirm.json"); return
     print(f"  判讀（事前鎖死）：")
     print(f"    ①vs③/④  分段計算增益      ②vs③  中間誤差傳播      ③vs④  記憶往返")
     print(f"  ⚠️ 通過只能說「**多次 core 呼叫 + checkpoint 繞過了整體鏈長**」，"
@@ -241,7 +272,7 @@ def main():
           f"\n     這是**系統能力／compute tradeoff**，不是等算力的模型能力比較。"
           f"\n  ⚠️ 沿用同一 S₅ schema 是合法的 homogeneous closed-type 正控制，"
           f"\n     但結果**可能依賴代數閉包與型別同構**；異質中間狀態另立後續泛化題。")
-    allc = CONDS + (DIAG if a.diag else ())
+    allc = conds
     json.dump({"cells": {c: {str(K): res[c][K] for K in a.Ks} for c in allc},
                "calls": {c: {str(K): sum(calls[c][K])/max(len(calls[c][K]),1)
                              for K in a.Ks} for c in allc},

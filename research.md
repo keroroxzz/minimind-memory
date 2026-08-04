@@ -2888,11 +2888,18 @@ p1..pj 得到合成置換 `P_j`，而 `st0 ∘ P_j = st_j`。
 - 用**預測值**時，配置差異值 **43pp**（53.3 vs 96.7）。
 - **`pred_mem_allph` 96.7% 幾乎追平 `pred_text` 的 100%。**
 
-> **所以：記憶確實能承載 checkpoint —— 只是不能在混合配置下。**
-> 斷點是**交付配置與訓練配置不匹配**，不是「記憶不能承載中間結果」。
+> **在此封閉型、schema-matched 的 all-placeholder 配置中，
+> exploratory 證據顯示記憶可承載 checkpoint；mixed 配置造成可重現的落差。**
 
-這與本專案一路的模式完全同形（§4.30 的 span shift、§4.34 的 3-token stress）：
-**介面在某個配置上訓練，換個配置就不轉移。**
+⚠️ **不可寫成「不能在 mixed 配置下」——太絕對**（Codex）。
+正確的說法是「**目前未對 mixed 配置轉移**」：`oracle_mem_mixed` 的 **85%** 表明
+不是完全不能，只是**誤差會隨多次交付累積**（K=8 兩次 59%、K=12 三次 20%）。
+
+這與 §4.30 的 span shift、§4.34 的 3-token stress 形狀相近，
+但**現在還不能稱為「同一個共同根因」**：那兩者與 mixed-carrier 都支持
+**介面分布脆弱性**，而 §4.40 的 last-token readout 是**讀取架構／可觀測位置**問題，
+**可能是不同機制**。這些足以形成下一題的**共同假說**，
+**不足以**宣稱已找到共同根因。
 
 ⚠️ ④ 的 latent 是 `perm_to_latent`（**確定性、精確**），roundtrip 由 §4.38 的 guard
 逐條驗過 —— 所以 ④ 與 ③ 的**唯一**差別確實只在交付形式，不混內容或往返誤差。
@@ -2901,8 +2908,57 @@ p1..pj 得到合成置換 `P_j`，而 `st0 ∘ P_j = st_j`。
 
 - 沿用同一 S₅ schema 是**合法的 homogeneous closed-type 正控制**，但
   **結果可能依賴代數閉包與型別同構**；異質中間狀態另立後續泛化題。
-- `pred_mem_allph` 是 **exploratory**，不是 primary；要把它升為結論需要
-  重新預先登記一組以 all-placeholder 為預設配置的 primary。
+- `pred_mem_allph` 是 **exploratory**（看過 smoke 後才設計的），不是 primary。
+  **§4.44 的 confirmatory 用全新 seed 與未觸碰的 split 重測**，
+  gate 事前鎖死：**memory 不得低於 text 超過 5pp，且 K=8 accuracy ≥ 95%**；
+  **K=12 不另看結果改門檻**。
+
+---
+
+## 4.44 G5b confirmatory：**FAIL —— exploratory 的 96.7% 沒有複製出來**
+
+§4.43 的 `pred_mem_allph` = 96.7% 是**看過 smoke 後才設計的 exploratory**，
+所以用**全新 seed（777777）、未觸碰的 split、n=100** 重跑一次 confirmatory。
+gate **事前鎖死**：memory 不得低於 text 超過 **5pp**，且 **K=8 accuracy ≥ 95%**；
+K=12 **不另看結果改門檻**。
+
+| K | `pred_text` | `pred_mem_allph` | 差 |
+|---|---|---|---|
+| 8 | **100.0%** | **84.0%** | **+16.0pp** ❌ |
+| 12 | **100.0%** | **81.0%** | +19.0pp |
+
+**gate 兩項皆不過 → FAIL。**
+
+### 這是第三次同樣的教訓
+
+| | 樂觀讀數 | 加大樣本／換 seed 後 |
+|---|---|---|
+| §4.27 G2a/G2b hit-miss | 100%（~60 個 missing）| §4.37：**2.7%** halluc |
+| §4.43 `pred_mem_allph` | 96.7%（n=60，事後設計）| 本節：**84.0%** |
+| §4.36 k=1 halluc | 2/32 = 6.2% | §4.37：8/300 = 2.7%（方向一致，收斂）|
+
+**看過資料之後才設計的條件，數字會偏樂觀。** 這次是 Codex 事前擋下來的 ——
+若直接把 96.7% 寫成結論，就會宣稱一個複製不出來的東西。
+
+### 因此目前**成立**與**不成立**的
+
+**成立：**
+- **分段本身有效**：`monolithic` 0%（K=8）／3%（K=12）→ `pred_text` **100%**，
+  而每次呼叫都 k≤4（§4.43 ①vs③）。
+- **交付配置確實有影響**：all-placeholder（84%）明顯優於 mixed（53–59%）。
+
+**不成立：**
+- **「記憶能承載 checkpoint」在預先登記的 gate 下不成立** ——
+  即使在最有利的 all-placeholder 配置，仍比純文字 carry 低 **16–19pp**。
+- 所以 §4.43 那句「exploratory 證據顯示記憶可承載 checkpoint」
+  **必須加註：confirmatory 未通過**。
+
+### 這改變了下一步的意義
+
+原本的規劃是「先封 all-placeholder 的價值主張、再研究介面泛化」。
+現在 **all-placeholder 沒封起來**，所以介面泛化那一題
+**不再是錦上添花，而是這條路線的必要條件** ——
+記憶要在 checkpoint 這個用途上有價值，交付介面就必須先變得對配置穩健。
 
 ---
 
