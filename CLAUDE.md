@@ -106,6 +106,50 @@ needs; CompleteAttention does the opposite.
 Pretrain reference numbers (246M tokens, 30k steps, bs16, seq512): vanilla val_loss 1.696
 (ppl 5.45), 40.6 min, 3.25 GiB peak on an RTX 4070.
 
+## C layer (memory module) — G1 status, 2026-08-04
+
+`design_c_layer.md` is the spec; `research.md` §4.23–4.24 has the numbers. Code lives in
+`model/memory_module.py`, `experiments/g1_renderer.py`, `experiments/g1_train.py`, with
+invariants in `test/test_memory_module.py` (53 checks, run it directly).
+
+**The task**: a frozen core trained on explicit values (`L0`, 100%) must instead consume a
+25-dim lossless latent delivered by a learned adapter. Selection is oracle and the store is
+frozen, so only delivery is under test — a failure localises.
+
+| delivery | where | params | overall |
+|---|---|---|---|
+| `oracle_inline` / `teacher_kv` (native content, same position) | in-place | **0** | **100%** |
+| `InlineLatent` (latent → embedding) | in-place | 1.33M | **100%** |
+| `contextual` (latent + native KV → **KV delta**) | in-place | 1.13M | **100%** |
+| `zdelta` (latent → **KV delta**, no context) | in-place | 1.13M | **99.0%** |
+| `static-full` (latent → **absolute** KV, 16 heads) | in-place | 6.32M | 37.2% |
+| `SyntheticKV` (latent → absolute KV) | **prefix** | 1.06M | 34.8% |
+| `LatentSlots` (latent → carrier token) | **prefix** | 0.14M | 3.3% |
+| none | — | — | 1.2% |
+
+**What holds**: a frozen core can consume learned latent delivery at 100%, delivered as an
+embedding at the value positions or as a residual KV correction. Delivery is an *embedding or
+KV*, not text — "memory must enter as tokens" is false. Capacity is not the bottleneck:
+6.32M absolute fails where 1.13M residual succeeds.
+
+**What does not hold** — retracted claims, do not resurrect:
+- "delivery must be JIT/streaming" (`padded k≤4` = 100%)
+- "memory must flow through the backbone" (`zdelta` injects per-layer and scores 99.0%)
+- "the synthesiser must see the layer state" (`zdelta` has no context input)
+- "online context is unnecessary" — the *correction* needs none, but the native K/V scaffold
+  is still computed online at those positions
+- residual-vs-absolute is the leading factor but **not yet a necessity**: the failing absolute
+  cells differ in parameters and architecture. An exact-matched `zabs` decides it.
+
+**Cost**: `f(z)` is offline-computable after retrieval; the carrier positions' native forward
+and the per-position addition are online. Not the old prefix-prefill model.
+
+**Milestones** (never backfill): pre-registered `L1` = FAIL (both prefix paths);
+`L1-inline` = pass (diagnostic); `L1-v2` (in-place KV) = PASS.
+
+Everything is under oracle selection with a frozen store at 29M on the S₅ task, k≤4, one seed.
+**Retrieval and write are not implemented.**
+
 ## Environment setup
 
 Use the existing conda environment `sd` (activate it rather than creating a venv or reinstalling

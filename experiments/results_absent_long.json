@@ -1,0 +1,56 @@
+{
+  "loop2": {
+    "per_k": {
+      "1": {
+        "correct": 54,
+        "total": 200,
+        "acc": 0.27,
+        "pos_acc": 0.4470000000000005,
+        "wellformed": 0.995
+      },
+      "2": {
+        "correct": 24,
+        "total": 200,
+        "acc": 0.12,
+        "pos_acc": 0.3350000000000003,
+        "wellformed": 1.0
+      },
+      "3": {
+        "correct": 6,
+        "total": 200,
+        "acc": 0.03,
+        "pos_acc": 0.2530000000000002,
+        "wellformed": 1.0
+      },
+      "4": {
+        "correct": 8,
+        "total": 200,
+        "acc": 0.04,
+        "pos_acc": 0.23699999999999996,
+        "wellformed": 1.0
+      },
+      "_abstain": {
+        "n_answerable": 665,
+        "n_missing": 135,
+        "A_ans": 0.13834586466165413,
+        "false_abstain": 0.0015037593984962407,
+        "R_abstain": 0.0,
+        "hallucination": 1.0
+      }
+    },
+    "overall": 0.115,
+    "train_dist": {
+      "task": "absent",
+      "max_k": 4,
+      "steps": 12000,
+      "n_gen": 2,
+      "ops": "+-",
+      "p_missing": 0.15,
+      "train_per_k": null
+    },
+    "params_M": 29.500928,
+    "wall_clock_s": 3901.7135996818542,
+    "steps": 12000,
+    "peak_vram_GiB": 6.8748860359191895
+  }
+}
