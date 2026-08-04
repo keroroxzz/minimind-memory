@@ -2039,13 +2039,35 @@ key 固定 f0..f3。置換每樣本重抽，所以沒有東西可以背。
 writer ≈ zero ≈ shuffled。**在看到正式跑的結果前**登記：
 
 - **H1：答案 loss 足夠。** 正式跑接近 oracle → G3a 過，進 G3b。
-- **H2：答案 loss 不足。** 若仍 ≈ 地板，這與 §4.12/§4.20 **同形**
-  （只靠答案梯度時綁定不會湧現）。屆時的處置依序是：
-  1. 先改 **writer 的輸出參數化**（5×5 逐列 softmax，與 `perm_to_latent` 的幾何吻合；
-     目前 writer 輸出與目標的 max\|diff\| 中位數是 **2.18**，明顯不在同一尺度）——
-     **純結構，不加任何監督訊號**。
-  2. 仍不行才加 **latent 重建輔助**，並照 §4.20 的方式測它是不是**鷹架**：
-     撤掉輔助後 write formation 是否保留。
+- **H2：答案 loss 不足。** 若仍 ≈ 地板，記為
+  **G3a-v1 task-loss-only / unconstrained writer FAIL**，不回填。
+
+**⚠️ H2 不可類比成 §4.20 的 key-matching**（Codex 更正我的類比）：
+這裡每個 entry **直接給了 perm、沒有 selector**。失敗較直接支持的是
+「**下游答案梯度穿過凍結的 delivery/core 之後信用太弱，或輸出流形不匹配**」，
+**不是**「綁定機制已重現」。
+
+處置依序，各自另立版本、不覆寫 v1：
+
+1. **G3a-v2：5×5 逐列 softmax 的輸出參數化。**
+   這是合理的 **store-schema／介面 inductive bias**，不是把正確 perm 塞進去 ——
+   它只保證每列是一個 categorical 分布，**仍不知道要選哪一欄**，
+   也**不保證欄唯一**（可能產生非法置換）。
+   固定 temperature／架構、同資料、同 4000 步，**不看結果調**。
+   除 end-to-end 外必須報：**未見置換上的 row argmax accuracy、合法 permutation 率
+   （欄碰撞）、row entropy、latent 距離**，oracle/zero/shuffled 保留。
+   v2 若過，只能說「**結構化的、task-loss-only 的 formation 可行**」，
+   **不能說**「無先驗下自然湧現」，且結論限定在**已知的 S₅ latent schema**，
+   不泛化成通用 latent writer。
+2. **G3a-v3：reconstruction scaffold**（v2 仍敗才做）。
+   輔助用**與 rowsoftmax 一致的逐列 CE**，不用任意尺度的 MSE，
+   並明確標成**輔助標籤** —— 用了它，里程碑就改成 **supervised formation**，
+   **不算**原 G3a「無 write label」的證據。
+   鷹架測法：先固定 aux 預訓步數，再**移除 aux、只用 task loss** 續跑固定步數，
+   報**移除當下**與**末步**的未見置換 formation／end-to-end，
+   同時保留**從頭 task-only 的 v2 對照**。
+   通過只代表 supervised scaffold 能建立並保留 writer，
+   **不代表 write policy 從任務 loss 自行湧現**。
 
 ---
 

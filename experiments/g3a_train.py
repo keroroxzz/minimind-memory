@@ -29,6 +29,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import math
 import os
 import random
 import sys
@@ -61,15 +62,26 @@ class Writer(nn.Module):
     輸入是凍結 core 在 define view 的 value span 上的 hidden（5 × hidden），
     輸出 25 維 latent —— 必須落在 `zdelta` 能消費的那個空間裡，
     而 writer 從未見過 `zdelta`。
+
+    `out_param`：
+      `free`        無約束的 25 維 —— 最少假設，但輸出與 `perm_to_latent` 的尺度
+                    可能完全不同（smoke 實測 max|diff| 中位數 2.18）。
+      `rowsoftmax`  視為 5×5、**逐列 softmax** —— 與 `perm_to_latent` 的幾何吻合
+                    （每列是一個 one-hot）。這是**純結構約束，不加任何監督訊號**：
+                    writer 仍得自己學「事件 → 哪一個置換」，而且要在**未見置換**上學會。
     """
 
-    def __init__(self, hidden, width=256):
+    def __init__(self, hidden, width=256, out_param="free"):
         super().__init__()
+        self.out_param = out_param
         self.net = nn.Sequential(
             nn.Linear(PERM_N * hidden, width), nn.GELU(), nn.Linear(width, LATENT_DIM))
 
     def forward(self, h):                       # (B, 5, H) -> (B, 25)
-        return self.net(h.flatten(-2))
+        z = self.net(h.flatten(-2))
+        if self.out_param == "rowsoftmax":
+            z = z.view(*z.shape[:-1], PERM_N, PERM_N).softmax(-1).flatten(-2)
+        return z
 
 
 def make_sample(k, rng, perm_pool):
@@ -155,6 +167,12 @@ def main():
     ap.add_argument("--max-k", type=int, default=4)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--throttle", type=float, default=0.8)
+    ap.add_argument("--writer-out", default="free", choices=["free", "rowsoftmax"],
+                    help="rowsoftmax：5x5 逐列 softmax，與 perm_to_latent 幾何吻合"
+                         "（§4.31 H2 的處置步驟 1，純結構、不加監督訊號）")
+    ap.add_argument("--aux", type=float, default=0.0,
+                    help="latent 重建輔助的權重（§4.31 H2 的處置步驟 2）。"
+                         "非零時另報「撤掉輔助後是否保留」——鷹架 vs 必要成分")
     ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
     if a.smoke:
@@ -172,9 +190,11 @@ def main():
         p.requires_grad_(False)
 
     p_tr, p_va = R.perm_splits()
-    writer = Writer(BACKBONE["hidden_size"]).to(DEVICE)
+    writer = Writer(BACKBONE["hidden_size"], out_param=a.writer_out).to(DEVICE)
     n_w = sum(p.numel() for p in writer.parameters())
-    print(f"  core + zdelta **全凍結**；唯一可學的是 writer {n_w/1e6:.3f}M")
+    print(f"  core + zdelta **全凍結**；唯一可學的是 writer {n_w/1e6:.3f}M"
+          f"（輸出參數化 {a.writer_out}"
+          f"{f'，latent 重建輔助 w={a.aux}' if a.aux > 0 else '，無輔助監督'}）")
     print(f"  置換切分：train {len(p_tr)} / val {len(p_va)}，**完全不交** ——"
           f" val 的置換 writer 從未寫過")
     print(f"  oracle 檢索、missing=0：檢索與棄答**不在本階段的測試範圍內**")
@@ -237,6 +257,15 @@ def main():
         logits = m(x, **deliver_kwargs(dl, lat, pos_by_k[kk])).logits
         loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.size(-1)).float(),
                                y[:, 1:].reshape(-1), ignore_index=-100)
+        if a.aux > 0:
+            # **逐列 CE**，不是任意尺度的 MSE（Codex）：與 rowsoftmax 的參數化一致，
+            # 且明確標示為「輔助標籤」——用了它，里程碑就改成 supervised formation。
+            gold = torch.tensor([[p_ for _, p_ in row] for row in ce],
+                                device=DEVICE)                       # (B,k,5)
+            lg = lat.view(-1, PERM_N, PERM_N)
+            lg = lg.clamp_min(1e-9).log() if a.writer_out == "rowsoftmax" else lg
+            loss = loss + a.aux * F.cross_entropy(
+                lg.reshape(-1, PERM_N), gold.reshape(-1))
         opt.zero_grad(set_to_none=True); loss.backward()
         torch.nn.utils.clip_grad_norm_(writer.parameters(), 1.0)
         opt.step(); sched.step()
@@ -281,17 +310,35 @@ def main():
     print(f"\n  oracle   = perm_to_latent，零學習 —— **天花板**")
     print(f"  zero     = 全零 latent —— **地板**")
     print(f"  shuffled = writer 讀別條 entry 的事件 —— 若也高分則結果無效")
+    # ---- v2 需要的 formation 指標（Codex）：只看 end-to-end 不足以判讀 ----
+    with torch.no_grad():
+        gold, pred, ent = [], [], []
+        for kk in WRITE_KEYS:
+            for p_ in p_va:
+                z = writer(ev_all[(kk, tuple(p_))].unsqueeze(0)).view(PERM_N, PERM_N)
+                pr = z.softmax(-1) if a.writer_out != "rowsoftmax" else z
+                gold.append(torch.tensor(p_)); pred.append(z.argmax(-1).cpu())
+                ent.append(float(-(pr.clamp_min(1e-9).log() * pr).sum(-1).mean()))
+        gold, pred = torch.stack(gold), torch.stack(pred)
+        row_acc = (gold == pred).float().mean().item()
+        valid = float(sum(len(set(r.tolist())) == PERM_N for r in pred) / len(pred))
+    print(f"\n  **formation 指標**（未見置換 × {len(WRITE_KEYS)} 個 key = {len(pred)} 個事件）：")
+    print(f"    row argmax accuracy   {row_acc:6.1%}   （逐列選對哪一欄）")
+    print(f"    合法 permutation 率   {valid:6.1%}   （5 列的 argmax 互不碰撞）")
+    print(f"    row entropy 平均      {sum(ent)/len(ent):6.3f}   （0 = 完全確定，"
+          f"ln5 = {math.log(PERM_N):.3f} 為均勻）")
     print(f"\n  writer 產出的 latent 與 perm_to_latent 的 max|diff| 中位數："
           f"{sorted(lat_err)[len(lat_err)//2]:.3f}"
           f"（writer **沒有**被監督去複製這個編碼，只有下游答案 loss）")
     print(f"  {(time.time()-t0)/60:.1f} min")
 
-    fp = {"stage": "G3a", "steps": a.steps, "lr": a.lr, "bs": a.batch_size,
+    fp = {"stage": "G3a", "writer_out": a.writer_out, "aux": a.aux, "steps": a.steps, "lr": a.lr, "bs": a.batch_size,
           "seed": a.seed, "writer_params": n_w, "core_zdelta": CORE_ZD,
           "n_perm_train": len(p_tr), "n_perm_val": len(p_va), "smoke": a.smoke,
           "val_checksum": R.delivery_checksum(va)}
     h = hashlib.sha256(json.dumps(fp, sort_keys=True, default=str).encode()).hexdigest()[:10]
-    json.dump({**fp, "overall": out,
+    json.dump({**fp, "overall": out, "row_argmax_acc": row_acc,
+               "valid_perm_rate": valid, "row_entropy": sum(ent)/len(ent),
                "per_k": {c: {str(k): v for k, v in res[c].items()} for c in conds}},
               open(os.path.join(HERE, f"results_g3a{'_smoke' if a.smoke else ''}.json"),
                    "w"), indent=2, ensure_ascii=False)

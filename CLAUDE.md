@@ -110,7 +110,7 @@ Pretrain reference numbers (246M tokens, 30k steps, bs16, seq512): vanilla val_l
 
 `design_c_layer.md` is the spec; `research.md` §4.23–4.24 has the numbers. Code lives in
 `model/memory_module.py`, `experiments/g1_renderer.py`, `experiments/g1_train.py`, with
-invariants in `test/test_memory_module.py` (53 checks, run it directly).
+invariants in `test/test_memory_module.py` (58 checks, run it directly).
 
 **The task**: a frozen core trained on explicit values (`L0`, 100%) must instead consume a
 25-dim lossless latent delivered by a learned adapter. Selection is oracle and the store is
@@ -146,6 +146,44 @@ and the per-position addition are online. Not the old prefix-prefill model.
 
 **Milestones** (never backfill): pre-registered `L1` = FAIL (both prefix paths);
 `L1-inline` = pass (diagnostic); `L1-v2` (in-place KV) = PASS.
+
+## C layer — G2 status, 2026-08-04
+
+`research.md` §4.26–4.30. Retrieve was tested in three stages, all with the core and `zdelta`
+frozen, so only the retriever is under test.
+
+| stage | address source | key identities | result |
+|---|---|---|---|
+| G2a | fixed random orthogonal | fixed `f0..f3` | **100%** ordered / per-step / hit-miss |
+| G2b | same, query from frozen core hidden | fixed | **100%** |
+| G2c | **tied encoder over canonical key spans** | **train/cal/test disjoint** | retrieval **98.1%**, hit/miss **73.3% / 81.5%** |
+
+**G2c splits.** Unseen-identity *ranking* transfers (per-step recall 98.1% on both seeds, and
+the encoder pushes input-side max|cos| 0.964 apart to 0.824). A single support **threshold does
+not** transfer: calibration reads 99.3–99.5%, untouched test reads 73.3–81.5%. Diagnosis
+(`g2c_diagnose_support.py`) shows the *score* separates — an oracle threshold reaches 96.3–98.0%
+— so the gap is entirely in threshold placement.
+
+**G2c-cal-v2 = FAIL, permanently.** A pre-registered single re-calibration on 40 brand-new
+identities failed on both seeds. The utility gate is what caught it: subject to a one-sided 95%
+Clopper–Pearson bound on hallucination ≤5%, the *minimum achievable* false-abstain on the
+calibration set was already 98%. Without that gate this would have passed looking like
+"R_abstain 100%, halluc 0%" — a threshold that always abstains. Do not reopen: no third version,
+no length-conditioned threshold, no rebalanced retraining.
+
+Confound that narrows the wording but does not change the verdict: the v2 identity sets are
+almost all 3-token spans while training identities are almost all 2-token, so the failure is
+under a **joint identity + span-structure shift** and this design cannot separate the two.
+
+**Design debt recorded, not paid here**: a canonical encoder's training must cover the
+tokenization structure it will meet; support scores must be robust to structural shift.
+
+**Next** (`research.md` §4.31): **G3a write formation** — frozen core + `zdelta`, oracle
+retrieval, `missing=0`, the writer the only learnable part. Generalisation axis is the
+*permutation* (95 train / 24 val, disjoint), not key identity. Four conditions are mandatory:
+`oracle` (ceiling), `writer`, `zero` (floor), `shuffled` (writer reads a different entry's
+event — if that also scores, the result is void). G3b (closed-world loop) may only reconnect
+the **G2a/G2b** fixed-key retriever, never G2c, and may not claim an open-set loop.
 
 **G1 is sealed.** The default interface for the next stage is `zdelta`:
 `K' = K_native + f_slot(z)` at the value token positions, all 16 (loop, layer) cache slots,
