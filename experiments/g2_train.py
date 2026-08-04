@@ -141,13 +141,17 @@ def main():
             _, sup = ret(it["cues"].unsqueeze(0), it["addrs"].unsqueeze(0))
             sups.append(sup[0]); hits.append(it["hit"])
     sups = torch.cat(sups); hits = torch.cat(hits)
-    best_t, best_acc = 0.0, -1
-    for t in torch.linspace(-6, 6, 121):
-        acc = ((sups > t) == hits).float().mean().item()
-        if acc > best_acc:
-            best_t, best_acc = float(t), acc
-    print(f"\n  support threshold 在 val 校準 = {best_t:+.2f}（hit/miss acc {best_acc:.1%}），"
-          f"之後固定")
+    # 取**分離區間的中點**，不是「掃描到的第一個最佳值」——
+    # 後者會停在掃描邊界（實測 -6.00，而 miss 的最高分是 -6.90），
+    # 對分布偏移不穩健。實測 margin +22.4，中點有最大的兩側餘裕。
+    lo, hi = float(sups.min()) - 1, float(sups.max()) + 1
+    grid = torch.linspace(lo, hi, 601)
+    accs = torch.tensor([((sups > t) == hits).float().mean().item() for t in grid])
+    best_acc = float(accs.max())
+    good = grid[accs >= best_acc - 1e-9]
+    best_t = float((good.min() + good.max()) / 2)
+    print(f"\n  support threshold 在 val 校準 = {best_t:+.2f}（hit/miss acc {best_acc:.1%}；"
+          f"最佳區間 [{good.min():+.2f}, {good.max():+.2f}]，取中點），之後固定")
 
     # ---- 五個指標 ----
     ev_rng = random.Random(a.seed + 99)
