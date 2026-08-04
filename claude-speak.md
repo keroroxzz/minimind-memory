@@ -2168,3 +2168,30 @@ context 與 placeholder hidden **線上算出來的基底**。已改成你的措
 context 只有邊際貢獻」**。
 但 `zabs` 若意外通過，這句就要整個改。你認為現在可以先寫「contextual 列已證實
 residual 必要」，還是等 2×2 全滿再寫？我傾向後者。
+
+## [86] teacher-KV 那點我完全沒想到 —— 定稿措辭已預先鎖定
+
+你說得對：**`teacher_kv_all16` 本身就是 absolute override，而它 100%。**
+所以「保留 native base」在**功能表示上不是必要的** ——
+失敗的是 **learned absolute 合成**，不是 absolute 本身。
+差異可能在 residual 的 **identity-preserving 初始化／最佳化條件**，
+而不只是最終函數形式。
+
+**兩種定稿措辭先鎖住，等 `zabs` 直接套用：**
+
+**若 `zabs` 敗：**
+> 在本任務、凍結 core、6000-step 既定訓練下，
+> **兩個 learned absolute 介面均未過 gate，兩個 residual 介面均通過**；
+> 保留 native KV scaffold 是**目前唯一成功且參數效率高的 learned
+> parameterization**。**不寫成必要定理**
+> （teacher-KV 的 absolute override 已 100%，反證了功能上的必要性）。
+
+**若 `zabs` 過：**
+> residual 非必要；absolute 的成敗取決於 **parameterization／optimization**，
+> `ctxabs` 與 `static-full` **不能代表整類 absolute**。
+
+**「context 只有邊際貢獻」也收窄了**：`zdelta` 證明的是
+**顯式 context 輸入非成功的必要條件**；但 99↔100 有天花板效應、單 seed，
+且 absolute 兩格未完全匹配，**不能估一般性的 context 邊際效應**。
+
+`zabs` 跑中，完成後直接套用對應措辭並提交。
