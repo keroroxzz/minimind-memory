@@ -45,9 +45,55 @@ def key_cue(tok, emb, sym):
         return emb(ids).mean(0)
 
 
-def make_item(s, rng, p_missing, tok, emb, cue_cache):
+@torch.no_grad()
+def precompute_core_cues(model, tok, samples, bs=64):
+    """把 core_hidden 的 cue **預先算好**。
+
+    cue 只依賴樣本本身（retrieval view），**與 pool/missing 無關**，
+    所以不必每個 step 重算。先前每 step 跑 64 次 core 前向，慢到不可用。
+    同 k 的 retrieval view 結構相同 → 可直接批次。
+    """
+    out, by_k = {}, defaultdict(list)
+    for i, s in enumerate(samples):
+        by_k[s.k].append(i)
+    for k, idxs in by_k.items():
+        _, pos = R.retrieval_view_key_positions(tok, samples[idxs[0]])
+        pos = pos.to(DEVICE)
+        for c in range(0, len(idxs), bs):
+            chunk = idxs[c:c + bs]
+            ids = torch.stack([torch.tensor(
+                tok(tok.bos_token + R.render_retrieval_view(samples[i]),
+                    add_special_tokens=False).input_ids) for i in chunk]).to(DEVICE)
+            h, _, _, _ = model.model(ids, num_loops=ARCH["num_loops"])
+            sel = h[:, pos]
+            for j, i in enumerate(chunk):
+                out[i] = sel[j].clone()
+    return out
+
+
+@torch.no_grad()
+def core_hidden_cue(model, tok, s):
+    """G2b：query 來自**凍結 core** 在 retrieval view 上、每個 key 位置的 hidden。
+
+    retrieval view 是**獨立的 out-of-band 序列**（`| x=STATE | f3 f0 ... 求?`），
+    delivery 的 prompt 仍是 5 個 dot、完全不動。
+    不能取 carrier span 的 hidden —— 那裡全是 dot，沒有 key 資訊。
+    """
+    view, pos = R.retrieval_view_key_positions(tok, s)
+    ids = tok(tok.bos_token + view, add_special_tokens=False,
+              return_tensors="pt").input_ids.to(DEVICE)
+    h, _, _, _ = model.model(ids, num_loops=ARCH["num_loops"])
+    return h[0, pos.to(DEVICE)]                                       # (k, H)
+
+
+def make_item(s, rng, p_missing, tok, emb, cue_cache, model=None, qsrc="key_emb",
+              precomp=None, idx=None):
     pool, lat, chain, tgt, hit, dropped = R.build_pool(s, rng, missing=rng.random() < p_missing)
-    cues = torch.stack([cue_cache[g] for g in chain])                 # (k, H)
+    if qsrc == "core_hidden":
+        cues = precomp[idx] if precomp is not None and idx in precomp \
+            else core_hidden_cue(model, tok, s)
+    else:
+        cues = torch.stack([cue_cache[g] for g in chain])             # (k, H)
     addrs = torch.stack([address_vector(g) for g in pool]).to(DEVICE)  # (8, A)
     lats = torch.stack([lat[g] for g in pool]).to(DEVICE)              # (8, 25)
     return dict(pool=pool, cues=cues, addrs=addrs, lats=lats,
@@ -66,6 +112,8 @@ def main():
     ap.add_argument("--p-missing", type=float, default=0.15)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--throttle", type=float, default=0.8)
+    ap.add_argument("--query-source", default="key_emb", choices=["key_emb", "core_hidden"],
+                    help="key_emb=G2a（凍結 token embedding）；core_hidden=G2b（凍結 core 的 hidden）")
     ap.add_argument("--smoke", action="store_true")
     a = ap.parse_args()
     if a.smoke:
@@ -89,16 +137,33 @@ def main():
     n_ret = sum(p.numel() for p in ret.parameters())
     print(f"  core+zdelta 凍結；**只訓 retriever** {n_ret/1e6:.3f}M"
           f"   address 固定正交、不可訓")
+    print(f"  query source = {a.query_source}"
+          f"{'（G2a：凍結 token embedding）' if a.query_source == 'key_emb' else '（G2b：凍結 core 在 out-of-band retrieval view 的 hidden）'}")
 
+    # ⚠️ **三分**：train / calibration / **untouched test**（Codex）。
+    #    先前 threshold 在 val 上掃描、又在同一批 val 報 hit/miss 100%，
+    #    那是 calibration → evaluation 重用，support 的 100% 不算數。
     tr = R.build_dataset(a.max_k, a.train_per_k, a.seed)
-    va = R.build_dataset(a.max_k, a.val_per_k, a.seed + 999,
-                         exclude={s.delivery_id for s in tr})
-    print(f"  train {len(tr)} / val {len(va)}   {R.delivery_checksum(tr)} / "
-          f"{R.delivery_checksum(va)}")
+    seen = {s.delivery_id for s in tr}
+    cal = R.build_dataset(a.max_k, a.val_per_k, a.seed + 999, exclude=seen)
+    seen |= {s.delivery_id for s in cal}
+    te = R.build_dataset(a.max_k, a.val_per_k, a.seed + 1777, exclude=seen)
+    assert not ({s.delivery_id for s in cal} & {s.delivery_id for s in te})
+    print(f"  train {len(tr)} / calib {len(cal)} / test {len(te)}   "
+          f"{R.delivery_checksum(tr)} / {R.delivery_checksum(cal)} / {R.delivery_checksum(te)}")
     by_k = defaultdict(list)
     for i, s in enumerate(tr):
         by_k[s.k].append(i)
     ks = sorted(by_k)
+
+    pre_tr = pre_cal = pre_te = None
+    if a.query_source == "core_hidden":
+        t_pre = time.time()
+        pre_tr = precompute_core_cues(m, tok, tr)
+        pre_cal = precompute_core_cues(m, tok, cal)
+        pre_te = precompute_core_cues(m, tok, te)
+        print(f"  core cue 預算完成（{len(pre_tr)}+{len(pre_cal)}+{len(pre_te)} 筆，"
+              f"{time.time()-t_pre:.0f}s）—— cue 與 pool 無關，故只算一次")
 
     opt = torch.optim.AdamW(ret.parameters(), lr=a.lr, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, a.lr, total_steps=a.steps, pct_start=0.05)
@@ -110,7 +175,8 @@ def main():
     for step in range(1, a.steps + 1):
         kk = ks[step % len(ks)]
         idx = [by_k[kk][rng.randrange(len(by_k[kk]))] for _ in range(a.batch_size)]
-        items = [make_item(tr[i], rng, a.p_missing, tok, emb, cue_cache) for i in idx]
+        items = [make_item(tr[i], rng, a.p_missing, tok, emb, cue_cache, m, a.query_source,
+                           pre_tr, i) for i in idx]
         cues = torch.stack([it["cues"] for it in items])
         addrs = torch.stack([it["addrs"] for it in items])
         tgt = torch.stack([it["tgt"] for it in items])
@@ -136,8 +202,9 @@ def main():
     cal_rng = random.Random(a.seed + 7)
     sups, hits = [], []
     with torch.no_grad():
-        for s in va:
-            it = make_item(s, cal_rng, a.p_missing, tok, emb, cue_cache)
+        for ci, s in enumerate(cal):
+            it = make_item(s, cal_rng, a.p_missing, tok, emb, cue_cache, m, a.query_source,
+                           pre_cal, ci)
             _, sup = ret(it["cues"].unsqueeze(0), it["addrs"].unsqueeze(0))
             sups.append(sup[0]); hits.append(it["hit"])
     sups = torch.cat(sups); hits = torch.cat(hits)
@@ -157,9 +224,11 @@ def main():
     ev_rng = random.Random(a.seed + 99)
     stat = defaultdict(lambda: defaultdict(int))
     exec_given_correct = [0, 0]
+    ans_stat = defaultdict(int)          # R4 式拆解，不給混合數字
     with torch.no_grad():
-        for s in va:
-            it = make_item(s, ev_rng, a.p_missing, tok, emb, cue_cache)
+        for ti, s in enumerate(te):      # **untouched test**
+            it = make_item(s, ev_rng, a.p_missing, tok, emb, cue_cache, m, a.query_source,
+                           pre_te, ti)
             logits, sup = ret(it["cues"].unsqueeze(0), it["addrs"].unsqueeze(0))
             pred = logits[0].argmax(-1)
             pred_hit = sup[0] > best_t
@@ -172,9 +241,16 @@ def main():
             ordered_ok = bool(step_ok.all())
             stat[k]["ordered"] += int(ordered_ok)
             if not bool(gold_hit.all()):
+                # missing 題的「ordered」定義為**正確拒絕**該 step／整題
                 stat[k]["miss_items"] += 1
-                stat[k]["miss_abstain"] += int((~pred_hit[~gold_hit]).all())
+                ans_stat["miss_n"] += 1
+                ok_rej = bool((~pred_hit[~gold_hit]).all())
+                stat[k]["miss_abstain"] += int(ok_rej)
+                ans_stat["R_abstain"] += int(ok_rej)
+                ans_stat["halluc"] += int(not ok_rej)
                 continue
+            ans_stat["ans_n"] += 1
+            ans_stat["false_abstain"] += int((~pred_hit).any())
             # end-to-end：用 retriever 取回的 latent 交付
             lat = it["lats"][pred].unsqueeze(0)
             _, b_ids, pos = value_positions(tok, s)
@@ -188,6 +264,7 @@ def main():
             g = greedy_override(m, tok, b_ids, fn, ARCH["num_loops"])
             good = (g == R.render_L0(s)[1])
             stat[k]["e2e"] += int(good); stat[k]["e2e_n"] += 1
+            ans_stat["A_ans"] += int(good)
             if ordered_ok:
                 exec_given_correct[1] += 1; exec_given_correct[0] += int(good)
 
@@ -202,22 +279,33 @@ def main():
               f"{(d['e2e']/d['e2e_n'] if d['e2e_n'] else float('nan')):8.1%}")
     print(f"  整體 {tot['ordered']/tot['n']:7.1%} {tot['step_ok']/tot['steps']:8.1%} "
           f"{tot['hitacc']/tot['steps']:8.1%} {tot['e2e']/max(tot['e2e_n'],1):8.1%}")
+    an, mn = max(ans_stat["ans_n"], 1), max(ans_stat["miss_n"], 1)
+    print(f"\n  R4 式拆解（**untouched test**，不給混合數字）：")
+    print(f"    A_ans         資料齊全時答對     {ans_stat['A_ans']/an:6.1%}  (n={ans_stat['ans_n']})")
+    print(f"    R_abstain     缺資料時正確拒絕   {ans_stat['R_abstain']/mn:6.1%}  (n={ans_stat['miss_n']})")
+    print(f"    false_abstain 資料齊全卻拒絕     {ans_stat['false_abstain']/an:6.1%}")
+    print(f"    halluc        缺資料卻照樣取回   {ans_stat['halluc']/mn:6.1%}")
     egc = exec_given_correct[0] / max(exec_given_correct[1], 1)
     print(f"\n  executor | retrieval correct = {egc:.1%}  "
           f"(n={exec_given_correct[1]})   ← 實際 retriever 全對的子集")
     print(f"  oracle-retrieval ceiling（render gate）= 99.0%")
     print(f"  {(time.time()-t0)/60:.1f} min")
 
-    fp = {"stage": "G2a", "steps": a.steps, "lr": a.lr, "bs": a.batch_size, "seed": a.seed,
+    fp = {"stage": "G2b" if a.query_source == "core_hidden" else "G2a",
+          "query_source": a.query_source, "steps": a.steps, "lr": a.lr, "bs": a.batch_size, "seed": a.seed,
           "p_missing": a.p_missing, "pool": R.POOL_SIZE, "retriever_params": n_ret,
           "threshold": best_t, "core_zdelta": CORE_ZD, "smoke": a.smoke,
-          "val_checksum": R.delivery_checksum(va)}
+          "train_checksum": R.delivery_checksum(tr),
+          "calib_checksum": R.delivery_checksum(cal),
+          "test_checksum": R.delivery_checksum(te)}
     h = hashlib.sha256(json.dumps(fp, sort_keys=True, default=str).encode()).hexdigest()[:10]
-    out = os.path.join(HERE, f"results_g2a{'_smoke' if a.smoke else ''}.json")
+    tag = "g2b" if a.query_source == "core_hidden" else "g2a"
+    out = os.path.join(HERE, f"results_{tag}{'_smoke' if a.smoke else ''}.json")
     json.dump({**fp, "per_k": {str(k): dict(v) for k, v in stat.items()},
+               "r4": dict(ans_stat),
                "executor_given_correct": egc, "egc_n": exec_given_correct[1]},
               open(out, "w"), indent=2, ensure_ascii=False)
-    torch.save(ret.state_dict(), os.path.join(HERE, f"g2a_retriever_{h}.pth"))
+    torch.save(ret.state_dict(), os.path.join(HERE, f"{tag}_retriever_{h}.pth"))
     print(f"  -> {os.path.basename(out)}")
 
 

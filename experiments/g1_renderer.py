@@ -165,6 +165,38 @@ def _rand_perm_latent(sym, rng):
     return perm_to_latent(q)
 
 
+def render_retrieval_view(s: CanonicalSample):
+    """G2b 的 **out-of-band retrieval view** —— 與 delivery 的 prompt 完全分離。
+
+    ⚠️ **不可把 key 塞回 carrier span**（Codex）：delivery 的 prompt 仍是 5 個 dot，
+       動它就同時改了 `zdelta` 依賴的 scaffold（[88] 已被擋下同一個錯）。
+    ⚠️ 也**不能**取 carrier span 上的 hidden —— 那裡全是 dot，**沒有 key 資訊**。
+
+    所以另開一段序列給凍結的 core 編碼，query 取這裡的 hidden。
+    可見的 token 明列如下：**狀態 + 有序的 key 鏈**。
+
+        | x=STATE | f3 f0 f1 求?
+
+    第 i 個 key token 的 hidden 因此同時帶有
+    **該 key 的身分**與**前序 context（狀態、前面用過哪些 key）**。
+    """
+    keys = " ".join(s.chain)
+    return f"| x={_nums(s.state)} | {keys} 求?"
+
+
+def retrieval_view_key_positions(tok, s):
+    """retrieval view 裡每個 key 的**最後一個 token** 的位置（含 BOS 偏移）。"""
+    view = render_retrieval_view(s)
+    head = f"| x={_nums(s.state)} |"
+    base = len(tok(tok.bos_token + head, add_special_tokens=False).input_ids)
+    pos, cur = [], base
+    for g in s.chain:
+        n = len(tok(" " + g, add_special_tokens=False).input_ids)
+        cur += n
+        pos.append(cur - 1)          # 該 key 的最後一個 token
+    return view, torch.tensor(pos)
+
+
 def build_store(s: CanonicalSample) -> LatentStore:
     """每樣本重建 store —— 定義每樣本重抽，背進權重無用且有害。
 

@@ -2301,3 +2301,34 @@ retriever 學的其實是「key embedding → 對應正交向量」的線性映�
 **下一步我打算直接進 G2b**（query 改由**凍結 core 在該位置的 hidden** 產生，
 而非現成的 key embedding）—— 那才開始有 runtime 的味道。
 你若認為該先補別的（例如 pool scaling 或 unseen-key），現在說。
+
+## [90] G2b 通過，與 G2a 完全相同 —— 三分後的數字
+
+| | query 來源 | ordered | per-step | hit/miss | A_ans | R_abstain | exec｜correct |
+|---|---|---|---|---|---|---|---|
+| G2a | 凍結 key embedding | 100% | 100% | 100% | 99.1% | 100% | 99.1% |
+| **G2b** | **凍結 core 的 hidden** | 100% | 100% | 100% | 99.1% | 100% | 99.1% |
+
+`false_abstain` 與 `halluc` 皆 **0.0%**。threshold +3.83（區間中點）。
+**support 的 100% 這次來自未動過的 test**，不是校準集。
+
+你要的三項全部照做：三分、R4 式拆解（不給混合數字）、
+missing 題的 ordered 定義為**正確拒絕**且與 answerable 分列。
+
+**效能上修了一個實質問題**：G2b 第一版每 step 跑 64 次 core 前向。
+但 **cue 只依賴樣本、與 pool/missing 無關**，預先算好只要 2 秒 ——
+否則 G2b 會跑一小時以上，而它本質上是在重算同一批不變的東西。
+
+**下一步我提議 G2c**，照你說的方向：**address 改由內容／共享 encoder 生成**，
+這樣 unseen-key 才是可回答的問題。具體想法：
+
+```
+address = Enc(latent)      # 由記憶內容本身決定，而非隨機正交
+query   = Q(cue)           # 仍只訓 query 側
+```
+
+`Enc` 要不要凍結？我傾向**先用固定的隨機投影**（不可訓），
+理由與 G2a 的正交 address 相同 —— 若 `Enc` 與 `Q` 一起學，兩者會共同漂移。
+但那樣 address 之間就不再正交，**檢索難度會真正上升**，這正是我們要測的。
+
+pool scaling 我打算放在 G2c 之後，你先前也是這個順序。有異議嗎？

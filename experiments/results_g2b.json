@@ -1,5 +1,6 @@
 {
-  "stage": "G2a",
+  "stage": "G2b",
+  "query_source": "core_hidden",
   "steps": 4000,
   "lr": 0.001,
   "bs": 64,
@@ -7,7 +8,7 @@
   "p_missing": 0.15,
   "pool": 8,
   "retriever_params": 139714,
-  "threshold": 4.306454658508301,
+  "threshold": 3.8257057666778564,
   "core_zdelta": "g1_G1a_zdelta_d9a603e4e2.pth",
   "smoke": false,
   "train_checksum": "79918bf58e39c144",

@@ -1703,6 +1703,56 @@ core 與 `zdelta` delivery **凍結**，**只訓 query/address/selector**。
 
 ---
 
+## 4.27 G2a/G2b：retrieve 管線通過（store 與 write 仍凍結）
+
+core 與 `zdelta` delivery **全程凍結**、address 固定正交且不可訓、
+**只訓 retriever 0.14M**。三分：train 20000 / calibration 400 / **untouched test 400**。
+
+**render gate 先過**：oracle-retrieval ceiling = **99.0%**，與封板的 `zdelta` 相同
+→ pool/missing 的資料層沒有動到 delivery。
+
+| | query 來源 | ordered | per-step | hit/miss | A_ans | R_abstain | `executor｜correct` |
+|---|---|---|---|---|---|---|---|
+| **G2a** | 凍結 key token embedding | 100% | 100% | 100% | 99.1% | 100% | 99.1% |
+| **G2b** | **凍結 core 在 out-of-band retrieval view 的 hidden** | 100% | 100% | 100% | 99.1% | 100% | 99.1% |
+
+`false_abstain` 與 `halluc` 兩者皆 **0.0%**。
+`executor | retrieval correct` 在**實際 retriever 全對的子集**上算（n=329），
+等於 oracle ceiling —— **檢索正確時執行沒有額外損失**。
+
+### G2b 的 view 設計
+
+```
+retrieval view（out-of-band）: | x=2 1 4 0 3 | f2 f1 f1 求?
+delivery prompt（完全不動）:    | x=2 1 4 0 3 | . . . . . | . . . . . 求x=
+```
+
+query 取 retrieval view 上**每個 key 最後一個 token 的 hidden**。
+
+⚠️ **不可把 key 塞回 carrier span**（會同時改動 `zdelta` 依賴的 scaffold）；
+**也不能取 carrier span 的 hidden** —— 那裡全是 dot，**沒有 key 資訊**（Codex）。
+
+### 兩個抓到的方法論／實作 bug
+
+1. **support head 原本只看 cue** —— 「這個 key 在不在 pool」取決於 pool 而非 key，
+   它拿不到判斷所需的資訊，**退化成永遠預測多數類**：
+   準確率 90.8% **恰等於 hit 的基準率**。改讀檢索 logits 後 → 100%。
+2. **threshold 在 val 上校準、又在同一批 val 報 hit/miss** ——
+   calibration→evaluation 重用（Codex）。已改三分，上表的 support 100%
+   來自**未動過的 test**。
+
+### 這一階證明與不證明的
+
+**證明**：closed-world **symbolic** retrieval 的管線與指標都建立起來了，
+且 query 可以來自凍結 core 的 contextual hidden，不必是現成的符號 embedding。
+
+**不證明**：語意查詢、**未見 key 的泛化**、大 pool、address 不正交時的行為。
+⚠️ 目前 address 是**隨機正交向量、與 key 無可泛化關係**，
+所以**現在做 unseen-key 必然是在問一個答不出來的問題**（Codex）——
+那要等 address 改由**內容／共享 encoder** 生成的 G2c。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
