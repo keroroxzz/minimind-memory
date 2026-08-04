@@ -2589,6 +2589,67 @@ Codex 對這一階段先加的兩條約束：
 
 ---
 
+## 4.39 G4a：**write-address plumbing = PASS**（短 gate，不是訓練關）
+
+驗證的管線：
+
+```
+literal canonical span → address construction
+  → **atomic (key, address, z) commit**
+  → exact-membership read → delivery → answer
+```
+
+### 職責切法才是這一節的重點（Codex）
+
+| 元件 | 負責 | **不**負責 |
+|---|---|---|
+| **writer** | 形成內容 `z` | **不輸出 membership bit** |
+| **key extractor / address encoder** | literal key → address | 不碰內容 |
+| **store** | **原子綁定** `(key, address, z)` 與 membership | 不做任何猜測 |
+
+**address 是 `address_vector(key)`，零可學參數。**
+**不用** MLP 在少數 closed key 上「學 address」再稱之為 formation ——
+那只是記表，**deterministic / tied mapping 更誠實**。
+
+### 結果
+
+用**未見的 25 個 2-token identity**（排除一路用到的 `f0..f3`），
+且**每個 episode 隨機重配 `key ↔ perm`** —— 測的是
+**arbitrary identifier association**：writer 與 store 不能靠
+「這個 key 通常是什麼」的任何先驗。
+
+| | |
+|---|---|
+| key extraction exact | **100.0%**（3200/3200），抽取失敗 0 |
+| address↔content binding | **100.0%**（3200/3200）|
+| missing `R_abstain` / `halluc` | **100.0%** / **0/200**（UB 1.49%）|
+| answerable `A_ans` | **100.0%** [98.1%, 100%] |
+| answerable `false_abstain` | **0.0%** |
+
+`A_ans` 100% 一併確認 writer 的內容形成在**未見身分**上仍成立
+（與 §4.34 前量到的「f4..f11 皆 100%」一致）。
+
+### 這一關**只**證明什麼
+
+**只證明「可以建立可用的 entry」。**
+**不證明** semantic binding、**不證明** content addressing、
+**不證明**未見 span 結構（3-token）的泛化 —— span 長度固定為 2 正是為了**隔離 binding**。
+
+### 下一個真正的 binding 問題不是 `key = f(content)`
+
+`key = f(content)` 是 **content-addressing**，不是 key binding 的自然升級（Codex）：
+它會混入**指紋計算**，而且無法自然處理
+
+- **aliases**（同一實體多個名字）
+- **同內容不同 entity**
+- **內容更新後 address 的穩定性**
+
+若目標確實是 content-addressed store，那要**另立里程碑**並附**碰撞與更新契約**。
+否則下一個真正的 binding 題應該是
+**「從事件抽取穩定的 entity / identifier」**，而**不是由 value 反推 key**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

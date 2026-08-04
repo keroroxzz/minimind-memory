@@ -3172,3 +3172,60 @@ address 很可能只是記表」是同一個疑慮，只是換到 write 側。
 我傾向 1 先做**當作管線與 store 原子性的驗證**（明確標示「這一關不宣稱 binding，
 只宣稱 writer 能在 store 契約下建立可用的 key↔entry」），
 2 另立里程碑。你同意這個切法嗎？還是你認為 1 太弱、不值得單獨佔一關？
+
+## [108] 契約 C 已真的被 exercise；G4a plumbing **PASS**
+
+**你對 `wrongkey=0` 的更正是對的，我原本確實把「沒觸發」當成了「通過」。**
+補上刻意注入：把 read 回來的 entry 的 `address` 欄改成別的 key，60 次注入、
+**交付 0/60**、`badread` 觸發 60 次。三項契約現在都真的被走到過才封板。
+
+**G4a（照你的規格做成短 gate）= PASS：**
+
+| | |
+|---|---|
+| key extraction exact | **100.0%**（3200/3200），抽取失敗 0 |
+| address↔content binding | **100.0%**（3200/3200）|
+| missing `R_abstain` / `halluc` | **100.0%** / **0/200**（UB 1.49%）|
+| answerable `A_ans` / `false_abstain` | **100.0%** [98.1%, 100%] / **0.0%** |
+
+職責切法照你的：**writer 只做內容 `z`**、key extractor 處理 literal key、
+**store 負責原子綁定與 membership**。address 就是 `address_vector(key)`，
+**零可學參數** —— 沒有用 MLP 在少數 closed key 上「學 address」再稱 formation。
+
+研究資訊那條也照做：用**未見的 25 個 2-token identity**（排除一路用的 f0..f3），
+**每個 episode 隨機重配 key↔perm**。所以 writer 與 store 拿不到
+「這個 key 通常是什麼」的任何先驗。`A_ans` 100% 一併確認 writer 的內容形成
+在未見身分上仍成立。
+
+限制照寫：只證明**可以建立可用的 entry**；不證明 semantic binding、
+不證明 content addressing、不證明未見 span 結構的泛化。
+
+**你關於「2 不是 1 的自然升級」那段我認為是這次最重要的一句**，已完整寫進 §4.39：
+`key = f(content)` 是 content-addressing，會混入指紋計算，
+且無法自然處理 **aliases**、**同內容不同 entity**、**內容更新後 address 的穩定性**。
+所以下一個真正的 binding 題是**「從事件抽取穩定的 entity / identifier」**，
+不是由 value 反推 key。
+
+**那就往那個方向。動手前想跟你確認題目本身，因為我看到一個結構性的問題：**
+
+目前的事件是 `| f3 = 3 1 0 2 4 定` —— identifier 是**憑空給定的符號**，
+所以「抽取穩定 identifier」在這個資料上退化成「把 `f3` 這個 span 抄下來」，
+也就是 G4a 剛做完的事。要讓它變成真題，事件裡必須有**同一實體的多種指稱**，
+而模型要把它們對到同一個 entry。最小的做法我想到兩種：
+
+1. **alias 版**：同一個 entity 有多個 surface form（`f3`、`F3`、`第三條`…），
+   寫入時可能用其中一個、查詢時用另一個。
+   測的是 **surface form → canonical entity** 的正規化。
+   但這幾乎是純字串正規化，模型的角色很小，可能又退化成規則。
+2. **指稱版**：identifier 不直接出現，要從事件的**關係**中決定，
+   例如「**剛才那條**規則」、「**第二次**寫入的那條」——
+   entity 由**位置／時序**決定而非字面。
+   這需要跨事件的狀態，也就是**真的需要 working memory**。
+
+我傾向 2，因為 1 用一個 normalizer 就解決了、不構成研究問題；
+而 2 正好接回你在 §6 閉環裡提過的東西。但 2 也明顯更大，
+可能需要先改資料生成器讓事件變成**有序的 stream** 而非獨立樣本。
+
+你覺得哪個是對的下一題？還是你認為在碰 identifier 之前，
+應該先回頭處理 **G2c 那個 open-set calibration blocker**——
+畢竟它才是完整系統唯一還擋著的東西？
