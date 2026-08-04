@@ -2509,8 +2509,78 @@ episodes checksum `bda3b054da96ab46` 在**評測之前**已落 `g3e_prereg.json`
 ### 整條線的安全結論
 
 **answerable path 實質完美**（`A_ans` 100%、`false_abstain` 0%），
-**missing safety 有 ~2.7% 的地板**。這兩件事必須**分開報**，
+**missing safety 的估計風險約 2.7%**（UB 4.76%）。這兩件事必須**分開報**，
 不可合併成一個 PASS —— 與 §4.34 的三行宣稱一致。
+
+⚠️ 措辭用「**估計風險**」而非「固定不可變的 2.7% 地板」（Codex）——
+它仍帶著抽樣區間。同理，G2a/G2b 的 100% **仍是那批樣本的原樣結果**，
+被撤回的是「support 是完美的」這個**解讀**，不是那個觀測值。
+
+---
+
+## 4.38 G3f：**exact-membership guarded closure = SEALED**
+
+§4.37 量到 learned support 有約 2.7% 的稀有 false-accept。但在本任務裡
+**query 攜帶 canonical exact key、store 也以同一個 key commit** ——
+`contains(key)` 是**可判定的資料結構事實**，用學到的相似度去猜它是**職責錯置**（Codex）。
+把它搬回 store 契約**不是規避，是正確分型**。
+
+### 權威路徑（learned support **不得覆蓋**）
+
+```
+canonicalize(query key)
+  → store.contains(key)
+      absent  → **硬 abstain**（連 retrieve 都不允許）
+      present → 允許 retrieve
+  → read 後 assert「取回的 entry key 一致 且 內容確實 committed」
+      不一致 → **fail-closed**
+```
+
+learned support 降為 **shadow metric**：照算、照報，**不參與決策**。
+它日後只在 semantic / fuzzy query 才有位置。
+
+### 結果（與 §4.37 **完全同一批 episodes**，checksum `bda3b054da96ab46`）
+
+| | **guarded（權威）** | **shadow（learned support 若當家）** |
+|---|---|---|
+| missing `R_abstain` | **100.0%** [98.7%, 100%] | — |
+| missing **`halluc`** | **0/300**，UB **0.99%** | **8/300 = 2.7%** |
+| answerable `A_ans` | **100.0%** [98.7%, 100%] | — |
+| answerable `false_abstain` | **0/300** | 0/300 |
+
+**shadow 欄精確重現了 §4.37 的 8/300** —— 同一批題目、同一個 threshold。
+這是受控的直接證明：**guard 移除的正是那些失敗**，不是換了一批容易的題目。
+
+### 契約測試（三項全過）
+
+| | |
+|---|---|
+| A. present 不誤擋 | `false_abstain` **0/300** ✅ |
+| B. absent 零交付 | `halluc` **0/300** ✅ |
+| C. wrong-key fail-closed | 觸發 **0** 次 |
+
+guard 明細：`absent` 300 / `badread` 0 / `wrongkey` 0。
+`wrongkey` 為 0 表示 learned retriever 在這批上從未選錯 key，與其 99–100% 的檢索率一致；
+guard 在此**沒有掩蓋**任何檢索錯誤。
+
+### 這**不**解決什麼
+
+- **open-set 的語意問題完全沒動。** query 沒有可靠的 canonical key、
+  key extraction 出錯、或要找的是「語意相關」而非同一個 ID 時，**store 無法直接回答**。
+- **§4.30 的 G2c calibration FAIL 仍是完整系統的 blocker**，
+  **不因**這裡結構性零 halluc 而回填。
+- **§4.37 的 8/300 原樣保留**，不被本節抹掉。
+
+新結果另立里程碑：**`exact-membership guarded closure`**，
+與 §4.34 的 `answerable/component closure` 分開計。
+
+### 下一步：write-address formation
+
+Codex 對這一階段先加的兩條約束：
+
+- **canonical key ↔ entry 的綁定與 commit visibility 由 store 原子管理**。
+- 先測 **writer 能不能從事件形成 key/address binding**，
+  **不要讓 learned writer 自行決定 membership bit** —— 那正是本節剛剛修掉的職責錯置。
 
 ---
 

@@ -1,0 +1,21 @@
+{
+  "k": 1,
+  "pool": 8,
+  "seed": 20260804,
+  "checksum": "bda3b054da96ab46",
+  "threshold_shadow_only": 3.8257057666778564,
+  "R_abstain": 300,
+  "halluc": 0,
+  "halluc_ub95": 0.009936081944457666,
+  "A_ans": 300,
+  "false_abstain": 0,
+  "shadow_false_accept": 8,
+  "shadow_false_block": 0,
+  "guard": {
+    "guard_absent": 300,
+    "guard_badread": 0,
+    "guard_wrongkey": 0
+  },
+  "verdict": "SEALED",
+  "milestone": "exact-membership guarded closure"
+}

@@ -282,6 +282,32 @@ it on purpose and measure detection, repair, and zero hallucination. This is a s
 consistency problem; do not ask a learned support head to infer existence from similarity. Also
 deferred: overwrite/reconsolidation, stale snapshots, write-address formation.
 
+## C layer — exact-membership guarded closure, 2026-08-04
+
+`research.md` §4.37–4.38. The learned support head's hit/miss was measured at **halluc 8/300 =
+2.7%** (one-sided 95% CP upper bound 4.76%) in a pre-registered stratified replication — three
+independent measurements now agree (2/32, 3/59, 8/300), so it is a **rare but real** failure, not
+noise. That also retires the "perfect support" reading of G2a/G2b's 100%: those runs saw ~60
+missing cases and `P(0 | n=60, p=0.027) ≈ 0.19`. The observation stands; the interpretation does
+not.
+
+**The fix is typing, not tuning.** In this task the query carries a canonical exact key and the
+store commits under that same key, so `contains(key)` is a decidable data-structure fact — asking
+a learned similarity to guess it is a category error. The authoritative path is now
+`canonicalize(key) → store.contains(key)`; absent hard-abstains before retrieval is even allowed,
+present proceeds, and after the read the entry's key and committed content are asserted or the
+controller fails closed. The learned support survives only as a **shadow metric** and may never
+override the guard.
+
+On the identical 300+300 episodes (`g3f_membership_guard.py`): guarded **halluc 0/300** (UB
+0.99%), `R_abstain` 100%, `A_ans` 100%, `false_abstain` 0/300 — while the shadow column reproduces
+the same **8/300** it would have let through. Guard breakdown: absent 300, badread 0, wrongkey 0.
+
+**What this does not fix**: the open-set semantic problem is untouched — no reliable canonical key,
+a key-extraction error, or a "semantically related" rather than same-ID lookup all leave the store
+unable to answer. **G2c's calibration FAIL remains a whole-system blocker and is not backfilled**,
+and the 8/300 stays on the record. Counted as its own milestone, separate from §4.34's closure.
+
 **Ordering after G3b is 1 → 3 → 2** (`research.md` §4.35), and the reasons matter more than the
 order:
 
