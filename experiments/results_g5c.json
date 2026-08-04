@@ -1,0 +1,60 @@
+{
+  "n": 150,
+  "dmax": 4,
+  "seed": 246810,
+  "by_config": {
+    "text": {
+      "acc": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "survival": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "first_fail": {}
+    },
+    "allph": {
+      "acc": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "survival": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "first_fail": {}
+    },
+    "mixed": {
+      "acc": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "survival": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "first_fail": {}
+    }
+  },
+  "fail_overlap_at_dmax": {
+    "allph": 0,
+    "mixed": 0,
+    "intersection": 0
+  }
+}
