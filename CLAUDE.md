@@ -245,12 +245,13 @@ once, store cleared per episode: overwrite/reconsolidation is deliberately exclu
 | 5. **end-to-end** | **98.2%** (n=341) | **0.0%** (n=339) |
 | R_abstain / halluc / false_abstain | 94.9% / 5.1% / 0.0% | 90.2% / 9.8% / 85.5% |
 
-**Integration costs nothing.** Every cell of the 2×2 intervention
-(`oracle|learned writer × oracle|learned retrieval`) scores **98.2%** end-to-end — including
-`oracle × oracle`, so the missing 1.8% is the delivery/executor itself (G1's `zdelta` ceiling is
-99.0%), not any learned component. Direct delivery and store round-trip are also identical, so
-**the store round-trip is free**. Abstention is the only cell that moves (oracle retrieval 100%
-vs learned 94.9%), which places the 5.1% hallucination entirely on G2b's support head.
+**On the answerable path, integration costs nothing** — every cell of the 2×2 intervention
+(`oracle|learned writer × oracle|learned retrieval`) scores **98.2%** end-to-end, including
+`oracle × oracle`, so the missing 1.8% is a shared executor ceiling (G1's `zdelta` is 99.0%) and
+is not an integration loss. Direct delivery and store round-trip are identical, so the store
+round-trip is numerically free. **Do not generalise this to "integration is free."** Abstention is
+the one cell that moves — oracle retrieval 100% vs learned 94.9% — placing **3/59 = 5.1%
+hallucination** entirely on G2b's support head. That number does not get folded into the PASS.
 
 Store contract verified bitwise over 3200 `commit → read` pairs: shape 3200/3200,
 `max|diff|` **0.00e+00**, detached 3200/3200, address↔content binding 3200/3200.
@@ -260,9 +261,11 @@ index 5 to 6 *and* uses query identities G2b never trained on. Only the formatio
 attributed to the writer (95.7%, it nearly holds); the full-chain collapse is dominated by
 retrieval at 7.9% and stays confounded.
 
-**Two claims, neither cancelling the other**: `in-distribution 2-token closed-world component
-closure` = **PASS**; `3-token span-shift robustness` = **FAIL**. Not open-set, not a
-persistent-learning loop, not general pool capacity.
+**Three claims, none cancelling the others**: `in-distribution 2-token answerable/component
+closure` = **PASS** (98.2%, at the executor ceiling); `missing safety` = **not cleanly reliable**
+(R_abstain 94.9%, halluc 5.1%) — reported separately, never folded into the PASS;
+`3-token span-shift robustness` = **FAIL**. Not open-set, not a persistent-learning loop, not
+general pool capacity, and not "integration is free".
 
 **Next — G3c**, deliberately excluded here: **dangling address** (index has the entry, content is
 missing — partial write, GC race). Pin the contract first — `address visible ⇔ committed content
@@ -270,6 +273,25 @@ readable`, atomic commit, controller **fails closed** to abstain on a dangling r
 it on purpose and measure detection, repair, and zero hallucination. This is a storage/index
 consistency problem; do not ask a learned support head to infer existence from similarity. Also
 deferred: overwrite/reconsolidation, stale snapshots, write-address formation.
+
+**Ordering after G3b is 1 → 3 → 2** (`research.md` §4.35), and the reasons matter more than the
+order:
+
+1. **G3c storage-fault** (`g3c_storage_fault.py`) — a **bounded, one-shot engineering check, not a
+   research line**. Seal as soon as fault injection yields `halluc == 0`. `halluc` here means
+   *answered while having read corrupted content* — being accidentally right is still unsafe.
+   Faults are injected only into entries the episode actually reads; a fault on an unread
+   distractor is trivially harmless and would just burn statistical power.
+2. **Boundary audit** (`g3d_scale_audit.py`) — two **single-variable** frozen sweeps, never both at
+   once: `pool 8→16→32` at fixed k, then `k 1→2→4→8` at fixed pool. Run the **oracle row first**
+   and stop that axis the moment the oracle collapses — with `num_loops=2` the executor's own
+   depth ceiling is k*≈4.83, so a fall near k≈5 is the *core*, not the memory system. `ADDR_DIM=32`
+   caps pool at 32; only 29 keys are 2-token, so pool>29 fills with 3-token distractors, which is
+   sound because distractor addresses are fixed-orthogonal and their content is never read.
+3. **Write-address formation last.** With four closed-world keys a learned address is probably just
+   a lookup table, and the open-set version already hit span/calibration. Redesign it as
+   non-orthogonal/growable addresses only once the audit says what capacity and similarity
+   distribution are actually needed — and then it is a *new* milestone, not a rescue of G2c.
 
 **G1 is sealed.** The default interface for the next stage is `zdelta`:
 `K' = K_native + f_slot(z)` at the value token positions, all 16 (loop, layer) cache slots,

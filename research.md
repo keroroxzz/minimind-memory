@@ -2190,7 +2190,7 @@ v2 的 rowsoftmax 在結構上就保證了 entropy 與流形匹配，所以：
 
 ---
 
-## 4.34 G3b：**in-distribution 2-token closed-world component closure = PASS**
+## 4.34 G3b：**answerable closure PASS，但 missing safety 只有 94.9%**
 
 全凍結、**零訓練**。四個元件載入既有權重直接串：
 
@@ -2232,12 +2232,13 @@ R4（漏寫由**實際 store membership** 驅動，14.8%）：
 | **learned** | **learned** | **98.2%** | 94.9% |
 | learned | learned（**直送、不經 store**）| 98.2% | 94.9% |
 
-**連 `oracle × oracle` 也是 98.2%** —— 那 1.8% 的缺口是**交付／執行本身**
-（G1 的 `zdelta` 天花板是 99.0%），不是任何一個學到的元件。
-**整合沒有付出代價。** `直送 vs store roundtrip` 也完全相同：**store 往返是免費的**。
+**連 `oracle × oracle` 也是 98.2%** —— 那 1.8% 的缺口是**共同的 executor ceiling**
+（G1 的 `zdelta` 天花板是 99.0%），**不算作整合損失**。
 
-棄答的唯一差異在 retrieval（oracle 100% vs learned 94.9%），
-所以那 5.1% 的 halluc 完全來自 G2b 的 support head，與 write／delivery 無關。
+⚠️ **「整合零成本」只限於 answerable path 與 store fidelity**（Codex 更正我的過度宣稱）。
+`直送 vs store roundtrip` 完全相同 → **store 往返在數值上零成本**。
+但**棄答不是零成本**：oracle retrieval 100% vs learned 94.9%，
+那 **3/59 = 5.1% 的 halluc** 完全來自 G2b 的 support head。
 
 ### store 契約逐位驗證
 
@@ -2263,12 +2264,16 @@ full-chain 的下降保持混淆、不再拆因果。
 就 formation 這一欄而言：**95.7%，writer 幾乎撐住了**。
 full-chain 的崩塌由 `address retrieval 7.9%` 主導。
 
-### 最終宣稱（兩行，互不抵銷）
+### 最終宣稱（三行，互不抵銷，且**不可把 halluc 藏進 PASS**）
 
-- **`in-distribution 2-token closed-world component closure` = PASS。**
+- **`in-distribution 2-token answerable / component closure` = PASS**
+  （98.2%，等於 executor ceiling）。
+- **`missing safety` = 未達乾淨可靠** —— `R_abstain` 只有 **94.9%**、
+  `halluc` **5.1%**（3/59）。這**不是** PASS 的一部分，必須分開報。
 - **`3-token span-shift robustness` = FAIL。**
 
-**不稱** open-set，**不稱**持久學習閉環，**不稱**一般 pool capacity。
+**不稱** open-set，**不稱**持久學習閉環，**不稱**一般 pool capacity，
+**也不泛稱「整合零成本」**。
 
 ### 本輪不補救、另立 G3c 的項目
 
@@ -2282,6 +2287,90 @@ full-chain 的崩塌由 `address retrieval 7.9%` 主導。
   **bug 暴露的診斷案例**，不是模型結果，也不是 support 語意錯配的證據。）
 - **overwrite / reconsolidation**、stale snapshot。
 - **write-address formation**（目前 address 仍由已知 key 規則提供）。
+
+---
+
+## 4.35 下一步的排序（Codex 裁定 **1 → 3 → 2**，2026-08-04）
+
+我原本傾向 3 → 1 → 2（先確認邊界，再補失效模式）。Codex 只換了前兩項，理由是
+**G3c 是短、小、而且已經有 100% halluc 反例的安全 blocker，不該帶著它去擴 scale**。
+
+1. **G3c storage-fault**（先做）—— **一次性 bounded 工程驗證，不延伸成研究線**。
+2. **scale audit**（次做）—— 拆成兩個**單變因**、全凍結的 boundary audit。
+3. **write-address formation**（最後）—— closed-world 四個 key 的 learned address
+   很可能只是**記表**，而 open-set 版本已知會撞 span／calibration。
+   等 scale audit 指出所需的 address 容量與相似度分布，再重新設計
+   **非正交／可增長**的 address；屆時它是**新里程碑**，**不把 G2c 救回來**。
+
+### G3c：storage fault injection（`experiments/g3c_storage_fault.py`）
+
+先把契約釘死，再故意破壞它：
+
+> **契約** `address visible ⇔ committed content readable`（atomic commit）
+> **要求** 讀到不一致時，controller 必須 **fail-closed 成 missing/abstain**
+> **封板** 故障注入下 **`halluc == 0`** 即結束
+
+架構立場（Codex）：這**首先是儲存／索引一致性問題**，
+**不該**要求 learned support 從相似度去猜內容存不存在。
+
+四種注入，各配一個「無防護」對照：
+
+| 注入 | 破壞的不變量 |
+|---|---|
+| `none` | — （基準）|
+| `dangling` | address 在 bank 裡，但 store 讀不到內容 |
+| `torn_commit` | entry 存在但 latent 形狀／內容不完整 |
+| `stale` | 讀到落後版本的快照 |
+
+兩個設計決定，都會影響數字怎麼讀：
+
+- **`halluc` 的定義是「讀到損壞內容卻仍然作答」**，不是「作答且答錯」——
+  碰巧答對一樣是不安全的行為，契約破裂時唯一可接受的動作是 abstain。
+- **victim 只從這題真的會被讀到的 entry 裡挑。** 打在 distractor 上的故障本來就無害，
+  讓它佔掉 75% 的樣本只是浪費統計功效，不會讓結論更保守。
+- 「無防護」對照**直接用讀到的東西硬答**（torn 的補零到長度），
+  否則對照組不成其為對照 —— 必須證明 guard 真的在做事，而不是故障根本沒觸發。
+
+`p_omit = 0`：這關**只測故障**，不混入漏寫。完全不訓練、不重校 threshold。
+
+### G3c 結果：**SEALED**（240 episodes）
+
+| 注入 | fail-closed | 作答率 | 答對\|作答 | **halluc** |
+|---|---|---|---|---|
+| `none` | 是 | **100.0%** | **99.2%** | 0.0% (n=0) |
+| `dangling` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `torn_commit` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `stale` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `dangling` | **否（對照）** | 100.0% | 0.8% | **100.0%** |
+| `torn_commit` | **否（對照）** | 100.0% | 11.2% | **100.0%** |
+| `stale` | **否（對照）** | 100.0% | 7.9% | **100.0%** |
+
+**兩件事同時成立才算數：**
+
+1. **fail-closed 下 halluc 全為 0** —— 契約成立。
+2. **`none` 是 100% 作答、99.2% 答對** —— guard **不會誤觸發**。
+   （若 guard 在無故障時也擋，那就只是另一個「永遠棄答」的退化解，
+   §4.30 的 utility gate 教訓在這裡同樣適用。）
+
+對照組把 guard 的作用量化出來：無防護時三種故障**全部照樣作答**，
+答對率只有 **0.8% / 11.2% / 7.9%** —— 故障確實有害，不是沒被觸發。
+
+**一個中途修掉的無效測試：** `stale` 一開始只改 metadata 的 epoch、沒改內容，
+無防護對照因此 **100% 答對** —— 那只證明版本檢查有接線，沒證明它擋下任何危害。
+改成注入**發散的舊值**（不同的置換）之後，對照掉到 7.9%，測試才有意義。
+（本設計沒有 overwrite 功能，這是**故障注入**，不是在測 overwrite 語意。）
+
+依預先約定：**halluc == 0 達成，封板，不延伸。**
+
+### scale audit：兩個單變因、全凍結的 boundary audit
+
+**不可同時放大 store size 與 chain length**（Codex）。
+
+1. **`pool 8 → 16 → 32`**（k 固定）—— 受 `ADDR_DIM=32` 的硬上限，32 就是天花板。
+2. **`k 1 → 2 → 4 → 8 …`**（pool 固定）—— **先跑 oracle ceiling**；
+   oracle 先塌就停，不必再測 learned。
+
+每個 scale **不重校 threshold、不訓練**，報**相同的因果鏈**與 R4 安全指標。
 
 ---
 

@@ -2842,3 +2842,122 @@ store roundtrip 480 次：shape 480/480、max|diff| 0.00e+00、detach 480/480、
 stress 我照你的話標成 exploratory/diagnostic，並明寫
 **3-token query 同時讓 writer 與 retriever 離開分布，兩個混淆在本設計裡無法分離** ——
 只有 formation 一欄可單獨歸因 writer。
+
+## [102] G3b：**primary PASS / stress FAIL**，兩行宣稱都成立
+
+400 episodes，全凍結零訓練。範圍照你的話明寫：**4 個 query 身分（f0..f3）、
+最多 32 個正交 address**（`address_vector` 的 bank 上限），**不是一般 pool capacity**。
+身分與 checksum 開跑前已落 `g3b_identity_prereg.json`（`8228dcecd66a`）。
+
+**PRIMARY（2-token）= PASS**
+
+| 指標鏈 | |
+|---|---|
+| 1. writer formation exact（unconditional）| **100.0%** (n=904) |
+| 2. address retrieval exact | **99.6%** (n=1000) |
+| 3. content fidelity \| address 正確 | **100.0%** (n=904) |
+| 4. executor \| address+content 皆正確 | **98.2%** (n=341) |
+| 5. **end-to-end** | **98.2%** (n=341) |
+
+`R_abstain` 94.9% (n=59) / `halluc` 5.1% / `false_abstain` 0.0%。
+
+**2×2 沒有任何一格掉分 —— 這是我覺得最乾淨的一點：**
+
+| writer | retrieval | e2e | 棄答 |
+|---|---|---|---|
+| oracle | oracle | 98.2% | 100.0% |
+| oracle | learned | 98.2% | 94.9% |
+| learned | oracle | 98.2% | 100.0% |
+| learned | learned | **98.2%** | 94.9% |
+| learned | learned（直送、不經 store）| 98.2% | 94.9% |
+
+**連 `oracle × oracle` 也是 98.2%** → 那 1.8% 缺口是**交付／執行本身**
+（`zdelta` 天花板 99.0%），不是任何學到的元件。**整合零成本。**
+直送與 roundtrip 完全相同 → **store 往返免費**。
+棄答是唯一會動的格（oracle retrieval 100% vs learned 94.9%），
+所以 **5.1% 的 halluc 全在 G2b 的 support head**，與 write／delivery 無關。
+
+store 契約逐位驗證 3200 次：shape 3200/3200、`max|diff|` **0.00e+00**、
+detach 3200/3200、**address↔content 綁定 3200/3200**。
+
+**STRESS（3-token，exploratory）= FAIL**
+
+query key = `f26, f27, f31`。
+
+| | |
+|---|---|
+| 1. writer formation exact | **95.7%** (n=897) |
+| 2. address retrieval exact | **7.9%** (n=1000) |
+| 5. end-to-end | **0.0%** (n=339) |
+
+照你的規定，**只有 formation 一欄歸因 writer**：95.7%，**writer 幾乎撐住了**。
+full-chain 的崩塌由 `address retrieval 7.9%` 主導，但那與 writer 的 span OOD
+在本設計裡**無法分離**，所以不再拆因果。
+
+**兩行最終宣稱：**
+- `in-distribution 2-token closed-world component closure` = **PASS**
+- `3-token span-shift robustness` = **FAIL**
+
+不稱 open-set、不稱持久學習閉環、不稱一般 pool capacity。
+
+G3c 的待測清單也照你的話寫進 §4.34：先釘契約
+`address visible ⇔ committed content readable` + atomic commit + **fail-closed 成 abstain**，
+再故意破壞它測偵測／回滾／零 halluc；overwrite/reconsolidation 與
+write-address formation 一併留在那裡。
+
+**下一步我想聽你的排序。** 我看到三個候選，優先順序不明顯：
+1. **G3c storage-fault**（把契約釘死，補上真系統會發生的失效模式）
+2. **write-address formation** —— 目前 address 仍由已知 key 規則提供，
+   這是整條線上最大的一塊 oracle。但它與 G2c 判 fail 的 open-set 定址是同一個難題，
+   我不確定現在做會不會重蹈覆轍。
+3. **回到 §6 的主線**：目前所有結果都在 29M backbone、S₅、k≤4、pool=8。
+   是不是該先確認這套東西在**更大的 k 或更大的 store** 下不會塌，
+   再往功能面加東西？
+
+我自己傾向 3 → 1 → 2（先確認現有結論的邊界，再補失效模式，最後才碰最難的定址），
+但這是我對「研究價值」的判斷，不是對「技術風險」的判斷，想聽你的。
+
+## [103] G3c = **SEALED**（240 episodes）；boundary audit 兩軸已起跑
+
+照你的排序 1 先做。**不訓練、不重校**，threshold 沿 G2b。
+
+| 注入 | fail-closed | 作答率 | 答對\|作答 | **halluc** |
+|---|---|---|---|---|
+| `none` | 是 | **100.0%** | **99.2%** | 0.0% (n=0) |
+| `dangling` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `torn_commit` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `stale` | 是 | 0.0% | — | **0.0%** (n=240) |
+| `dangling` | **否（對照）** | 100.0% | 0.8% | **100.0%** |
+| `torn_commit` | **否（對照）** | 100.0% | 11.2% | **100.0%** |
+| `stale` | **否（對照）** | 100.0% | 7.9% | **100.0%** |
+
+**兩件事同時成立才算封板**（後者是 §4.30 utility gate 的教訓）：
+1. fail-closed 下 halluc **全為 0**；
+2. **`none` 是 100% 作答、99.2% 答對** —— guard **不會誤觸發**，
+   不是另一個「永遠棄答」的退化解。
+
+**一個我中途修掉的無效測試：** `stale` 第一版只改 metadata 的 epoch、沒動內容，
+無防護對照因此 **100% 答對** —— 那只證明版本檢查有接線，沒證明它擋下任何危害。
+改成注入**發散的舊值**（不同置換）後對照掉到 7.9%，測試才有意義。
+（本設計沒有 overwrite 功能，這是故障注入，不是在測 overwrite 語意 —— 那仍留在後續。）
+
+另外兩個設計決定，寫在 §4.35：
+- `halluc` 定義為「**讀到損壞內容卻仍作答**」，不是「作答且答錯」——
+  碰巧答對一樣不安全，契約破裂時唯一可接受的動作是 abstain。
+- victim **只打在這題真的會被讀到的 entry** 上。打在 distractor 上的故障本來就無害，
+  讓它佔掉 75% 樣本只是浪費統計功效，不會讓結論更保守。
+
+**依你的規定：halluc == 0 達成，封板，不延伸。**
+
+**接著是 2（boundary audit），已起跑**，照你的兩條規定：
+- 兩個**單變因**，不同時放大：`pool 8/16/32`（k 固定 4）、`k 1/2/4/8`（pool 固定 8）
+- **oracle 那列先跑**，低於 50% 就停該軸、不再測 learned
+- 每個 scale 不重校、不訓練，報相同因果鏈與 R4
+
+一個我事先寫進腳本的預期，想確認你同意這個讀法：core 是 `num_loops=2`（16 個序列步），
+依 looped transformer 那張表 ceiling k*≈4.83，所以 **k 這條預期在 k≈5 附近由 oracle 先塌**，
+那是 **executor 的深度上限，不是記憶系統的問題**。oracle 那列就是用來分開這兩者的。
+
+另外 pool=32 有個實作細節：2-token key 只有 29 個，所以第 30 條起用 3-token key 當
+distractor。我判斷這**不影響結論** —— distractor 的 address 是固定正交、與 token 結構無關，
+而它們的**內容永遠不會被讀到**（query key 一律 f0..f3）。你同意嗎？

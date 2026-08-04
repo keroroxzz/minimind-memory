@@ -1,0 +1,68 @@
+{
+  "cells": {
+    "none|fail-closed": {
+      "answered": 1.0,
+      "correct": 0.9916666666666667,
+      "halluc": 0.0,
+      "halluc_n": 0
+    },
+    "dangling|fail-closed": {
+      "answered": 0.0,
+      "correct": 0.0,
+      "halluc": 0.0,
+      "halluc_n": 240
+    },
+    "torn_commit|fail-closed": {
+      "answered": 0.0,
+      "correct": 0.0,
+      "halluc": 0.0,
+      "halluc_n": 240
+    },
+    "stale|fail-closed": {
+      "answered": 0.0,
+      "correct": 0.0,
+      "halluc": 0.0,
+      "halluc_n": 240
+    },
+    "none|no-guard": {
+      "answered": 1.0,
+      "correct": 0.9916666666666667,
+      "halluc": 0.0,
+      "halluc_n": 0
+    },
+    "dangling|no-guard": {
+      "answered": 1.0,
+      "correct": 0.008333333333333333,
+      "halluc": 1.0,
+      "halluc_n": 240
+    },
+    "torn_commit|no-guard": {
+      "answered": 1.0,
+      "correct": 0.1125,
+      "halluc": 1.0,
+      "halluc_n": 240
+    },
+    "stale|no-guard": {
+      "answered": 1.0,
+      "correct": 0.07916666666666666,
+      "halluc": 1.0,
+      "halluc_n": 240
+    }
+  },
+  "threshold": 3.8257057666778564,
+  "faults": [
+    "none",
+    "dangling",
+    "torn_commit",
+    "stale"
+  ],
+  "query_keys": [
+    "f0",
+    "f1",
+    "f2",
+    "f3"
+  ],
+  "pool": 8,
+  "seed": 777,
+  "verdict": "SEALED"
+}
