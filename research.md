@@ -2650,6 +2650,66 @@ literal canonical span → address construction
 
 ---
 
+## 4.40 G4b：指稱／時序 binding —— oracle 天花板 PASS、**表示探針 FAIL**
+
+事件是一段**有序 stream**（若干次 literal 寫入 + 填充事件），
+query 用**指稱**（`前者` = 最後被寫入的 entity）而非 literal key。
+除了新增的 resolver，**writer / zdelta / store 全部凍結**，每 episode 嚴格 reset。
+
+### 為什麼指稱必須放在**讀取端**
+
+§4.38 的 exact-membership guard 只能擋**不存在**的 key。
+它**擋不住 resolver 錯指到另一個已存在的 entity** —— 那個 key 確實在 store 裡，
+guard 會放行，於是**自信地交付錯誤內容**。
+
+所以 **`wrong-existing-entity` 是這一關唯一的危險錯誤**，必須與 abstain 分開報。
+（若把指稱放在寫入端，錯指只會讓目標 key 沒有內容、退化成安全的 abstain，測不到東西。）
+
+### oracle 天花板：9 格全 100%
+
+| entities | fillers | ref exact | E2E | wrong-entity | abstain |
+|---|---|---|---|---|---|
+| 2 / 3 / 5 | 0 / 2 / 5 | 100.0% | **100.0%** | 0.0% | 0.0% |
+
+整體 E2E **100.0%** [98.9%, 100%]，n=360。
+
+**oracle 這一階當場抓到一個設計錯誤，這正是它存在的理由。**
+第一版天花板是 **0.0%** —— 因為我把 stream 前綴與 `（前者）` 後綴
+**直接塞進了交付用的 prompt**，而凍結的 core 只在 `| x=… | … 求x=` 上訓練過。
+這違反 §4.27 就立過的 invariant：**指稱／檢索 view 必須 out-of-band，交付 prompt 不可動**。
+改成獨立的 `render_reference_view` 之後才到 100%。
+**若這個錯誤混在 learned resolver 裡，會表現成「temporal binding 學不起來」，
+但真正的原因與 binding 無關。**
+
+### 表示探針（事前鎖定位置）：**FAIL**
+
+位置**事前固定**為 reference view **最後一個 token** 的**最終層** hidden，
+**不得**看結果後再挑。resolver 是 `Linear(512→32)` + temperature，
+未加權 CE；entity ID 全程共用（closed-world），泛化軸只有排列／距離／filler 數。
+
+| | |
+|---|---|
+| train | **44.7%** |
+| **test** | **34.8%** |
+| **chance**（`mean(1/2, 1/3, 1/5)`）| **34.4%** |
+| 非學習 `last-written pointer` baseline | **100.0%** |
+| loss | 卡在 **1.10** |
+
+**test 完全在 chance 上。** 依事前寫好的判讀規則：
+**這是表示問題，不是學習問題** —— 凍結 core 在該位置的 hidden
+**沒有線性編碼 recency**。
+
+⚠️ 探針**只是 representation / small-overfit gate**，
+**不可**與正式結果累加成獨立證據 —— 正式 resolver 本質上也是
+`hidden → address` 的線性打分，兩者不獨立。
+
+⚠️ 非學習的 `last-written pointer` baseline 是 **100%**，
+所以就算 learned 版本將來通過，**也只能**宣稱
+「**凍結的 hidden 支援學到 recency 關係**」，
+**不能**宣稱這個規則沒辦法由 controller 直接實作。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
