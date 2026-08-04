@@ -2818,6 +2818,15 @@ core 的 `max_position_embeddings` 是 **1024**，所以 414 tokens **在位置�
 > **記憶把準確率與 prompt 長度解耦。**
 > 對於**可用 context 很短的 core**（這裡短是因為訓練分布短），這是很大的實務增益。
 
+**必須逐字寫進結論的一句（Codex）：**
+
+> **本結果不支持 memory 與長 context 訓練模型的比較；
+> `full_context` 的下降混合了 11–23× 的長度 OOD。**
+
+**成本的措辭也要收窄：** 11–23× 是**每次 query 的 core prompt / token 成本**，
+**不是完整 lifecycle 成本** —— memory 之前仍付了 writer / commit / retrieval
+與事件處理。**除非把寫入攤提到多次 query，不得宣稱端到端總算力便宜 11–23×。**
+
 **不可宣稱：**
 
 - 記憶勝過一個**在長 context 上訓練過**的模型 —— 本實驗沒有那個對照。
