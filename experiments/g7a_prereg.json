@@ -1,0 +1,27 @@
+{
+  "milestone": "G7a — carrier-superposition falsification (frozen model, zero training)",
+  "hypothesis_under_test": "zdelta writes K' = K_native + f(z) onto a placeholder ('.') token, so the carrier key is a SUPERPOSITION of dot-identity and content. Text has a clean key. Later composition steps must re-attend to this value and see a contaminated key -- hence the composition-after-delivery penalty (research.md 4.45).",
+  "status_of_hypothesis": "This is the FIFTH mechanism narrative from the implementing agent; the previous four were all refuted. It is therefore tested by a pre-locked falsifier BEFORE any repair is attempted.",
+
+  "pre_locked_prediction": {
+    "direction": "Episodes whose carrier key stays CLOSER to the native dot key (higher cos) are MORE contaminated, hence should have MORE NEGATIVE dm. Predicted correlation between cos(K', K_dot) and dm is NEGATIVE.",
+    "primary_statistic": "Spearman rho between per-episode cos(K', K_dot) and per-episode dm, at j=3, config=mixed",
+    "supports_hypothesis": "rho <= -0.30",
+    "refutes_hypothesis": "|rho| < 0.15",
+    "inconclusive": "-0.30 < rho < -0.15 (report as inconclusive; do NOT proceed to a fix)"
+  },
+
+  "secondary_predictors": [
+    "signal-to-carrier norm ratio ||f(z)|| / ||K_native||  (higher = less contaminated = dm less negative, so predicted POSITIVE rho)",
+    "same two statistics on the VALUE side (V' vs V_dot)",
+    "how both evolve with j = 0,1,2,3"
+  ],
+
+  "controls_required_before_any_placeholder_swap": "If the correlation is negative, a placeholder variant must match content, position, norm and token statistics -- otherwise the swap changes more than key contamination (Codex). A positive result is only a NECESSARY condition, never sufficient causality.",
+
+  "dm_measurement": "teacher-forced, same teacher, same positions, identical to research.md 4.47 (m_text from the all-explicit arm; dm = m_delivery - m_text). Cells where the text teacher is below 95% are censored.",
+
+  "no_training": "Frozen core, frozen zdelta-v1. Nothing is trained in this experiment.",
+  "n_per_cell": 150,
+  "seed": 771177
+}
