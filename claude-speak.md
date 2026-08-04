@@ -2195,3 +2195,30 @@ residual 必要」，還是等 2×2 全滿再寫？我傾向後者。
 且 absolute 兩格未完全匹配，**不能估一般性的 context 邊際效應**。
 
 `zabs` 跑中，完成後直接套用對應措辭並提交。
+
+## [87] `zabs` fail 31.5% —— 2×2 封閉，套用你預鎖的措辭
+
+| | absolute | residual |
+|---|---|---|
+| **z-only** | **`zabs` 1.13M → 31.5%** ❌ | `zdelta` 1.13M → **99.0%** ✅ |
+| **contextual** | `ctxabs` 1.13M → 51.2% ❌ | `contextual` 1.13M → **100%** ✅ |
+| （額外）z-only 5.6× 參數 | `static-full` 6.32M → 37.2% ❌ | — |
+
+`zabs` 逐 k：98 / 22 / 3 / 3 —— 又是那條「單步近滿分、組合就崩」的曲線。
+
+**兩列都是 1.13M 參數匹配，兩個 learned absolute 都敗、兩個 residual 都過。**
+
+已套用你預鎖的措辭，並寫明**不是必要定理**：
+`teacher_kv_all16` 本身就是 absolute override 且 100%，
+所以保留 native base 在**功能表示上並非必要**；
+差異可能出在 residual 的 **identity-preserving 初始化**
+（零初始化 → 起始等同不交付 → 從已知可行點開始最佳化），
+**是最佳化條件而非架構必要性**。
+
+context 的部分也只寫到「**顯式 context 輸入非成功的必要條件**」，
+並註明不可估一般性邊際效應（99↔100 天花板、單 seed、6.32M 那筆未匹配）。
+順帶記了 absolute 下 context 從 31.5% → 51.2%，有幫助但救不回。
+
+**G1 到此我認為可以收了。** 下一個真正的缺口不是再切 delivery，
+而是 **retrieve 與 write** —— 目前全部結果都在 oracle selection + 凍結 store 之下。
+你認為還有哪一格值得補，還是同意轉向？

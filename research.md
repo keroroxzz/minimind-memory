@@ -1581,12 +1581,15 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 加入 context 條件、且由 absolute override 改成**保留 native KV 的 residual delta**。
 所以只能宣稱 **`contextual + residual` 這個 bundle 成功**。
 
-### 2×2 的結果推翻了「必須有 context」
+### 2×2 封閉（兩列皆 1.13M 參數匹配）
 
 | | absolute | residual |
 |---|---|---|
-| **z-only** | `static-full` 6.32M → **37.2%** ❌ | **`zdelta` 1.13M → 99.0%** ✅ |
-| **contextual** | `ctxabs` 跑中 | `contextual` 1.13M → **100%** ✅ |
+| **z-only** | **`zabs` 1.13M → 31.5%** ❌ | **`zdelta` 1.13M → 99.0%** ✅ |
+| **contextual** | **`ctxabs` 1.13M → 51.2%** ❌ | `contextual` 1.13M → **100%** ✅ |
+| （額外）z-only、**5.6 倍參數** | `static-full` 6.32M → 37.2% ❌ | — |
+
+**兩個 learned absolute 介面都沒過，兩個 residual 都過。**
 
 **`zdelta` 通過（99.0%，k=1~3 全 100%、k=4 96%）。**
 
@@ -1601,15 +1604,27 @@ runtime 仍須配置 carrier 位置、跑它們的 native 前向、
 
 ⚠️ **我從 3B 推論「合成器必須看得到該層當下狀態」是錯的**，已撤回。
 
-⚠️ **但這個表還不是參數匹配的 2×2（Codex）**：
-`static-full` 是 6.32M/16-head，`zdelta` 是 1.13M ——
-**架構與參數同時不同**。它強烈支持「保留 native base 是好設計」，
-但**不能把 residual 寫成唯一必要因子**。
+### 定稿措辭（結果出來前已鎖定）
 
-要能講「必要」，需要 exact-matched 的 **`zabs`**
-（與 `zdelta` 同架構同寬度，只把 `native + f(z)` 改成 `f(z)`）。
-**已排入佇列。** 在它跑完之前，residual 只記為
-**「目前唯一跨 k 通過、且最省參數的工程選擇」，不稱定理。**
+> **在本任務、凍結 core、6000-step 既定訓練下，
+> 兩個 learned absolute 介面均未過 gate，兩個 residual 介面均通過；
+> 保留 native KV scaffold 是目前唯一成功且參數效率高的 learned parameterization。**
+
+⚠️ **刻意不寫成必要定理（Codex）。**
+`teacher_kv_all16` **本身就是 absolute override，而它是 100%** ——
+所以「保留 native base」在**功能表示上並非必要**。
+失敗的是 **learned absolute 合成**，不是 absolute 這個形式。
+差異可能出在 residual 的 **identity-preserving 初始化**
+（零初始化 → 起始等同不交付 → 從一個已知可行的點開始最佳化），
+**是最佳化條件而非架構必要性**。這兩者對 C 層的含意完全不同：
+前者說「只能這樣做」，後者說「這樣比較好訓」。
+
+### context 的貢獻只能說到這裡
+
+`zdelta` 證明的是 **顯式 context 輸入非成功的必要條件**。
+**不可**估一般性的邊際效應 —— 99↔100 有天花板效應、單 seed，
+且 absolute 兩格在 6.32M 那筆上未完全匹配。
+（在 absolute 下 context 從 31.5% → 51.2%，看得出有幫助但救不回。）
 
 **成本面的好消息**：contextual 版只要 1.13M（core 的 3.9%），
 且 core 完全不動 —— 這正是「可獨立擴容、可抽換」所需要的形狀。
