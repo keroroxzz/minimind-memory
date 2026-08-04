@@ -1,0 +1,28 @@
+{
+  "milestone": "G7b — dose-response causal test of carrier-key superposition (frozen, no training)",
+  "why": "G7a gave rho=-0.542 at the pre-registered primary (j=3 mixed), which is CORRELATIONAL and only a NECESSARY condition. A scale sweep on the key branch is a cleaner first causal intervention than swapping the placeholder token, because it holds z, slot, K_native, position and every renderer normalisation fixed and moves ONLY the contamination ratio.",
+
+  "arms": {
+    "key_scale":  "K' = K_nat + s * ok ;  V' = V_nat + ov      <- the causal test",
+    "val_scale":  "K' = K_nat + ok     ;  V' = V_nat + s * ov   <- energy control on the OTHER branch",
+    "key_orth":   "K' = K_nat + R(ok)  ;  V' = V_nat + ov       <- same key-delta norm, random direction"
+  },
+  "scales_pre_locked": [0.0, 0.5, 1.0, 1.5, 2.0],
+  "scale_0_is": "native-dot control (no key delta at all)",
+
+  "pre_locked_prediction": {
+    "if_superposition_is_causal": "key_scale shows a MONOTONE dose-response: larger s -> lower cos(K',K_dot) -> less negative dm tail and higher accuracy. val_scale and key_orth do NOT show the same slope.",
+    "supports": "monotone in key_scale on the mixed primary AND slope(key_scale) clearly steeper than slope(val_scale) and slope(key_orth)",
+    "refutes_strong_causal": "no monotone dose-response in key_scale -> keep only the correlational support from G7a and WITHDRAW strong causal language",
+    "confound_not_excluded": "if val_scale shows the same slope, the effect is total-KV energy, not key contamination specifically"
+  },
+
+  "axes": "mixed is primary (that is where G7a supported); allph is secondary -- the question there is whether the slope is ABSENT, which would corroborate that allph is a different, still-unexplained mechanism",
+  "metrics": ["cos(K',K_dot)", "ratK = ||key delta|| / ||K_nat||", "CVaR10(dm)", "P(m_text+dm<0)", "accuracy"],
+  "dm_measurement": "teacher-forced, same teacher and positions as research.md 4.47",
+  "no_training": true,
+  "j": 3,
+  "n_per_cell": 120,
+  "seed": 909090,
+  "must_not": "The lossy-schema branch (G7c) may NOT use these results to tune its compressor or gate."
+}

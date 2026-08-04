@@ -1,0 +1,222 @@
+{
+  "prereg": {
+    "milestone": "G7b — dose-response causal test of carrier-key superposition (frozen, no training)",
+    "why": "G7a gave rho=-0.542 at the pre-registered primary (j=3 mixed), which is CORRELATIONAL and only a NECESSARY condition. A scale sweep on the key branch is a cleaner first causal intervention than swapping the placeholder token, because it holds z, slot, K_native, position and every renderer normalisation fixed and moves ONLY the contamination ratio.",
+    "arms": {
+      "key_scale": "K' = K_nat + s * ok ;  V' = V_nat + ov      <- the causal test",
+      "val_scale": "K' = K_nat + ok     ;  V' = V_nat + s * ov   <- energy control on the OTHER branch",
+      "key_orth": "K' = K_nat + R(ok)  ;  V' = V_nat + ov       <- same key-delta norm, random direction"
+    },
+    "scales_pre_locked": [
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0
+    ],
+    "scale_0_is": "native-dot control (no key delta at all)",
+    "pre_locked_prediction": {
+      "if_superposition_is_causal": "key_scale shows a MONOTONE dose-response: larger s -> lower cos(K',K_dot) -> less negative dm tail and higher accuracy. val_scale and key_orth do NOT show the same slope.",
+      "supports": "monotone in key_scale on the mixed primary AND slope(key_scale) clearly steeper than slope(val_scale) and slope(key_orth)",
+      "refutes_strong_causal": "no monotone dose-response in key_scale -> keep only the correlational support from G7a and WITHDRAW strong causal language",
+      "confound_not_excluded": "if val_scale shows the same slope, the effect is total-KV energy, not key contamination specifically"
+    },
+    "axes": "mixed is primary (that is where G7a supported); allph is secondary -- the question there is whether the slope is ABSENT, which would corroborate that allph is a different, still-unexplained mechanism",
+    "metrics": [
+      "cos(K',K_dot)",
+      "ratK = ||key delta|| / ||K_nat||",
+      "CVaR10(dm)",
+      "P(m_text+dm<0)",
+      "accuracy"
+    ],
+    "dm_measurement": "teacher-forced, same teacher and positions as research.md 4.47",
+    "no_training": true,
+    "j": 3,
+    "n_per_cell": 120,
+    "seed": 909090,
+    "must_not": "The lossy-schema branch (G7c) may NOT use these results to tune its compressor or gate."
+  },
+  "cells": {
+    "mixed|key_scale|0.0": {
+      "cos": 0.9999999883584678,
+      "rat": 0.0,
+      "cvar10_dm": -32.63360763589541,
+      "p_flip": 0.95,
+      "accuracy": 0.05,
+      "n": 120
+    },
+    "mixed|key_scale|0.5": {
+      "cos": 0.881473025586456,
+      "rat": 0.5488262196847548,
+      "cvar10_dm": -29.7240007519722,
+      "p_flip": 0.725,
+      "accuracy": 0.275,
+      "n": 120
+    },
+    "mixed|key_scale|1.0": {
+      "cos": 0.6935567032856246,
+      "rat": 1.0966270704443255,
+      "cvar10_dm": -27.11954955259959,
+      "p_flip": 0.44166666666666665,
+      "accuracy": 0.5583333333333333,
+      "n": 120
+    },
+    "mixed|key_scale|1.5": {
+      "cos": 0.5504005676135421,
+      "rat": 1.6439803845249117,
+      "cvar10_dm": -29.415078669786453,
+      "p_flip": 0.575,
+      "accuracy": 0.425,
+      "n": 120
+    },
+    "mixed|key_scale|2.0": {
+      "cos": 0.4510996988741681,
+      "rat": 2.1910415003697077,
+      "cvar10_dm": -32.55029478172461,
+      "p_flip": 0.9583333333333334,
+      "accuracy": 0.041666666666666664,
+      "n": 120
+    },
+    "mixed|val_scale|0.0": {
+      "cos": 0.6957061605217556,
+      "rat": 1.0931088508727649,
+      "cvar10_dm": -33.48210925857226,
+      "p_flip": 1.0,
+      "accuracy": 0.0,
+      "n": 120
+    },
+    "mixed|val_scale|0.5": {
+      "cos": 0.6952481362347801,
+      "rat": 1.0946821053201954,
+      "cvar10_dm": -31.18269279350837,
+      "p_flip": 0.9,
+      "accuracy": 0.1,
+      "n": 120
+    },
+    "mixed|val_scale|1.0": {
+      "cos": 0.6935567032856246,
+      "rat": 1.0966270704443255,
+      "cvar10_dm": -27.11954955259959,
+      "p_flip": 0.44166666666666665,
+      "accuracy": 0.5583333333333333,
+      "n": 120
+    },
+    "mixed|val_scale|1.5": {
+      "cos": 0.69038764545694,
+      "rat": 1.0987470360162357,
+      "cvar10_dm": -26.965991417566936,
+      "p_flip": 0.5416666666666666,
+      "accuracy": 0.4583333333333333,
+      "n": 120
+    },
+    "mixed|val_scale|2.0": {
+      "cos": 0.6869539785509308,
+      "rat": 1.1018178200970092,
+      "cvar10_dm": -29.01670504609744,
+      "p_flip": 0.75,
+      "accuracy": 0.25,
+      "n": 120
+    },
+    "mixed|key_orth|1.0": {
+      "cos": 0.6763741418408851,
+      "rat": 1.0944858300189177,
+      "cvar10_dm": -31.967306117216747,
+      "p_flip": 0.9583333333333334,
+      "accuracy": 0.016666666666666666,
+      "n": 120
+    },
+    "allph|key_scale|0.0": {
+      "cos": 0.9999999888551732,
+      "rat": 0.0,
+      "cvar10_dm": -26.11715207497279,
+      "p_flip": 0.975,
+      "accuracy": 0.025,
+      "n": 120
+    },
+    "allph|key_scale|0.5": {
+      "cos": 0.8817792610886196,
+      "rat": 0.5432757602694134,
+      "cvar10_dm": -26.037554383277893,
+      "p_flip": 0.925,
+      "accuracy": 0.075,
+      "n": 120
+    },
+    "allph|key_scale|1.0": {
+      "cos": 0.691145138690869,
+      "rat": 1.0872532689012586,
+      "cvar10_dm": -18.702182094256084,
+      "p_flip": 0.15833333333333333,
+      "accuracy": 0.8416666666666667,
+      "n": 120
+    },
+    "allph|key_scale|1.5": {
+      "cos": 0.5450243110147616,
+      "rat": 1.6312165307501951,
+      "cvar10_dm": -32.61691826581955,
+      "p_flip": 0.9,
+      "accuracy": 0.1,
+      "n": 120
+    },
+    "allph|key_scale|2.0": {
+      "cos": 0.44427738020506996,
+      "rat": 2.174434602384766,
+      "cvar10_dm": -35.848008528351784,
+      "p_flip": 1.0,
+      "accuracy": 0.0,
+      "n": 120
+    },
+    "allph|val_scale|0.0": {
+      "cos": 0.6970941211096943,
+      "rat": 1.0820690364266434,
+      "cvar10_dm": -19.038251320521038,
+      "p_flip": 0.9916666666666667,
+      "accuracy": 0.008333333333333333,
+      "n": 120
+    },
+    "allph|val_scale|0.5": {
+      "cos": 0.6942289729602635,
+      "rat": 1.0834159788365165,
+      "cvar10_dm": -22.409608999888103,
+      "p_flip": 0.9833333333333333,
+      "accuracy": 0.016666666666666666,
+      "n": 120
+    },
+    "allph|val_scale|1.0": {
+      "cos": 0.691145138690869,
+      "rat": 1.0872532689012586,
+      "cvar10_dm": -18.702182094256084,
+      "p_flip": 0.15833333333333333,
+      "accuracy": 0.8416666666666667,
+      "n": 120
+    },
+    "allph|val_scale|1.5": {
+      "cos": 0.6888609227413932,
+      "rat": 1.0900616008477906,
+      "cvar10_dm": -23.02381055553754,
+      "p_flip": 0.9416666666666667,
+      "accuracy": 0.058333333333333334,
+      "n": 120
+    },
+    "allph|val_scale|2.0": {
+      "cos": 0.6850781264714897,
+      "rat": 1.0949807984444002,
+      "cvar10_dm": -25.880716159939766,
+      "p_flip": 1.0,
+      "accuracy": 0.0,
+      "n": 120
+    },
+    "allph|key_orth|1.0": {
+      "cos": 0.6812839679730435,
+      "rat": 1.079739116380612,
+      "cvar10_dm": -27.443664173285168,
+      "p_flip": 1.0,
+      "accuracy": 0.0,
+      "n": 120
+    }
+  },
+  "slope_mixed_key": 0.09510955810546876,
+  "slope_mixed_val": 2.6295019601782044,
+  "slope_allph_key": -5.2082153578599355,
+  "monotone": false,
+  "verdict": "NO DOSE-RESPONSE -> keep only G7a's correlational support; withdraw strong causal language"
+}
