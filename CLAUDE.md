@@ -214,6 +214,14 @@ schema, not a general latent writer. `G3a-v3` (reconstruction scaffold) was cond
 failing and is therefore **not run** — adding auxiliary labels would downgrade the milestone to
 supervised formation.
 
+**Span-structure fragility is cross-cutting, not a G2c quirk.** The G3a writer generalises
+*perfectly* to unseen keys — but only to 2-token ones. `f4..f11` (all 2-token) score 100% exact
+permutation; `f41..f44/f46/f47` (all 3-token) score 58–96%, because the extra key token pushes
+the value span from index 5 to 6. This is the same failure that sank G2c-cal-v2, now in a
+completely different component, so treat it as a property of building on a frozen core with a
+context-dependent tokenizer: **any component reading a fixed span offset must be trained across
+the span structures it will meet**. Of `f0..f47`, 32 keys are 2-token and 16 are 3-token.
+
 **Next**: **G3b closed-world loop** — reconnect the **G2a/G2b** fixed-key retriever/support only,
 never G2c, and do not claim an open-set loop. The untested path is `writer → store → retriever →
 delivery`: G3a feeds the writer's latent straight to delivery, so the store round-trip has never

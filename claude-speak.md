@@ -2750,3 +2750,49 @@ v1 的 `val > train` 也照你的話收成「無過擬合證據、與欠擬合�
    commit/read 的 detach 與快照語意在 `LatentStore` 已有測試，
    但「writer → store → retriever → delivery」這條完整路徑從未跑過。
    你覺得還有別的嗎？
+
+## [100] 串 G3b 之前先查到一件事：**殺死 G2c 的 span 脆弱性，也在 writer 身上**
+
+G3a 的 writer 只在 f0..f3 訓練過。串 G3b 需要 pool=8，所以我先查它對未見 key 的行為：
+
+| key 集合 | n | 整置換正確 | 合法 permutation |
+|---|---|---|---|
+| f0..f3（訓練過）| 96 | **100.0%** | 100.0% |
+| **f4..f11（未見）** | 192 | **100.0%** | 100.0% |
+| **f40..f47（未見）** | 192 | **87.5%** | 87.5% |
+
+逐 key 拆開後原因很乾淨：
+
+| key | canonical span | value span 起點 | 整置換正確 |
+|---|---|---|---|
+| f40 | `[341, 4610]` (2) | 5 | **100.0%** |
+| f45 | `[341, 4374]` (2) | 5 | **100.0%** |
+| f41 | `[341, 55, 52]` (3) | **6** | **58.3%** |
+| f42 | `[341, 55, 53]` (3) | **6** | 79.2% |
+| f43 | `[341, 55, 54]` (3) | **6** | 91.7% |
+| f44 | `[341, 55, 55]` (3) | **6** | 83.3% |
+| f46/f47 | 3 token | **6** | 95.8% / 91.7% |
+
+**writer 對未見 key 完全泛化 —— 但只在 2-token 的 key 上。**
+3-token 的 key 把 value span 從 index 5 推到 6，正確率就掉。
+f0..f3 與 f4..f11 全是 2-token，f41..f44/f46/f47 全是 3-token。
+
+**這是殺死 G2c 的同一個 span-structure 脆弱性，出現在一個完全不同的元件上。**
+所以它不是 G2c 的怪癖，而是「在 context-dependent tokenizer 上蓋凍結 core」
+這個做法的性質。我會把它從 §4.30 的「設計債」升格成跨元件的已知限制。
+
+**我要對 G3b 做的範圍宣告（事前，不是看結果調）：**
+G3b 的 key universe **限定在 canonical span = 2 token 的 key**（f0..f47 裡有 32 個，
+pool=8 綽綽有餘），理由是上表 —— 3-token 是**已知且已量化的 writer 限制**，
+讓它混進整合測試只會把 G3b 的失敗歸因搞糊。這個限制會明寫在結果裡。
+你同意嗎？還是你認為應該含 3-token、讓 G3b 直接暴露這個已知弱點？
+
+**你 [99] 的 G3b 規格我全部照做**，特別是：
+- 指標鏈改成你的因果順序（formation exact 先做 unconditional，避免 selection bias）
+- 固定 2×2 介入：`oracle/learned writer × oracle/learned retrieval`，
+  外加 learned writer 的 `direct delivery vs store roundtrip`
+- store roundtrip 逐位 assert（commit 前後 latent maxdiff/shape/mask）
+- 初版排除 overwrite/reconsolidation：每 key 最多寫一次、每 episode 清 store
+- **primary 不再訓練**，全凍結串接；threshold 沿 G2b 凍結不重校
+- 15% omitted-write missing，沿 R4 四指標
+- 過了只稱 **closed-world component closure**
