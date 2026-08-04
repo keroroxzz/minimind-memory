@@ -1,0 +1,147 @@
+{
+  "eps": 8.0,
+  "train": [
+    [
+      0,
+      "allph"
+    ],
+    [
+      0,
+      "mixed"
+    ],
+    [
+      1,
+      "allph"
+    ],
+    [
+      1,
+      "mixed"
+    ],
+    [
+      2,
+      "allph"
+    ]
+  ],
+  "primary": [
+    [
+      3,
+      "allph"
+    ],
+    [
+      3,
+      "mixed"
+    ]
+  ],
+  "stress": [
+    [
+      4,
+      "allph"
+    ],
+    [
+      4,
+      "mixed"
+    ],
+    [
+      5,
+      "allph"
+    ],
+    [
+      5,
+      "mixed"
+    ]
+  ],
+  "steps": 400,
+  "seed": 313131,
+  "acc": {
+    "j0_allph": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "v3": 1.0,
+      "text": 1.0,
+      "censored": false,
+      "tier": "train"
+    },
+    "j0_mixed": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "v3": 1.0,
+      "text": 1.0,
+      "censored": false,
+      "tier": "train"
+    },
+    "j1_allph": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "v3": 1.0,
+      "text": 1.0,
+      "censored": false,
+      "tier": "train"
+    },
+    "j1_mixed": {
+      "v1": 0.825,
+      "v2": 1.0,
+      "v3": 1.0,
+      "text": 1.0,
+      "censored": false,
+      "tier": "train"
+    },
+    "j2_allph": {
+      "v1": 0.975,
+      "v2": 1.0,
+      "v3": 1.0,
+      "text": 1.0,
+      "censored": false,
+      "tier": "train"
+    },
+    "j3_allph": {
+      "v1": 0.8,
+      "v2": 0.95,
+      "v3": 0.825,
+      "text": 1.0,
+      "censored": false,
+      "tier": "PRIMARY"
+    },
+    "j3_mixed": {
+      "v1": 0.625,
+      "v2": 0.825,
+      "v3": 0.8,
+      "text": 1.0,
+      "censored": false,
+      "tier": "PRIMARY"
+    },
+    "j4_allph": {
+      "v1": 0.025,
+      "v2": 0.025,
+      "v3": 0.0,
+      "text": 0.875,
+      "censored": true,
+      "tier": "**censored**"
+    },
+    "j4_mixed": {
+      "v1": 0.175,
+      "v2": 0.125,
+      "v3": 0.15,
+      "text": 0.95,
+      "censored": false,
+      "tier": "stress"
+    },
+    "j5_allph": {
+      "v1": 0.0,
+      "v2": 0.0,
+      "v3": 0.0,
+      "text": 0.05,
+      "censored": true,
+      "tier": "**censored**"
+    },
+    "j5_mixed": {
+      "v1": 0.0,
+      "v2": 0.0,
+      "v3": 0.0,
+      "text": 0.0,
+      "censored": true,
+      "tier": "**censored**"
+    }
+  },
+  "smoke": true,
+  "verdict": "FAIL"
+}
