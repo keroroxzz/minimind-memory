@@ -2891,9 +2891,10 @@ p1..pj 得到合成置換 `P_j`，而 `st0 ∘ P_j = st_j`。
 > **在此封閉型、schema-matched 的 all-placeholder 配置中，
 > exploratory 證據顯示記憶可承載 checkpoint；mixed 配置造成可重現的落差。**
 
-⚠️ **不可寫成「不能在 mixed 配置下」——太絕對**（Codex）。
-正確的說法是「**目前未對 mixed 配置轉移**」：`oracle_mem_mixed` 的 **85%** 表明
-不是完全不能，只是**誤差會隨多次交付累積**（K=8 兩次 59%、K=12 三次 20%）。
+⚠️ **本節的歸因已被 §4.45 取代。** 當時寫的「mixed 配置不轉移」是不足的 ——
+G5c 證明 **mixed 配置本身完全不掉分**（identity roundtrip d=0..4 全 100%）。
+正確的說法是：**mixed carrier 在「交付之後的合成」中有額外懲罰**，
+而主要機制是**交付 × 其後合成的交互**，不是配置本身、也不是交付保真度。
 
 這與 §4.30 的 span shift、§4.34 的 3-token stress 形狀相近，
 但**現在還不能稱為「同一個共同根因」**：那兩者與 mixed-carrier 都支持

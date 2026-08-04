@@ -1,0 +1,92 @@
+{
+  "train_cells": [
+    [
+      0,
+      "allph"
+    ],
+    [
+      0,
+      "mixed"
+    ],
+    [
+      1,
+      "allph"
+    ],
+    [
+      1,
+      "mixed"
+    ],
+    [
+      2,
+      "allph"
+    ]
+  ],
+  "held_out": [
+    [
+      2,
+      "mixed"
+    ],
+    [
+      3,
+      "allph"
+    ],
+    [
+      3,
+      "mixed"
+    ]
+  ],
+  "steps": 400,
+  "lr": 0.0003,
+  "seed": 606060,
+  "acc": {
+    "j0_allph": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "text": 1.0,
+      "held_out": false
+    },
+    "j0_mixed": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "text": 1.0,
+      "held_out": false
+    },
+    "j1_allph": {
+      "v1": 1.0,
+      "v2": 1.0,
+      "text": 1.0,
+      "held_out": false
+    },
+    "j1_mixed": {
+      "v1": 0.9,
+      "v2": 1.0,
+      "text": 1.0,
+      "held_out": false
+    },
+    "j2_allph": {
+      "v1": 0.975,
+      "v2": 1.0,
+      "text": 1.0,
+      "held_out": false
+    },
+    "j2_mixed": {
+      "v1": 0.875,
+      "v2": 0.975,
+      "text": 1.0,
+      "held_out": true
+    },
+    "j3_allph": {
+      "v1": 0.95,
+      "v2": 0.875,
+      "text": 1.0,
+      "held_out": true
+    },
+    "j3_mixed": {
+      "v1": 0.55,
+      "v2": 0.75,
+      "text": 1.0,
+      "held_out": true
+    }
+  },
+  "smoke": true
+}
