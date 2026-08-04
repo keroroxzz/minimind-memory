@@ -2108,3 +2108,35 @@ absolute override 等於丟棄該位置原本的計算；residual 只是修正�
 `ctxabs` 若也過 → delta 也非必要，那 2×2 就只剩「`static-full` 為何失敗」
 需要另尋解釋（可能是它把 native 完全覆蓋掉）。
 `ctxabs` 若敗 → **residual 是唯一的必要因子**，結論很乾淨。
+
+## [84] 三點全收；exact-matched `zabs` 已排隊
+
+**「online context 不必要」我又說寬了。** `K_native/V_native` 本身就是由當下
+context 與 placeholder hidden **線上算出來的基底**。已改成你的措辭：
+
+> correction **不需要顯式 context 輸入**；但 delivery **仍依賴 contextual 的
+> native scaffold** —— runtime 仍須配置 carrier 位置、跑 native 前向、
+> 在正確 loop/layer 加 delta，**不是憑離線 KV 直接插入**。
+
+**參數不匹配也標了**：`static-full` 6.32M/16-head vs `zdelta` 1.13M，
+架構與參數同時不同，**不能把 residual 寫成唯一必要因子**。
+已排 **exact-matched `zabs`**（與 `zdelta` 同架構同寬度，只把
+`native+f(z)` 改成 `f(z)`）。在它跑完前，residual 只記為
+**「目前唯一跨 k 通過、且最省參數的工程選擇」，不稱定理**。
+
+**成本模型改成兩段：**
+
+| 段 | 何時算 |
+|---|---|
+| `f(z)` | 可在 retrieve 後**離線／提前** |
+| carrier 位置的 **native K/V 前向** + 逐位置加法 | **必須線上** |
+
+比 3B 原說法寬鬆，但**仍不同於舊 prefix static-KV 的完全預填充** —— scaffold 要跑。
+
+**一個實作上的不對稱請你確認**：你說 `zabs` 用「同 zdelta head/init protocol」，
+但 `zdelta` 的 head 是**零初始化**（residual 設計的一部分），
+而純 absolute 零初始化會**恆輸出零**。所以 `zabs` 只能用 std=0.02
+（與 `ctxabs` 相同）。**架構與參數完全相同，唯一差異是 absolute 所必需的初始化。**
+我會把這點明記；若你認為該用別的匹配方式，說一聲。
+
+佇列：`ctxabs`（跑中）→ `zabs`。

@@ -58,12 +58,13 @@ def make_delivery(kind, n_slots_layers, num_loops, art_path):
     if kind == "slots":
         return LatentSlotsDelivery(LatentSlotAdapter(BACKBONE["hidden_size"])).to(DEVICE)
     art = json.load(open(art_path))["native_kv_rms"]
-    if kind in ("contextual", "zdelta", "ctxabs"):
+    if kind in ("contextual", "zdelta", "ctxabs", "zabs"):
         ad = ContextualKVAdapter(
             n_slots_layers * num_loops, BACKBONE["num_key_value_heads"],
             BACKBONE["hidden_size"] // BACKBONE["num_attention_heads"],
-            use_context=(kind != "zdelta"), residual=(kind != "ctxabs")).to(DEVICE)
-        if kind == "ctxabs":     # absolute 不能零初始化，否則輸出恆為零
+            use_context=kind in ("contextual", "ctxabs"),
+            residual=kind in ("contextual", "zdelta")).to(DEVICE)
+        if kind in ("ctxabs", "zabs"):   # absolute 不能零初始化，否則輸出恆為零
             for h in ad.heads:
                 torch.nn.init.normal_(h.weight, std=0.02); torch.nn.init.zeros_(h.bias)
         return ad
@@ -107,7 +108,7 @@ def deliver(delivery, kind, model, latents, mask, ids=None, pos=None):
 
     `inline` 需要 `ids`（該批的 token 序列）與 `pos`（value span 的位置，k×5）。
     """
-    if kind in ("contextual", "zdelta", "ctxabs"):
+    if kind in ("contextual", "zdelta", "ctxabs", "zabs"):
         # kv_override 傳「可呼叫物」——合成器要看得到該層在該位置算出的 native K/V。
         # model 會逐 (loop,layer) 呼叫，slot 由 closure 遞增。
         box = {"i": 0}
@@ -174,7 +175,7 @@ def evaluate(model, tok, samples, render, num_loops, throttle=1.0, max_per_k=100
         if delivery is not None:
             lat = R.resolve_chain(s).unsqueeze(0).to(DEVICE)
             ids_, pos_ = None, None
-            if kind in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs"):
+            if kind in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs", "zabs"):
                 from g1_oracle_inline import value_positions
                 a_, b_, pos_ = value_positions(tok, s)
                 ids_ = b_.unsqueeze(0).to(DEVICE); pos_ = pos_.to(DEVICE)
@@ -193,7 +194,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", default="L0", choices=["L0", "G1a", "G1b"])
     ap.add_argument("--delivery", default="slots",
-                    choices=["slots", "kv", "inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs"])
+                    choices=["slots", "kv", "inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs", "zabs"])
     ap.add_argument("--adapter-from", default=None,
                     help="從既有 checkpoint 載入 adapter（2b 微調用）")
     ap.add_argument("--smoke", action="store_true", help="小規模，只驗 pipeline 學得動")
@@ -287,7 +288,7 @@ def main():
     lat_by_k = {k: torch.stack([R.resolve_chain(tr[i]) for i in idx]) for k, idx in by_k.items()} \
         if not is_l0 else {}
     pos_by_k = {}
-    if not is_l0 and a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs"):
+    if not is_l0 and a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs", "zabs"):
         from g1_oracle_inline import value_positions
         for k, idx in by_k.items():                   # 同 k 的結構相同 → 位置相同
             pos_by_k[k] = value_positions(tok, tr[idx[0]])[2].to(DEVICE)
@@ -329,8 +330,8 @@ def main():
             with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=DEVICE == "cuda"):
                 if not is_l0:
                     kw, plen = deliver(delivery, a.delivery, model, lat, mask,
-                                       ids=x if a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs") else None,
-                                       pos=pos_k if a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs") else None)
+                                       ids=x if a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs", "zabs") else None,
+                                       pos=pos_k if a.delivery in ("inline", "moveonly", "staticfull", "contextual", "zdelta", "ctxabs", "zabs") else None)
                 logits = model(x, **kw).logits
                 if not is_l0:
                     logits = logits[:, plen:] if a.delivery == "slots" else logits

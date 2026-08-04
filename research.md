@@ -1588,12 +1588,28 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
 | **z-only** | `static-full` 6.32M → **37.2%** ❌ | **`zdelta` 1.13M → 99.0%** ✅ |
 | **contextual** | `ctxabs` 跑中 | `contextual` 1.13M → **100%** ✅ |
 
-**`zdelta` 通過（99.0%，k=1~3 全 100%、k=4 96%）→ online context 並非必要。**
-決定性的因子是 **residual/delta**，不是 context。
+**`zdelta` 通過（99.0%，k=1~3 全 100%、k=4 96%）。**
+
+⚠️ **不可寫成「online context 不必要」（Codex）。**
+`K_native/V_native` **本身就是由當下 context 與該 placeholder hidden 線上算出來的基底**。
+精確的說法是：
+
+> **correction 不需要顯式的 context 輸入；但 delivery 仍依賴 contextual 的 native scaffold。**
+
+runtime 仍須配置 carrier 位置、跑它們的 native 前向、
+並在正確的 loop/layer 加上 delta —— **不是憑離線 KV 直接插入**。
 
 ⚠️ **我從 3B 推論「合成器必須看得到該層當下狀態」是錯的**，已撤回。
-兩個 residual 條件都過（99.0% / 100%），兩個 absolute 條件裡已知的那個
-（`static-full`，且參數多 5.6 倍）失敗。
+
+⚠️ **但這個表還不是參數匹配的 2×2（Codex）**：
+`static-full` 是 6.32M/16-head，`zdelta` 是 1.13M ——
+**架構與參數同時不同**。它強烈支持「保留 native base 是好設計」，
+但**不能把 residual 寫成唯一必要因子**。
+
+要能講「必要」，需要 exact-matched 的 **`zabs`**
+（與 `zdelta` 同架構同寬度，只把 `native + f(z)` 改成 `f(z)`）。
+**已排入佇列。** 在它跑完之前，residual 只記為
+**「目前唯一跨 k 通過、且最省參數的工程選擇」，不稱定理。**
 
 **成本面的好消息**：contextual 版只要 1.13M（core 的 3.9%），
 且 core 完全不動 —— 這正是「可獨立擴容、可抽換」所需要的形狀。
@@ -1608,9 +1624,15 @@ replication**（正式 val 100%、n=100/k、驗收條件事前登記）。
   K' = K_native + f(z)        f 只依賴 latent
   ```
 
-  **`f(z)` 完全可以離線預先算好**，前向時只需要一次加法。
-  先前我寫「修正計算必須與 core forward 交錯」——
-  在 z-only 版本下**連那個都不必**，只有加法要在對的位置發生。
+  成本因此分成兩段（Codex）：
+
+  | 段 | 何時算 |
+  |---|---|
+  | `f(z)` | **可在 retrieve 之後離線／提前算** |
+  | carrier 位置的 **native K/V 前向** + 逐位置加法 | **必須線上** |
+
+  這比 3B 的原說法寬鬆，但**仍不同於舊 prefix static-KV 的完全預填充模式** ——
+  native scaffold 還是要跑。
 
 ---
 
