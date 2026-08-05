@@ -3312,6 +3312,100 @@ error-correcting restore 保留為後續的 schema branch。
 
 ---
 
+## 4.50 S₅ 封板，轉入橋接任務（2026-08-05 雙方定案）
+
+### 使用者的目標（這是終點，不是推測）
+
+> 一個**自然語言系統**：在使用者聊天時**自動記住事實**，
+> 並在**下次對話或推理時取出來使用**。
+> 且**不要傳統 RAG**（取出文字塞入 context）—— 那是 context engineering，
+> 不是研究記憶如何與推理融合。
+
+### 為什麼 S₅ 已到邊界
+
+不是因為機制敘事常被推翻，而是**五個結構軸共同把「開放語意記憶」
+投影成 closed algebra plumbing**：
+
+| 性質 | S₅ | 目標系統 |
+|---|---|---|
+| 內容**離散**（120 選 1）| 是 | 否 |
+| **最小無損碼**（零冗餘）| 是 | 否 |
+| **無「相關但不相同」** | 是 | 否，語意鄰近是核心 |
+| 載體位置**模板 oracle 給定** | 是 | 否 |
+| 檢索靠**精確鍵** | 是 | 否 |
+| 「推理」是**單一群運算** | 是 | 否 |
+
+**S₅ 封板作可重現的 KV／契約／分段基準，不再追加修補。**
+
+### transfer matrix：什麼跨任務保留、什麼是 S₅-local
+
+**跨任務保留（是方法，不是數字）：**
+契約與故障演練、`operator range preflight`、paired split、
+oracle ceiling 與 censoring、episode reset、效應分解方法
+（`CVaR10(Δm)`、`P(c|dec)`、paired logit 分解）。
+
+**跨任務保留為假說：** **G7d 的「argmax 可解碼 ≠ 可消費」** ——
+Codex 修正我的評估：它**不是離散特有**，而是更一般的
+**core manifold / consumer interface mismatch**。方法與假說保留，**28 格數字不保留**。
+
+**S₅-local（不得作為自然語言證據）：**
+一切 120 類／25 維 one-hot／exact-key／群代數的具體數值與 PASS/FAIL，
+包含 G1–G7 全部。**G5c 的「交付後合成劣化」列為 S₅-local 的待驗預測** ——
+群乘法的結果**不宣稱**已證明自然推理融合。G2c 的 exact-key open-set FAIL
+與 writer 的 120 類泛化同樣 S₅-local。
+
+**中間結論**（KV 注入 plumbing、state separation 假說、`Δm`/CVaR 指標）
+在橋接任務**各做一次 targeted replication**；舊結果保留原章節，**不回寫**。
+
+### 換任務等於換 core —— 這是最大的實務障礙
+
+現在的 frozen core 只在 `| x=… | … 求x=` 上訓練過。G4b 的 oracle 天花板
+**一度掉到 0.0%**，只因為我在 prompt 前後加了東西。所以橋接任務**必然要重訓 core**，
+而後果比換任務本身更大：`L0` 天花板要重量、`num_loops` 要重選、
+`zdelta`/writer/retriever 權重**全部作廢**。
+
+**新 core 的規格（事前鎖定）：**
+
+- **core 格式是一級變因**：同一語法、同一答案**同時**有 `L0` 顯式值 render
+  與 oracle memory carrier render，**train/val/test 都要涵蓋兩種**，
+  避免重演 G4b 式的 OOD ceiling。
+- 先用**最大固定 loop budget** 做 `L0` depth sweep，
+  `num_loops` 依**只看 `L0`** 的預先登記規則選，**不沿用 S₅ 的 2 或 $k^*{=}4.83$**。
+- **載體位置第一版仍用模板／oracle binding**，但**隨機化合法 slot 與位置**並在資料中明列。
+  「模型自己決定放哪」另立後續軸 ——
+  **不可在第一版同時改 core、schema、retrieval 與 write policy**。
+- **訓練前必做三個 gate**：(i) `L0` 顯式答案天花板與 loop ceiling；
+  (ii) oracle latent 在 `j=0` 的 **consumer ceiling**；
+  (iii) oracle latent 在 `j=1`（最多 `j=2`）的 **fusion ceiling**。
+  任何 `text`/`L0` < 95% 的格子 **censor**，
+  **不把「新 core 看不懂語法」誤判成 memory FAIL**。
+
+### 第一個橋接實驗：最小 composite
+
+我提議「連續內容 ＋ 多步融合」，**Codex 否決** ——
+那是**兩個大題疊加**，會重演混淆。定案是：
+
+> **連續內容 schema ＋ 最小可驗的 `j=0 → j=1`（必要時 `j=2`）融合探針。**
+> 固定 oracle binding，**不開** semantic retrieval、**不開** open-set。
+
+它直接回答**「非文字 latent 能否被新 core 消費、並參與下一步推理」**，
+且保留逐步 ceiling 與 paired logit 診斷。
+
+**判讀事前鎖定**：若 oracle latent 在 `j=0` 就敗 → 先修 core/adapter；
+**`j=0` 過、`j=1` 敗，才有資格談真正的融合介面**。
+
+### 完整 ladder（不可跳階）
+
+**連續碼／消費與一小步融合 → 描述檢索 → 近鄰/衝突 → 更長多步融合。**
+
+### ③ state separation 的定位
+
+**抽象 plumbing/spec 現在可寫，但不在 S₅ 上跑正式版** ——
+在 S₅ 上做出的 state-separation 結果也只能列 S₅-local。
+實作目標是**橋接任務的新 core**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
