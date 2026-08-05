@@ -3231,6 +3231,87 @@ primary 必須**直接改變可外推性**，而非換 loss。方向例如：
 
 ---
 
+## 4.49 G7 分支總結：**資訊可解碼 ≠ core 可消費**
+
+### G7a/G7b：疊加假說 —— 相關成立，因果未識別
+
+事前鎖定的相關性證偽**通過**（`j=3 mixed` 的 Spearman ρ = **−0.542**，
+過 −0.30 門檻，三個預測方向全符合；`cos(K′,K_dot)=0.695`、`‖f(z)‖/‖K_nat‖=1.09`）。
+
+但劑量反應**推翻強因果**：不是單調而是**倒 U**，兩個 arm 都在訓練值 `s=1.0` 達峰，
+而**負控制的斜率（+2.630）比因果臂（+0.095）還大**，`key_orth` 在 s=1 塌到 1.7%。
+倒 U 是「動了一個已擬合的參數」的簽名，不是「改變了機制」。
+
+**正式封存為：`mixed` 的額外懲罰與 key/carrier 相關，但因果未識別；
+`allph` 的基礎劣化未解釋。** 這是實作代理的第五個機制假說 ——
+通過相關證偽、未通過因果證偽。
+
+### G7c：**INVALID**（第三個規格無效）
+
+三種降級運算子全部無法產生「有損但可解碼」的區間：`quant` 對 0/1 矩陣是
+**no-op**；`erase`/`project` 立刻摧毀資訊，因為 **25 維 one-hot 是置換矩陣的
+最小無損編碼、沒有任何冗餘**。是 fidelity 欄抓出來的。
+
+**觸發的流程修正**：此後正式跑之前**必做 `operator range preflight`**，
+任何 `fidelity=100% no-op` 或 `≈0%` **自動停**，不再靠 smoke 才發現。
+
+### G7d：**消費失敗 28 格、schema 容量失敗 0 格**
+
+雜訊 ladder（σ 只由獨立 calibration stream 以固定二分法決定並鎖定，
+測試用全新 episodes 與全新 noise draws）：
+
+| cell | P(lat 解碼) | P(全解碼) | **P(correct \| 全解碼)** | text | gap |
+|---|---|---|---|---|---|
+| `allph t=99% j=0` | 96.0% | 96.0% | **79.2%** | 100% | **+20.8pp** |
+| `allph t=99% j=3` | 95.8% | 84.0% | 20.2% | 100% | +79.8pp |
+
+**關鍵在 `j=0`（純讀出、零合成）**：即使只看**每一條 latent 都完美解碼**的 episode，
+準確率也只有 **79.2%**，文字組 **100%**。σ=0.2375（cos 保留 0.887）就掉 **21pp**。
+
+> **資訊可解碼 ≠ core 可消費。**
+> `argmax-decodable` 只證明**離散碼字**仍可辨認，
+> **不代表帶噪的連續 latent 已回到 core 的訓練流形**（Codex）。
+
+### 設計債（措辭已收窄，不寫成普遍定理）
+
+> **若 consumer 只認一個固定的 latent manifold，
+> 任何有損／異質 schema 都必須配一個明確的 decoder、denoiser 或
+> error-correcting restore，才能交給 executor；
+> 不可把 `argmax` 可解碼當作「已可融合」。**
+
+自然語言的開放語意**只讓這個還原問題更重要**，
+**不證明**所有有損表示皆不可能。
+
+因此 error-correcting schema **沒有被排除** —— 修法目標從
+「讓 core **容忍**失真」改成「**在注入前把失真還原成精確／流形內的碼字**」。
+
+### 下一步：③ state separation（規格已定，不等更多 G7d）
+
+第一版明確分離 **memory state** 與 **executor state**：
+memory latent 保持**獨立的 read channel**，由固定 adapter／cross-attention 產生 readout，
+**不得直接把 memory latent 疊入原生 KV**。
+先做 **oracle memory-state → executor adapter 的天花板**，再做 learned adapter；
+core / writer / store / retriever 與 G7d 的 schema **全部凍結**。
+
+**四臂 primary ladder**，且 `j=0`（純消費）與 `j>0`（融合）**分開看**：
+
+| 臂 | 意義 |
+|---|---|
+| `text carry` | 天花板 |
+| `zdelta-KV injection` | 現行做法 |
+| `oracle separate-state` | 通道分離的天花板 |
+| `learned separate-state` | 主條件 |
+
+判讀事前鎖定：**若 `oracle separate-state` 在 `j=0` 也掉**，
+問題就不只是 KV 疊加，而是 **adapter／schema 語意**；
+**若 oracle 過、learned 敗**，那才是新的 adapter 學習問題。
+
+**兩條線分開記錄**：③ 解決 memory/executor 通道；
+error-correcting restore 保留為後續的 schema branch。
+**不用一個架構結果替代另一個問題。**
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
