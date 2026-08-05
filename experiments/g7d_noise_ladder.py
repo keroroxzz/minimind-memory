@@ -100,11 +100,19 @@ def cell(m, tok, dl, perms, sigma, j, cfg, n, seed):
     rng = random.Random(seed + j)
     g = torch.Generator().manual_seed(seed + 7919*j)      # FRESH noise draws
     dms, flips, acc, fid, tex_ok, cosv = [], 0, 0, 0, 0, 0.0
+    # **逐 episode 配對**：聚合 fidelity 不是乾淨的條件變數 —— allph 每題交付
+    # 更多 latent，任一條誤解碼就整題算失敗，所以兩個 config 的聚合值不可比。
+    # 要回答「消費 vs 資訊」必須看 accuracy | latent decodable。
+    paired = []
+    lat_ok = lat_n = 0                      # 逐 latent（非逐 episode）的解碼率
     for _ in range(n):
         slots, deliv, gold = G6A.make_item(rng, perms, j, cfg)
         raw = torch.stack([perm_to_latent(v) for v in deliv])
         z = noisy(raw, sigma, g)
-        fid += int(all(latent_to_perm(z[i]) == list(deliv[i]) for i in range(len(deliv))))
+        # decodable predicate 事前固定為 **argmax 完全相符**（不要求 margin）
+        per = [latent_to_perm(z[i]) == list(deliv[i]) for i in range(len(deliv))]
+        dec = all(per)
+        fid += int(dec); lat_ok += sum(per); lat_n += len(per)
         cosv += torch.nn.functional.cosine_similarity(
             raw.flatten(), z.flatten(), dim=0).item()
 
@@ -134,11 +142,20 @@ def cell(m, tok, dl, perms, sigma, j, cfg, n, seed):
         dms.append(min(md[i] - mt[i] for i in range(k)))
         flips += int(any(md[i] < 0 for i in range(k)))
         tex_ok += int(min(mt[:k]) > 0)
-        acc += int(G5B.call_core(m, tok, IDENT, slots, dl, lat) == gold)
+        ok = int(G5B.call_core(m, tok, IDENT, slots, dl, lat) == gold)
+        acc += ok
+        paired.append((dec, ok))
     srt = sorted(dms); k10 = max(1, len(srt)//10)
+    dd = [o for d, o in paired if d]          # latent 確實可解碼的子集
+    nd = [o for d, o in paired if not d]
     return {"cvar10_dm": sum(srt[:k10])/k10, "p_flip": flips/len(dms),
             "accuracy": acc/len(dms), "schema_fidelity": fid/len(dms),
-            "cos": cosv/len(dms), "text_ceiling": tex_ok/len(dms), "n": len(dms)}
+            "cos": cosv/len(dms), "text_ceiling": tex_ok/len(dms), "n": len(dms),
+            "P_latent_decoded": lat_ok/max(lat_n, 1),
+            "P_all_required_decoded": fid/len(dms),
+            "P_correct": acc/len(dms),
+            "acc_given_decodable": (sum(dd)/len(dd)) if dd else None, "n_decodable": len(dd),
+            "acc_given_corrupt": (sum(nd)/len(nd)) if nd else None, "n_corrupt": len(nd)}
 
 
 def main():
@@ -171,18 +188,47 @@ def main():
                 c = cell(m, tok, dl, perms, s, j, cfg, N, SEED)
                 out[f"{cfg}|t{t}|j{j}"] = c
                 row.append(c); fid, cs = c["schema_fidelity"], c["cos"]
-            cells = " ".join(f"{c['accuracy']:6.1%}/{c['cvar10_dm']:8.2f}" for c in row)
+            cells = " ".join(
+                (f"{c['acc_given_decodable']:6.1%}" if c['acc_given_decodable'] is not None
+                 else "   n/a") + f"/{c['accuracy']:5.1%}" for c in row)
             cens = any(c["text_ceiling"] < .95 for c in row)
             print(f"  {t:>7.0%} {s:>7.4f} {cells} {fid:>9.1%} {cs:>6.3f}"
                   + ("  **censored**" if cens else ""))
         print()
 
-    print(f"  cells are  accuracy / CVaR10(dm)\n")
+    print(f"  cells are  **P(correct | all-required-decoded)** / P(correct)\n")
+    print(f"  {'cell':<18s} {'P(lat)':>8s} {'P(all)':>8s} {'P(corr)':>8s} "
+          f"{'P(c|dec)':>9s} {'P(c|not)':>9s} {'text':>6s} {'gap':>8s}")
+    for kk in sorted(out):
+        v = out[kk]; cd = v["acc_given_decodable"]
+        gap = (v["text_ceiling"] - cd) if cd is not None else None
+        print(f"  {kk:<18s} {v['P_latent_decoded']:>8.1%} "
+              f"{v['P_all_required_decoded']:>8.1%} {v['P_correct']:>8.1%} "
+              + (f"{cd:>9.1%}" if cd is not None else f"{'n/a':>9s}") + " "
+              + (f"{v['acc_given_corrupt']:>9.1%}" if v['acc_given_corrupt'] is not None
+                 else f"{'n/a':>9s}")
+              + f" {v['text_ceiling']:>6.1%} "
+              + (f"{gap*100:>+7.1f}pp" if gap is not None else f"{'n/a':>8s}"))
+    print()
+    # 條件版判讀：在 latent 確實可解碼的子集裡仍然掉，才是消費失敗
+    # 事前鎖定的分支判讀（Codex [126]）：
+    #   P(correct | all-required-decoded) 仍比同格 text ceiling 差 >5pp → 消費/融合失敗
+    #   條件準確率追平、總體掉分由 decodability 解釋        → schema 資訊容量失敗
     fusion = [k for k, v in out.items()
-              if v["schema_fidelity"] >= 0.999 and v["accuracy"] < 0.90]
-    schema = [k for k, v in out.items() if v["schema_fidelity"] < 0.999]
-    print(f"  **fusion effect** (fidelity 100%, accuracy <90%): {len(fusion)} cells")
-    print(f"  **schema capacity effect** (fidelity itself down): {len(schema)} cells")
+              if v.get("acc_given_decodable") is not None and v["n_decodable"] >= 20
+              and (v["text_ceiling"] - v["acc_given_decodable"]) > 0.05]
+    schema = [k for k, v in out.items()
+              if v.get("acc_given_decodable") is not None and v["n_decodable"] >= 20
+              and (v["text_ceiling"] - v["acc_given_decodable"]) <= 0.05
+              and v["schema_fidelity"] < 0.999]
+    print(f"  **consumption / fusion failure** (P(c|dec) below text ceiling by >5pp): "
+          f"{len(fusion)} cells")
+    print(f"  **schema information-capacity failure** (conditional catches up): "
+          f"{len(schema)} cells")
+    print(f"\n  neither generalises to a theorem about *all* lossy schemas.")
+    print(f"  stage (3) already has INDEPENDENT opening evidence: sigma=0, allph, j=3")
+    print(f"  is 86% with no noise at all -- this analysis DECOMPOSES lossless-fusion")
+    print(f"  from lossy-capacity; it is not the gate for (3).")
     print(f"\n  caveat, pre-locked: the latent is one-hot, so a low-fidelity cell is"
           f"\n  **code corruption stress**, not natural semantic compression.")
     json.dump({"prereg": PRE, "preflight": lad, "cells": out,
