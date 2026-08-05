@@ -1,0 +1,27 @@
+{
+  "arch": {
+    "hidden_size": 512,
+    "num_hidden_layers": 8,
+    "num_attention_heads": 8,
+    "num_key_value_heads": 2,
+    "max_seq_len": 256,
+    "use_looped_transformer": true,
+    "num_loops": 4,
+    "loop_lora_rank": 8,
+    "use_engram": false,
+    "use_dense_attention": false,
+    "use_recurrence": false,
+    "use_latent_attention": false,
+    "use_moe": false
+  },
+  "steps": 60,
+  "lr": 0.0006,
+  "bs": 16,
+  "js": [
+    0,
+    1,
+    2
+  ],
+  "seed": 20260805,
+  "params_M": 29.369856
+}
