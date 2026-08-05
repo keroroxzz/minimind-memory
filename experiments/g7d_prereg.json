@@ -1,0 +1,31 @@
+{
+  "milestone": "G7d — bounded noise ladder: can a frozen core consume a lossy-but-DECODABLE latent?",
+  "supersedes": "G7c is INVALID (operators could not produce a lossy-but-decodable regime). This is a NEW spec with a new artifact; the G7c run is NOT renamed or re-reported.",
+
+  "process_fix_triggered_by_three_invalids": "An `operator range preflight` now runs BEFORE any formal run: per sigma it reports decode fidelity, continuous distortion, shape and non-degenerate sample count. Any sigma whose fidelity is a 100% no-op, or ~0%, AUTO-STOPS the run. We no longer rely on a smoke run to catch this.",
+
+  "sigma_selection": {
+    "rule": "sigma is chosen ONLY on an independent calibration stream that is never used for results, by a fixed bisection on decode top-1 fidelity. sigma and the noise-seed protocol are then LOCKED. The test uses fresh episodes AND fresh noise draws.",
+    "fidelity_targets": [1.0, 0.99, 0.95, 0.90],
+    "forbidden": "picking sigma by looking at task accuracy or dm"
+  },
+
+  "why_fidelity_targets_are_not_automatically_unbiased": "A fidelity target defines argmax decodability only; it can ignore margin and geometric direction (Codex). Therefore every cell ALSO reports continuous cosine and L2 distortion, and a fixed sigma=0 oracle row is kept.",
+
+  "honesty_caveat": "The latent is one-hot. If the 90%-fidelity cell is essentially random misplacement of a code word, this is CODE CORRUPTION STRESS and must not be presented as natural semantic compression.",
+
+  "reading_rules": {
+    "fusion_effect": "fidelity 100% but accuracy / dm tail degrades -> the backbone cannot consume a lossy-but-sufficient latent (this is the question)",
+    "schema_capacity_effect": "fidelity itself drops -> information gone; says nothing about consumption"
+  },
+
+  "exit_condition": "If this ladder still has no intermediate decodable region, or the region cannot be defined cleanly, seal branch (1) immediately and proceed to (3) state separation. Stage (3) may be DRAFTED in parallel but its formal experiment waits for G7d -- otherwise we cannot tell whether state separation fixes fusion or merely bypasses untested schema capacity.",
+
+  "no_training": true,
+  "j_values": [0, 1, 2, 3],
+  "configs": ["allph", "mixed"],
+  "n_calibration": 300,
+  "n_per_cell": 100,
+  "seed_calibration": 191919,
+  "seed_test": 828282
+}
