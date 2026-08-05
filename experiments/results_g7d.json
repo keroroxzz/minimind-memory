@@ -1,0 +1,387 @@
+{
+  "prereg": {
+    "milestone": "G7d — bounded noise ladder: can a frozen core consume a lossy-but-DECODABLE latent?",
+    "supersedes": "G7c is INVALID (operators could not produce a lossy-but-decodable regime). This is a NEW spec with a new artifact; the G7c run is NOT renamed or re-reported.",
+    "process_fix_triggered_by_three_invalids": "An `operator range preflight` now runs BEFORE any formal run: per sigma it reports decode fidelity, continuous distortion, shape and non-degenerate sample count. Any sigma whose fidelity is a 100% no-op, or ~0%, AUTO-STOPS the run. We no longer rely on a smoke run to catch this.",
+    "sigma_selection": {
+      "rule": "sigma is chosen ONLY on an independent calibration stream that is never used for results, by a fixed bisection on decode top-1 fidelity. sigma and the noise-seed protocol are then LOCKED. The test uses fresh episodes AND fresh noise draws.",
+      "fidelity_targets": [
+        1.0,
+        0.99,
+        0.95,
+        0.9
+      ],
+      "forbidden": "picking sigma by looking at task accuracy or dm"
+    },
+    "why_fidelity_targets_are_not_automatically_unbiased": "A fidelity target defines argmax decodability only; it can ignore margin and geometric direction (Codex). Therefore every cell ALSO reports continuous cosine and L2 distortion, and a fixed sigma=0 oracle row is kept.",
+    "honesty_caveat": "The latent is one-hot. If the 90%-fidelity cell is essentially random misplacement of a code word, this is CODE CORRUPTION STRESS and must not be presented as natural semantic compression.",
+    "reading_rules": {
+      "fusion_effect": "fidelity 100% but accuracy / dm tail degrades -> the backbone cannot consume a lossy-but-sufficient latent (this is the question)",
+      "schema_capacity_effect": "fidelity itself drops -> information gone; says nothing about consumption"
+    },
+    "exit_condition": "If this ladder still has no intermediate decodable region, or the region cannot be defined cleanly, seal branch (1) immediately and proceed to (3) state separation. Stage (3) may be DRAFTED in parallel but its formal experiment waits for G7d -- otherwise we cannot tell whether state separation fixes fusion or merely bypasses untested schema capacity.",
+    "no_training": true,
+    "j_values": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "configs": [
+      "allph",
+      "mixed"
+    ],
+    "n_calibration": 300,
+    "n_per_cell": 100,
+    "seed_calibration": 191919,
+    "seed_test": 828282
+  },
+  "preflight": {
+    "1.0": {
+      "sigma": 0.0,
+      "fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "l2": 0.0
+    },
+    "0.99": {
+      "sigma": 0.23749689012765884,
+      "fidelity": 0.9933333333333333,
+      "cos": 0.8870325690507889,
+      "l2": 1.1728009390830993
+    },
+    "0.95": {
+      "sigma": 0.2619512304663658,
+      "fidelity": 0.95,
+      "cos": 0.8670518402258555,
+      "l2": 1.293560801744461
+    },
+    "0.9": {
+      "sigma": 0.2953048571944237,
+      "fidelity": 0.9,
+      "cos": 0.8389955276250839,
+      "l2": 1.4582668135563532
+    }
+  },
+  "cells": {
+    "allph|t1.0|j0": {
+      "cvar10_dm": -8.404776191711425,
+      "p_flip": 0.0,
+      "accuracy": 1.0,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t1.0|j1": {
+      "cvar10_dm": -10.870165348052979,
+      "p_flip": 0.01,
+      "accuracy": 0.99,
+      "schema_fidelity": 1.0,
+      "cos": 1.000000025033951,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t1.0|j2": {
+      "cvar10_dm": -13.730966997146606,
+      "p_flip": 0.03,
+      "accuracy": 0.97,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t1.0|j3": {
+      "cvar10_dm": -18.10695505142212,
+      "p_flip": 0.14,
+      "accuracy": 0.86,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999421834945,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.99|j0": {
+      "cvar10_dm": -23.057357692718504,
+      "p_flip": 0.22,
+      "accuracy": 0.78,
+      "schema_fidelity": 0.96,
+      "cos": 0.8816707521677017,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.99|j1": {
+      "cvar10_dm": -21.735785675048827,
+      "p_flip": 0.33,
+      "accuracy": 0.67,
+      "schema_fidelity": 0.98,
+      "cos": 0.8840595245361328,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.99|j2": {
+      "cvar10_dm": -27.00059916973114,
+      "p_flip": 0.59,
+      "accuracy": 0.41,
+      "schema_fidelity": 0.92,
+      "cos": 0.8860379981994629,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.99|j3": {
+      "cvar10_dm": -26.906185722351076,
+      "p_flip": 0.81,
+      "accuracy": 0.19,
+      "schema_fidelity": 0.84,
+      "cos": 0.8819239783287048,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.95|j0": {
+      "cvar10_dm": -24.807081842422484,
+      "p_flip": 0.3,
+      "accuracy": 0.7,
+      "schema_fidelity": 0.93,
+      "cos": 0.860790627002716,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.95|j1": {
+      "cvar10_dm": -22.78950309753418,
+      "p_flip": 0.43,
+      "accuracy": 0.57,
+      "schema_fidelity": 0.86,
+      "cos": 0.8637149399518966,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.95|j2": {
+      "cvar10_dm": -28.9042019367218,
+      "p_flip": 0.75,
+      "accuracy": 0.25,
+      "schema_fidelity": 0.8,
+      "cos": 0.8661873811483383,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.95|j3": {
+      "cvar10_dm": -27.943671345710754,
+      "p_flip": 0.87,
+      "accuracy": 0.13,
+      "schema_fidelity": 0.72,
+      "cos": 0.8613595926761627,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.9|j0": {
+      "cvar10_dm": -26.575415897369385,
+      "p_flip": 0.38,
+      "accuracy": 0.62,
+      "schema_fidelity": 0.85,
+      "cos": 0.8315046519041062,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.9|j1": {
+      "cvar10_dm": -23.630817127227782,
+      "p_flip": 0.56,
+      "accuracy": 0.44,
+      "schema_fidelity": 0.77,
+      "cos": 0.8352161824703217,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.9|j2": {
+      "cvar10_dm": -30.32266232967377,
+      "p_flip": 0.84,
+      "accuracy": 0.16,
+      "schema_fidelity": 0.65,
+      "cos": 0.838412926197052,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "allph|t0.9|j3": {
+      "cvar10_dm": -29.048417818546294,
+      "p_flip": 0.94,
+      "accuracy": 0.06,
+      "schema_fidelity": 0.52,
+      "cos": 0.8326166999340058,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t1.0|j0": {
+      "cvar10_dm": -8.404776191711425,
+      "p_flip": 0.0,
+      "accuracy": 1.0,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t1.0|j1": {
+      "cvar10_dm": -18.671246910095213,
+      "p_flip": 0.12,
+      "accuracy": 0.88,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t1.0|j2": {
+      "cvar10_dm": -22.394346952438354,
+      "p_flip": 0.24,
+      "accuracy": 0.76,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t1.0|j3": {
+      "cvar10_dm": -26.803685116767884,
+      "p_flip": 0.44,
+      "accuracy": 0.56,
+      "schema_fidelity": 1.0,
+      "cos": 0.9999999403953552,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.99|j0": {
+      "cvar10_dm": -23.057357692718504,
+      "p_flip": 0.22,
+      "accuracy": 0.78,
+      "schema_fidelity": 0.96,
+      "cos": 0.8816707521677017,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.99|j1": {
+      "cvar10_dm": -23.74531273841858,
+      "p_flip": 0.36,
+      "accuracy": 0.64,
+      "schema_fidelity": 0.99,
+      "cos": 0.879939296245575,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.99|j2": {
+      "cvar10_dm": -27.22262692451477,
+      "p_flip": 0.37,
+      "accuracy": 0.63,
+      "schema_fidelity": 0.92,
+      "cos": 0.8865452063083649,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.99|j3": {
+      "cvar10_dm": -29.104950976371764,
+      "p_flip": 0.61,
+      "accuracy": 0.39,
+      "schema_fidelity": 0.97,
+      "cos": 0.883348958492279,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.95|j0": {
+      "cvar10_dm": -24.807081842422484,
+      "p_flip": 0.3,
+      "accuracy": 0.7,
+      "schema_fidelity": 0.93,
+      "cos": 0.860790627002716,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.95|j1": {
+      "cvar10_dm": -25.040354585647584,
+      "p_flip": 0.43,
+      "accuracy": 0.57,
+      "schema_fidelity": 0.93,
+      "cos": 0.8588198155164719,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.95|j2": {
+      "cvar10_dm": -27.92170226573944,
+      "p_flip": 0.41,
+      "accuracy": 0.59,
+      "schema_fidelity": 0.89,
+      "cos": 0.86639674782753,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.95|j3": {
+      "cvar10_dm": -29.885215330123902,
+      "p_flip": 0.64,
+      "accuracy": 0.36,
+      "schema_fidelity": 0.91,
+      "cos": 0.8627206230163574,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.9|j0": {
+      "cvar10_dm": -26.575415897369385,
+      "p_flip": 0.38,
+      "accuracy": 0.62,
+      "schema_fidelity": 0.85,
+      "cos": 0.8315046519041062,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.9|j1": {
+      "cvar10_dm": -26.315400075912475,
+      "p_flip": 0.53,
+      "accuracy": 0.47,
+      "schema_fidelity": 0.85,
+      "cos": 0.8292537707090378,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.9|j2": {
+      "cvar10_dm": -29.019722151756287,
+      "p_flip": 0.43,
+      "accuracy": 0.57,
+      "schema_fidelity": 0.8,
+      "cos": 0.8380887991189957,
+      "text_ceiling": 1.0,
+      "n": 100
+    },
+    "mixed|t0.9|j3": {
+      "cvar10_dm": -30.844660496711732,
+      "p_flip": 0.68,
+      "accuracy": 0.32,
+      "schema_fidelity": 0.84,
+      "cos": 0.8337828332185745,
+      "text_ceiling": 1.0,
+      "n": 100
+    }
+  },
+  "fusion_cells": [
+    "allph|t1.0|j3",
+    "mixed|t1.0|j1",
+    "mixed|t1.0|j2",
+    "mixed|t1.0|j3"
+  ],
+  "schema_cells": [
+    "allph|t0.99|j0",
+    "allph|t0.99|j1",
+    "allph|t0.99|j2",
+    "allph|t0.99|j3",
+    "allph|t0.95|j0",
+    "allph|t0.95|j1",
+    "allph|t0.95|j2",
+    "allph|t0.95|j3",
+    "allph|t0.9|j0",
+    "allph|t0.9|j1",
+    "allph|t0.9|j2",
+    "allph|t0.9|j3",
+    "mixed|t0.99|j0",
+    "mixed|t0.99|j1",
+    "mixed|t0.99|j2",
+    "mixed|t0.99|j3",
+    "mixed|t0.95|j0",
+    "mixed|t0.95|j1",
+    "mixed|t0.95|j2",
+    "mixed|t0.95|j3",
+    "mixed|t0.9|j0",
+    "mixed|t0.9|j1",
+    "mixed|t0.9|j2",
+    "mixed|t0.9|j3"
+  ]
+}
