@@ -1,0 +1,33 @@
+{
+  "milestone": "G7c — oracle bottleneck ladder: can a frozen core consume a LOSSY latent?",
+  "why": "Every result so far (G1..G6) is built on a 25-dim LOSSLESS, CLOSED S5 schema. Natural-language facts are unbounded, heterogeneous and necessarily lossy. Whether a frozen backbone can consume a lossy representation AT ALL is completely untested and is on the critical path to natural language. This gap is INDEPENDENT of the unresolved composition mechanism (G7a/G7b), so it is not blocked by it.",
+
+  "no_training": "Frozen core, frozen zdelta-v1. Nothing is trained. This is an oracle ladder, not a repair. Retraining delivery on lossy latents is a SEPARATE, later question and must not be tuned using these numbers.",
+
+  "degradations_pre_locked": {
+    "erase": "keep r of the 25 coordinates (fixed random subset, fixed seed), zero the rest",
+    "project": "fixed random orthonormal basis; keep the top r components, reconstruct",
+    "quant": "uniform quantisation of each coordinate to r levels on [0,1]"
+  },
+  "r_values": [25, 16, 8, 4],
+  "j_values": [0, 1, 2, 3],
+  "configs": ["mixed", "allph"],
+
+  "must_report_per_cell": [
+    "text ceiling (censor the cell if the text teacher is below 95%)",
+    "schema fidelity: does latent_to_perm(degraded) still recover the permutation? This separates 'the latent lost the information' from 'the backbone could not consume it'",
+    "CVaR10(dm)",
+    "P(m_text+dm<0)",
+    "accuracy"
+  ],
+
+  "reading_rules": {
+    "consumption_failure": "schema fidelity stays 100% but accuracy/dm tail degrades -> the backbone cannot CONSUME a lossy-but-sufficient latent. This is the interesting failure.",
+    "information_failure": "schema fidelity drops with r -> the information is simply gone; a delivery failure there says nothing about consumption.",
+    "for_stage_3": "If the same tail appears even at lossless or mild loss, that justifies state separation. If it only breaks under strong compression, fix schema/interface capacity FIRST and do not treat a structural architecture change as a universal remedy."
+  },
+
+  "axes_kept_separate": "mixed and allph are reported separately throughout; G7a/G7b established that the allph degradation is a different, still-unexplained axis and must not be merged with mixed.",
+  "n_per_cell": 100,
+  "seed": 515151
+}
