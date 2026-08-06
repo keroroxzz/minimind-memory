@@ -8,10 +8,29 @@
 | 內容離散（120 選 1，無序）| **連續純量**（0..99 有序、可分級）|
 | 最小無損碼、零冗餘 | latent 是**實數**，失真是連續的、有意義的 |
 | 無「相關但不相同」 | 34 與 35 **相近**；比較與排序都有定義 |
-| 單一群運算 | **比較 + 鏈式比較**（非交換、非代數封閉）|
+| 單一群運算 | **非交換且非結合的狀態更新**（見下）|
 
 **仍然保留的（這是可證偽性的來源）**：答案由建構決定、可精確驗證、
 天花板可量、可做 paired logit 分解。
+
+### ⚠️ 合成必須非交換**且**非結合 —— 第一版在這裡犯了已記錄過的錯
+
+第一版用「鏈式比較」：`a 與 b 中較大者 與 c 中較大者` **就是 `max(a,b,c)`**。
+`max` **可交換也可結合**，所以那個「鏈」不是鏈 —— 模型可以平行掃描選最大值，
+`j` **根本不是深度軸**。
+
+這與 CLAUDE.md 記錄、S₅ 任務第二版被撤回的原因是**同一個形狀**：
+純加減塌成 `v0 + Σ±r`（TC⁰），因此看不到深度天花板。
+`sum`、`max`、`min`、`xor` 全部有這個問題。
+
+現行的更新是 **`x ← |x − v|`**：
+
+- **非交換**：`|(|x−a|)−b| ≠ |(|x−b|)−a|`
+- **非結合**：絕對值是非線性的，不能重新括號
+- **連續**：值域仍是 0..99 的有序量，鄰近仍有意義
+- **可精確驗證**：整數運算，答案由建構決定
+
+所以 `j` 步真的需要 `j` 次順序相依的計算。
 
 ### 兩種 render 必須並存（Codex 鎖死的一級變因）
 
@@ -48,6 +67,12 @@ LATENT_DIM = 4                 # [值/100, 屬性 one-hot(3)]；**值是連續�
 
 
 def val_str(v):
+    """一律兩位、空格分隔 —— 這個 vocab 對兩位數的切法不一致（CLAUDE.md）。
+
+    `|x-v|` 的結果可能是個位數，補零維持恰好 2 個 token，
+    否則 L0 與 carrier 的 token 對齊會破掉。
+    """
+    v = max(0, min(99, int(v)))
     return f"{v//10} {v%10}"
 
 
@@ -118,29 +143,63 @@ def value_positions(tok, ep, carrier_mask):
     return torch.tensor(a), torch.tensor(pos)
 
 
-def make_episode(rng, j, n_fact=None):
-    """`j=0` 純讀出；`j>=1` 鏈式比較。答案一律由建構決定。"""
+def make_episode(rng, j, n_fact=None, same_name=False):
+    """`j=0` 純讀出；`j>=1` 鏈式比較。答案一律由建構決定。
+
+    `same_name` 控制「同一個實體是否可以有多條記憶」：
+
+    - `False`（**預設，與歷史行為逐字相同**）：`rng.sample(NAMES, n_fact)`，
+      同一題內名字必定互異 —— §4.55 之前所有實驗都是這個分布。
+    - `True`：**保證至少一組同名不同屬性**。
+    - `None`：從 `(name, attr)` 的全集自然抽樣，同名自然發生。
+
+    ⚠️ 這個旗標的存在本身就是一個結論：舊分布下 core 從沒見過
+       「同一個實體的兩條記憶」，所以它可以只靠**名字**匹配 address 而不看屬性。
+       實測同名 distractor 時模型**輸出兩值的平均**（90.5% 落在兩值之間，
+       |pred − 平均| 中位數 2.5）—— 那是 name-only 匹配造成的 value 混合。
+       `(name, attr)` 一律唯一；**同一 exact key 兩個不同值屬於 conflict 軸，不在此**。
+    """
     n_fact = n_fact or rng.randint(2, 4)
-    names = rng.sample(NAMES, n_fact)
-    facts = [(nm, rng.randrange(len(ATTRS)), rng.randint(VMIN, VMAX))
-             for nm in names]
-    # 值互異，避免平手讓答案不唯一
+    if same_name is False:
+        names = rng.sample(NAMES, n_fact)
+        pairs = [(nm, rng.randrange(len(ATTRS))) for nm in names]
+    else:
+        allp = [(nm, ai) for nm in NAMES for ai in range(len(ATTRS))]
+        if same_name is True and n_fact >= 2:
+            nm = NAMES[rng.randrange(len(NAMES))]
+            ats = rng.sample(range(len(ATTRS)), 2)
+            pairs = [(nm, ats[0]), (nm, ats[1])]
+            rest = [p for p in allp if p not in pairs]
+            pairs += rng.sample(rest, n_fact - 2)
+            rng.shuffle(pairs)
+        else:
+            pairs = rng.sample(allp, n_fact)
+    facts = [(nm, ai, rng.randint(VMIN, VMAX)) for nm, ai in pairs]
+    # 值互異：避免平手，也避免 |x-v| 中途歸零讓後續步驟退化
     while len({v for _, _, v in facts}) < n_fact:
         facts = [(nm, ai, rng.randint(VMIN, VMAX)) for nm, ai, _ in facts]
+    assert len({(nm, ai) for nm, ai, _ in facts}) == n_fact, "(name, attr) 必須唯一"
 
     if j == 0:
         i = rng.randrange(n_fact)
         nm, ai, v = facts[i]
         return Episode(facts, f"{nm} {ATTRS[ai]} 是 多少", val_str(v), [i], 0)
 
-    # j 步鏈式比較：每一步把「目前較大的那個」與下一條比
-    idx = rng.sample(range(n_fact), min(j + 1, n_fact))
-    cur = idx[0]
-    q = f"{facts[cur][0]} {ATTRS[facts[cur][1]]}"
+    # j 步 `x ← |x − v|`：**非交換且非結合**，所以順序真的重要。
+    # 起點是第一條 fact 的值，之後每一步差一次。
+    # ⚠️ 相鄰不得重複：`x 差 x` 恆為 0，會產生大量退化題並讓 j 失去意義。
+    #    但允許非相鄰重複（同一個 entity 可以在鏈中出現多次）。
+    idx = [rng.randrange(n_fact)]
+    while len(idx) < j + 1:
+        c = rng.randrange(n_fact)
+        if c != idx[-1]:
+            idx.append(c)
+    cur = facts[idx[0]][2]
+    q = f"{facts[idx[0]][0]} {ATTRS[facts[idx[0]][1]]}"
     for nxt in idx[1:]:
-        q = f"{q} 與 {facts[nxt][0]} {ATTRS[facts[nxt][1]]} 中 較 大 者"
-        cur = cur if facts[cur][2] > facts[nxt][2] else nxt
-    return Episode(facts, f"{q} 是 多少", val_str(facts[cur][2]), idx, len(idx) - 1)
+        q = f"{q} 差 {facts[nxt][0]} {ATTRS[facts[nxt][1]]}"
+        cur = abs(cur - facts[nxt][2])
+    return Episode(facts, f"{q} 是 多少", val_str(cur), sorted(set(idx)), j)
 
 
 def episode_latents(ep, carrier_mask):

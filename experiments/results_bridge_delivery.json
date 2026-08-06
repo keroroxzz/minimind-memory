@@ -1,0 +1,28 @@
+{
+  "core": "bridge_core.pth",
+  "loops": 4,
+  "train_js": [
+    0,
+    1
+  ],
+  "steps": 12000,
+  "delivery_params_M": 2.172416,
+  "seed": 424242,
+  "acc": {
+    "0": {
+      "L0": 1.0,
+      "oracle": 1.0,
+      "learned": 0.135
+    },
+    "1": {
+      "L0": 1.0,
+      "oracle": 1.0,
+      "learned": 0.225
+    },
+    "2": {
+      "L0": 0.945,
+      "oracle": 0.945,
+      "learned": 0.01
+    }
+  }
+}

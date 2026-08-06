@@ -1,0 +1,24 @@
+{
+  "prereg": "BRIDGE_PREREG_capacity.md v4",
+  "n": 1000,
+  "seed": 990601,
+  "gate_n": 8,
+  "latent": [
+    935,
+    1000
+  ],
+  "cp_lower": 0.9206953198807993,
+  "floor": [
+    8,
+    1000
+  ],
+  "vs_orig": [
+    2,
+    1000
+  ],
+  "vs_cf": [
+    919,
+    1000
+  ],
+  "verdict": "**未達門檻 → 依 v4-3，R2a 容量線暫停**"
+}

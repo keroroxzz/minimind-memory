@@ -1,0 +1,146 @@
+{
+  "j0|n2|dup0": {
+    "counts": {
+      "target": 193,
+      "same_name": 0,
+      "other": 0,
+      "third": 7,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      193,
+      200
+    ],
+    "blend": [
+      5,
+      7
+    ]
+  },
+  "j0|n2|dup1": {
+    "counts": {
+      "target": 74,
+      "same_name": 21,
+      "other": 0,
+      "third": 105,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      74,
+      200
+    ],
+    "blend": [
+      87,
+      105
+    ]
+  },
+  "j0|n4|dup0": {
+    "counts": {
+      "target": 180,
+      "same_name": 0,
+      "other": 1,
+      "third": 19,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      180,
+      200
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  },
+  "j0|n4|dup1": {
+    "counts": {
+      "target": 39,
+      "same_name": 9,
+      "other": 1,
+      "third": 50,
+      "invalid": 0
+    },
+    "n": 99,
+    "exact_nc": [
+      39,
+      99
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  },
+  "j1|n2|dup0": {
+    "counts": {
+      "target": 172,
+      "same_name": 0,
+      "other": 0,
+      "third": 28,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      0,
+      0
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  },
+  "j1|n2|dup1": {
+    "counts": {
+      "target": 104,
+      "same_name": 1,
+      "other": 0,
+      "third": 95,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      0,
+      0
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  },
+  "j1|n4|dup0": {
+    "counts": {
+      "target": 142,
+      "same_name": 0,
+      "other": 2,
+      "third": 56,
+      "invalid": 0
+    },
+    "n": 200,
+    "exact_nc": [
+      0,
+      0
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  },
+  "j1|n4|dup1": {
+    "counts": {
+      "target": 32,
+      "same_name": 0,
+      "other": 2,
+      "third": 71,
+      "invalid": 0
+    },
+    "n": 105,
+    "exact_nc": [
+      0,
+      0
+    ],
+    "blend": [
+      0,
+      0
+    ]
+  }
+}

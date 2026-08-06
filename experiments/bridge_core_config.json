@@ -14,9 +14,9 @@
     "use_latent_attention": false,
     "use_moe": false
   },
-  "steps": 60,
+  "steps": 24000,
   "lr": 0.0006,
-  "bs": 16,
+  "bs": 48,
   "js": [
     0,
     1,

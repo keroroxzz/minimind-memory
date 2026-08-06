@@ -1,0 +1,68 @@
+{
+  "8": {
+    "retr": [
+      200,
+      200
+    ],
+    "abstain": [
+      200,
+      200
+    ],
+    "false_abstain": 0,
+    "halluc": 0,
+    "e2e": [
+      176,
+      200
+    ],
+    "shadow_halluc": [
+      200,
+      200
+    ],
+    "us_per_lookup": 59.56968438113108,
+    "store_bytes": 1152
+  },
+  "24": {
+    "retr": [
+      200,
+      200
+    ],
+    "abstain": [
+      200,
+      200
+    ],
+    "false_abstain": 0,
+    "halluc": 0,
+    "e2e": [
+      192,
+      200
+    ],
+    "shadow_halluc": [
+      200,
+      200
+    ],
+    "us_per_lookup": 56.872928980737925,
+    "store_bytes": 3456
+  },
+  "36": {
+    "retr": [
+      200,
+      200
+    ],
+    "abstain": [
+      200,
+      200
+    ],
+    "false_abstain": 0,
+    "halluc": 0,
+    "e2e": [
+      198,
+      200
+    ],
+    "shadow_halluc": [
+      200,
+      200
+    ],
+    "us_per_lookup": 56.56218534568325,
+    "store_bytes": 5184
+  }
+}

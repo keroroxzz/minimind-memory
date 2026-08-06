@@ -1,0 +1,11 @@
+{
+  "prereg": "BRIDGE_PREREG_latent.md",
+  "steps": 300,
+  "lat_dim": 20,
+  "addr_dim": 16,
+  "carrier_scale": 0.02587628923356533,
+  "ema": {
+    "latent": 1.94617805471765,
+    "L0": 1.8153755346315226
+  }
+}
