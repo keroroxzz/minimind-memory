@@ -4882,6 +4882,73 @@ healthy parity **48/48 逐位元相同**（`z`／delivery tensor／decode 三件
 
 ---
 
+## 4.70 `NG-O2` feasibility ceiling：**PASS**，並就此把 delivery 線標為 transport ceiling
+
+規格 `NGO2_prereg.json` v4（Codex [172] 授權）。eval artifact `364696896fa2b38f`，
+三個 seed 共用同一份凍結 eval，`seed` 只改 model init 與訓練 RNG。
+
+| 測量 | seed ×3 |
+|---|---|
+| **O1**（繞過 Store） | 300/300 = **100.0%** |
+| **O3**（round-trip） | **bitwise 300/300**；direct 100.0%；store 100.0% |
+| **O2** `m2-first / m2-last / m3-first / m3-middle / m3-last` | 各 **300/300**；拿錯 record **0** |
+
+phase-0（零訓練）：1500 個 episode 的 K0 互異／value 兩兩相異／query 無 value token／
+readback＝direct；**600 個 counterfactual 群組**的 Core 可見輸入逐位元相同。
+
+### 這個 PASS 的地位 —— 事前就寫死了
+
+`framing.expected_outcome` 事前寫明「**預期 PASS**」，而它確實過了。
+**五個 cell 完全相同並不是能力發現** —— phase-0 已證明群組內 Core 的可見輸入
+逐位元相同，結果本來就該相同。**這是控制組通過。**
+
+**必須同時引用的 honesty note**（`on_pass` 規定）：
+
+> 架構改動是把 §4.63 的失敗模式**以構造排除**，不是解掉。
+> O2 把「多候選 routing」**移出 Core**，因此它**既沒有修復、也沒有測到**
+> Interface 的 read/write key agreement 或 unique selection。
+> §4.67 是**一種** learned closed-set confidence selector 的 FAIL，
+> **不是**所有 Interface 唯一化的同義詞；K0 exact lookup 仍是可用的受限路徑。
+
+**可宣稱**：「同 entity 多 record 可共存，且已選出的 target 可被消費。」
+**不可宣稱**：「同實體多屬性已解決」／「§4.63 已修復」。
+
+### 方向裁決：delivery 降級為 transport adapter（Codex [173]）
+
+使用者提出方向性質疑：**「這只是把顯式的 context-engineering memory 搬進 latent space」**。
+該批評有一半由**我們自己的數據**支持：
+
+- §4.16 的 G1 表：`oracle_inline`（值以**原生文字**置於同位置）＝ **100%、0 參數**；
+  `InlineLatent` 1.33M ＝ 100%；`zdelta` 1.13M ＝ 99%。
+  **latent 沒有贏過等位置文字。**
+- carrier **佔序列位置**（早已記錄）：**省不了 context**。
+
+> **裁決**：不砍掉「非文字 delivery」這個**介面**，但**砍掉它作為主研究軸與主張**。
+> 它是滿足「value 不可回灌成 prompt text」約束的 **transport adapter**，
+> **不是記憶形成機制，也不是 compression 的證據**。
+> `NG-O2` 的 PASS 只留「non-text explicit carrier 可被消費」這個 ceiling；
+> **不再開新配方替它辯護。**
+
+**日後若仍要用 learned latent／KV delivery，必須先過 `carrier-necessity gate`**：
+與固定格式 structured carrier、以及**同 budget 的純文字**並列，
+報 carrier 位置數、attention/KV bytes、線上 FLOPs、下游效用 ——
+**只有在同資源下有可量的優勢，或承載了文字根本無法承載的 payload，才可稱它值得保留。**
+
+### 為什麼不照抄 Titans
+
+Titans／MIRAS 以 online 更新的深層 neural memory、內部梯度 surprise、momentum 與
+adaptive decay 做保留／遺忘。它較優雅地處理**形成與壓縮**，
+但它的主張是長序列建模與 test-time memorization，
+**不是每筆事實的可尋址 existence／version／audit contract**，
+因此**不是本專案安全目標的嚴格替代品**。
+
+⚠️ 也**不得**把 Titans 的 surprise 直接等同「它學會該寫哪筆 user fact」：
+它更新的是 neural associative memory 的**參數／狀態**，
+不天然給每筆事實一個**可版本化的物件**；
+**可能漏掉低-surprise 但日後關鍵的事件** —— 這必須量，不能用美感補。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

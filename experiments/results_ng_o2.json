@@ -1,0 +1,128 @@
+{
+  "eval_checksum": "364696896fa2b38f",
+  "train_fingerprint": "a417867b8255192a",
+  "seeds": {
+    "20260812": {
+      "scale": 0.07307474315166473,
+      "O1": [
+        300,
+        300
+      ],
+      "O3": {
+        "bitwise_same": 300,
+        "direct_ok": 300,
+        "store_ok": 300,
+        "n": 300
+      },
+      "O2": {
+        "m2-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m2-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-middle": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        }
+      }
+    },
+    "20260813": {
+      "scale": 0.07311425358057022,
+      "O1": [
+        300,
+        300
+      ],
+      "O3": {
+        "bitwise_same": 300,
+        "direct_ok": 300,
+        "store_ok": 300,
+        "n": 300
+      },
+      "O2": {
+        "m2-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m2-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-middle": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        }
+      }
+    },
+    "20260814": {
+      "scale": 0.07309336960315704,
+      "O1": [
+        300,
+        300
+      ],
+      "O3": {
+        "bitwise_same": 300,
+        "direct_ok": 300,
+        "store_ok": 300,
+        "n": 300
+      },
+      "O2": {
+        "m2-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m2-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-first": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-middle": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        },
+        "m3-last": {
+          "ok": 300,
+          "n": 300,
+          "wrong_record": 0
+        }
+      }
+    }
+  },
+  "fails": [],
+  "pass": true
+}
