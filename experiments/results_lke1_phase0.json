@@ -1,0 +1,49 @@
+{
+  "checksum": "946659293b76b3ab",
+  "support": {
+    "ID": {
+      "distinct_q": 150,
+      "distinct_k": 36,
+      "distinct_frame": 6,
+      "distinct_alias": 5
+    },
+    "K": {
+      "distinct_q": 150,
+      "distinct_k": 12,
+      "distinct_frame": 6,
+      "distinct_alias": 5
+    },
+    "P": {
+      "distinct_q": 150,
+      "distinct_k": 35,
+      "distinct_frame": 3,
+      "distinct_alias": 5
+    },
+    "KxP": {
+      "distinct_q": 150,
+      "distinct_k": 12,
+      "distinct_frame": 3,
+      "distinct_alias": 5
+    }
+  },
+  "oracle": {
+    "ID": {
+      "ok": 147,
+      "n": 150
+    },
+    "K": {
+      "ok": 149,
+      "n": 150
+    },
+    "P": {
+      "ok": 148,
+      "n": 150
+    },
+    "KxP": {
+      "ok": 150,
+      "n": 150
+    }
+  },
+  "fails": [],
+  "pass": true
+}
