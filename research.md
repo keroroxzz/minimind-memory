@@ -4675,6 +4675,84 @@ factorized canonical query extraction 與 exact-membership guard
 
 ---
 
+## 4.67 `LKE-2R` 指涉式抽取＋選擇性拒絕：**FAIL —— safe-but-useless**
+
+規格 Codex [164]／[165] 授權，artifact checksum **`639e74973dc153f4`**。
+`experiments/lke2r_data.py`、`lke2r_phase0.py`、`lke2r_run.py`、`LKE2R_prereg.json`。
+
+**與 `LKE-1` 的關鍵差別**：query **不含 canonical name 字面**，只有 descriptor
+（`(color, shape)` 的詞）與 attr alias，extractor 必須做指涉解析。
+三個 stratum 由凍結的 `ENT` 世界決定：
+`U` 完整 conjunction → **恰 1 個** referent；`T` 單一屬性 → **恰 2 個**；
+`Ø` 不存在的組合 → **0 個**。`T`／`Ø` 沒有 `k*`，正確行為是**在查 store 之前拒絕**。
+
+**設計的核心**：**train 只含 `U`，不給 `T`／`Ø` 任何 abstain label**。
+本關問的是 **closed-set softmax confidence 能否對未見的「不可唯一化」結構轉移**。
+
+### 結果
+
+三個 seed **全部**落到 `τ = 1.0` fallback（全拒）——
+grid 中**沒有任何門檻**能讓 `T` 與 `Ø` 在 CAL 上同時 `0/300` accept。
+於是 `U` 的 false-abstain 衝到 89–100%，utility gate 自然 FAIL。
+
+| seed | U raw exact（四格） | τ | U false-abstain（K/P/K×P） | T accept | Ø accept |
+|---|---|---|---|---|---|
+| 20260812 | **100.0%** | 1.0 | 100% / 92.7% / 100% | **1/300** | 0/300 |
+| 20260813 | **100.0%** | 1.0 | 100% / 89.3% / 100% | 0/300 | 0/300 |
+| 20260814 | **100.0%** | 1.0 | 100% / 97.3% / 99.3% | 0/300 | 0/300 |
+
+**歸因是唯一的**：`U` 的 raw exact 在**每個 cell、每個 seed 都是 100%**
+（含 held-out combination 與 held-out frame），所以**不是** `U extraction` 失敗，
+也不是 `downstream ceiling`（phase-0 已量到 98.0/99.3/98.0/100.0）。
+→ **`selective-confidence transfer` FAIL。**
+
+### confidence 有方向性，但尾巴沒有 —— 這才是失敗的形狀
+
+`lke2r_confidence_diag.py`（描述性，不改任何 gate），seed 20260812：
+
+| stratum | 均 | 中位 | p99 |
+|---|---|---|---|
+| `U (ID)` | 1.0000 | 1.0000 | 1.0000 |
+| `U (K×P)` | 0.9979 | 0.9999 | 1.0000 |
+| `T`（2 個 referent） | 0.9304 | 0.9934 | **1.0000** |
+| `Ø`（0 個 referent） | 0.8236 | 0.8853 | **1.0000** |
+
+**中位數確實依「指涉可解性」單調排開**（1.0000 > 0.9934 > 0.8853）——
+信號**是**有方向性的。但尾巴完全重疊：
+
+| τ | `T` accept | `Ø` accept | `U(ID)` 誤拒 |
+|---|---|---|---|
+| 0.99（grid 頂端） | **168/300** | **79/300** | 0/150 |
+| 0.999 | 107/300 | 38/300 | 0/150 |
+| 0.9999 | 61/300 | 10/300 | 0/150 |
+| 1.0 | 1/300 | 0/300 | **6/150** |
+
+> **超過一半的「指涉兩個實體」query 拿到 ≥0.99 的信心，四分之一拿到 ≥0.9999。**
+> 在零容忍的安全要求下，一個「方向正確但重尾」的分數是**不可用**的：
+> 能滿足安全的門檻只剩下全拒。
+
+### 可主張／不可主張
+
+**可主張**：在此有限受控 descriptor grammar 下，**指涉式 unique extraction 成立**
+（`U` raw exact 100%，兩個 OOD 軸都不掉），
+但 **closed-set softmax 的 confidence 不能作為對未見「不可唯一化」結構的拒絕信號** ——
+它的中位數有方向性，尾巴卻與可解 query 完全重疊。
+
+**不可主張**：**不得**說 confidence 完全無資訊（中位數單調分開是真的）；
+**不得**外推到有 abstain 監督的設定（本關刻意不給）；
+**不得**稱 semantic／natural／open-set；單一 grammar、單一 core、三 seed。
+
+### 依 prereg seal
+
+歸因記為 **`selective-confidence transfer` FAIL**。
+**不得**加 typo 配方、改 `ENT`／grammar／train mix／τ grid 去救。
+下一個有界問題轉 **exact-key conflict/overwrite**。
+
+**這也把 §4.66 的空洞補上了**：`LKE-1` 的 `unsafe 0/300` 從未 exercise 過 gate；
+現在 gate 被 exercise 了，**它沒有通過**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

@@ -6,7 +6,8 @@
 - `U`／`T`／`Ø` 的 unique／tie／none 幾何逐題成立
 - `T`／`Ø` 各 300 distinct，且 CAL 與 test **互斥**
 - held-out frame 不引入新 lexical atom
-- `T`／`Ø` 的 store **放滿該 attr 的 16 個 name**（任何 accept 必然 wrong-existing）
+- `T`／`Ø` 的 store **放滿該 attr 的 16 個 name**
+  （只有 `attr_hat == query attr` 的 accept 必然 wrong-existing；attr 也錯時 guard 會擋）
 - `U` 的 `k* → delivery → core` ceiling：**每個 primary U cell `>= 95%`**
 
 `T`／`Ø` **不跑 oracle core** —— 預期是零交付，跑它沒有意義。
@@ -72,7 +73,7 @@ def invariants(art):
                 n = len(D.resolve_desc(e["desc"]))
                 assert n == want == e["n_referents"], \
                     f"{tag} 的 {e['desc']!r} 指向 {n} 個 name，應為 {want}"
-                # store 放滿該 attr 的 16 個 name → 任何 accept 必然 wrong-existing
+                # store 放滿**該 attr** 的 16 個 name（見 [165] 的措辭修正）
                 ks = [tuple(p) for p in e["store"]["keys"]]
                 assert len(ks) == len(B.NAMES)
                 assert {k[0] for k in ks} == set(B.NAMES)
@@ -110,7 +111,8 @@ def main(core="bridge_core_latent.pth"):
     print("  ---- 資料不變量：全部通過 ✓")
     print("    · 任一 query 都不含 canonical name 字面（LKE-2R 的定義性條件）")
     print("    · U 唯一／T 恰兩個／Ø 零個 referent，逐題查表確認")
-    print("    · T／Ø 的 store 放滿該 attr 的 16 個 name → **任何 accept 必然 wrong-existing**")
+    print("    · T／Ø 的 store 放滿**該 attr**的 16 個 name；只有 attr_hat==query attr 的")
+    print("      accept 必然 wrong-existing，attr 也錯時 guard 會擋 —— 兩者分開報")
     print(f"    · {geo}")
     print(f"\n  train {len(art['train'])}   u_cal {len(art['u_cal'])}"
           f"   T/Ø cal 300+300   test 300+300")

@@ -1,0 +1,275 @@
+{
+  "artifact": "639e74973dc153f4",
+  "seeds": {
+    "20260812": {
+      "tau": 1.0,
+      "cal": {
+        "T": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      },
+      "u": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 142,
+          "present_deliver_n": 144,
+          "false_abstain": 6,
+          "correct_missing_abstain": 144,
+          "wrong_absent": 0,
+          "bitwise_same": 144
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 0,
+          "present_deliver_n": 0,
+          "false_abstain": 150,
+          "correct_missing_abstain": 0,
+          "wrong_absent": 0,
+          "bitwise_same": 0
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 11,
+          "present_deliver_n": 11,
+          "false_abstain": 139,
+          "correct_missing_abstain": 11,
+          "wrong_absent": 0,
+          "bitwise_same": 11
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 0,
+          "present_deliver_n": 0,
+          "false_abstain": 150,
+          "correct_missing_abstain": 0,
+          "wrong_absent": 0,
+          "bitwise_same": 0
+        }
+      },
+      "to": {
+        "T": {
+          "accepted": 1,
+          "n": 300,
+          "delivered": 1,
+          "same_attr_wrong_existing": 1,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      }
+    },
+    "20260813": {
+      "tau": 1.0,
+      "cal": {
+        "T": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      },
+      "u": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 139,
+          "present_deliver_n": 142,
+          "false_abstain": 8,
+          "correct_missing_abstain": 142,
+          "wrong_absent": 0,
+          "bitwise_same": 142
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 0,
+          "present_deliver_n": 0,
+          "false_abstain": 150,
+          "correct_missing_abstain": 0,
+          "wrong_absent": 0,
+          "bitwise_same": 0
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 16,
+          "present_deliver_n": 16,
+          "false_abstain": 134,
+          "correct_missing_abstain": 16,
+          "wrong_absent": 0,
+          "bitwise_same": 16
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 0,
+          "present_deliver_n": 0,
+          "false_abstain": 150,
+          "correct_missing_abstain": 0,
+          "wrong_absent": 0,
+          "bitwise_same": 0
+        }
+      },
+      "to": {
+        "T": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      }
+    },
+    "20260814": {
+      "tau": 1.0,
+      "cal": {
+        "T": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      },
+      "u": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 136,
+          "present_deliver_n": 139,
+          "false_abstain": 11,
+          "correct_missing_abstain": 139,
+          "wrong_absent": 0,
+          "bitwise_same": 139
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 0,
+          "present_deliver_n": 0,
+          "false_abstain": 150,
+          "correct_missing_abstain": 0,
+          "wrong_absent": 0,
+          "bitwise_same": 0
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 4,
+          "present_deliver_n": 4,
+          "false_abstain": 146,
+          "correct_missing_abstain": 4,
+          "wrong_absent": 0,
+          "bitwise_same": 4
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 1,
+          "present_deliver_n": 1,
+          "false_abstain": 149,
+          "correct_missing_abstain": 1,
+          "wrong_absent": 0,
+          "bitwise_same": 1
+        }
+      },
+      "to": {
+        "T": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        },
+        "O": {
+          "accepted": 0,
+          "n": 300,
+          "delivered": 0,
+          "same_attr_wrong_existing": 0,
+          "wrong_attr_guarded_absent": 0
+        }
+      }
+    }
+  },
+  "fails": [
+    "seed20260812/U-K",
+    "seed20260812/U-P",
+    "seed20260812/U-KxP",
+    "seed20260812/T",
+    "seed20260813/U-ID",
+    "seed20260813/U-K",
+    "seed20260813/U-P",
+    "seed20260813/U-KxP",
+    "seed20260814/U-ID",
+    "seed20260814/U-K",
+    "seed20260814/U-P",
+    "seed20260814/U-KxP"
+  ],
+  "pass": false
+}

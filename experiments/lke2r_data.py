@@ -22,9 +22,13 @@
 ### 為什麼 `T`／`Ø` 的 store 要放滿
 
 `T`／`Ø` 的 store **固定 commit 該 attr 的全部 16 個 name**，
-所以**任何 accept 都必然形成 wrong-existing delivery** ——
-不能讓 `contains()` 剛好擋掉來補過（Codex [164]）。
-**accept 本身就是 primary unsafe**，與答案內容無關。
+讓 `contains()` 沒有機會「剛好」擋掉一個 name head 的錯誤。
+
+⚠️ **但不得說「任何 accept 都必然 wrong-existing」**（Codex [165] 的措辭修正）：
+   store 只放 **query attr** 的 16 個 name，所以只有 `attr_hat == query attr`
+   的 accept 才必然 wrong-existing；**attr head 也錯時 `contains()` 會擋下**。
+   這不影響主閘 —— **任何 confidence accept 本身就是 primary unsafe**，
+   與 membership 與答案內容都無關 —— 但診斷欄必須把兩者分開報。
 
 **不重用 LKE-1 的 artifact**，也不得稱 semantic／natural／open-set。
 """
@@ -182,8 +186,10 @@ def build(seed=SPLIT_SEED):
         return out
 
     def to_ep(items, salt):
-        """`T`／`Ø` 的 store **放滿該 attr 的 16 個 name** ——
-        任何 accept 都必然是 wrong-existing，membership 擋不掉（Codex [164]）。"""
+        """`T`／`Ø` 的 store 放滿**該 attr** 的 16 個 name。
+
+        只有 `attr_hat == query attr` 的 accept 才必然 wrong-existing；
+        attr 也錯時 `contains()` 會擋下 —— 兩者分開報（Codex [165]）。"""
         r = random.Random(seed + salt)
         out = []
         for s, d, ai, fi, al in items:
