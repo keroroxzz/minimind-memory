@@ -2,15 +2,13 @@
   "experiment": "MF0-C",
   "title": "causal formation with a bounded learned controller",
   "spec_source": "Codex [173]/[174]/[176]/[177]；`MF0_DESIGN.md` 為設計閘",
-  "status": "draft — 未實作、未訓練、未跑 H audit",
-
+  "status": "draft v2 — spec 已鎖（Codex [178]）；**尚未授權 code／H／P0**",
   "why_not_MF0": {
     "point": "**這不是 `MF-0` 的一個 world，是不同的研究問題**（Codex [177]）",
     "detail": "`π_content*` 需要 prefix 的 entity counts，而 `MF-0` 的 gate 只拿得到 `W=4` 個 raw event。把 count vector **外接**給 learner，等於**手工把 focus 判據交給它**，而那不在 `W=4` 內。",
     "consequence": "研究問題從 **admission-only** 變成 **admission ＋ working-state**。",
     "alternative_if_declined": "若不引入 controller-state 這個新主題，**正確的替代不是偷偷傳 counts**，而是**放棄本實驗、轉 `RWA-0`**。"
   },
-
   "scope": {
     "is": "在一個受控的 latent-topic／count task 上，量 **reward 是否讓一個 bounded neural controller 從頻率統計形成可用的 retention priority**",
     "is_not": [
@@ -21,19 +19,29 @@
     ],
     "claim_limit": "PASS 只可稱「task loss 學到 **controller ＋ admission**」，**不得**偷稱純 admission"
   },
-
   "controller": {
-    "form": "gate **自己學出**的、**每 session reset** 的**固定維度** recurrent state `h_t`",
-    "inputs": "**只讀** `(goal, current event, h_{t-1})`",
-    "forbidden_inputs": ["外部 entity count", "focus 標記", "future query",
-                          "raw-history buffer（`W=4` 之外）"],
-    "at_query_time": "**不輸出、不交付 value** —— controller 只做 admission priority",
-    "must_lock_before_training": ["state 維度與 **state bytes**", "架構", "更新式",
-                                   "`h=0` state-ablation 的執行方式"],
-    "state_ablation": "以**同一組已訓練權重**、強制 `h_t = 0` 重跑 eval —— 分離「recurrent state 的貢獻」與「per-event 特徵的貢獻」",
-    "raw_workspace": "`W=4` 仍是 raw event workspace 的上限，controller **不繞過它**"
+    "state": "`h ∈ FP16^16`，**每 session reset**，runtime state **恰 32 bytes**",
+    "quantization": "**每一步 forward 之後立即 cast／quantize 為 FP16**；**不得**在兩步之間保留 FP32 master／cached state",
+    "fixed_once": "**不做 width／bytes sweep**。此 size 若 FAIL，即**封存這個 `MF0-C` 配方**",
+    "rationale": "16 維能表達 16 個 entity 的**低精度**統計，卻遠小於 64 條 record／value stream —— **它不是「足以解題」的保證**",
+    "input": "`u_t = onehot(goal:3) || onehot(entity:16) || onehot(attribute:12)` = **31 維**",
+    "forbidden_in_input": [
+      "value",
+      "absolute position",
+      "hash",
+      "外部 count",
+      "focus 標記",
+      "future query",
+      "`W=4` 以外的 raw history"
+    ],
+    "arch": "單層 `GRUCell(31, 16)`；`h_t = fp16(GRUCell(u_t, h_{t-1}))`",
+    "priority_head": "**單一 affine head** `a_t = b + w_u^T u_t + w_h^T h_t`",
+    "policy": "其餘 reservation／top-B 依既鎖規格",
+    "canonical_ok": "本關**不測 canonicalization**，故可用 current record 的 canonical entity／attr；**但未給 count 或 focus**",
+    "at_query_time": "**不輸出、不交付 value**",
+    "w4": "`W=4` 仍是 raw workspace 上限，**controller 不得偷看**",
+    "h0_ablation": "**每步以 `GRUCell(u_t, 0)` 算 head、隨即丟棄**，禁止任何跨步 `h`。⚠️ **不得**把整個 GRU head 歸零 —— 那會混入一個**不同的 per-event capacity 差異**，測到的就不是 recurrent state 的貢獻"
   },
-
   "generator_frozen": {
     "note": "Codex [177] Q1：**不用可調機率**，鎖精確且**與 `H` 無關**的 count profile",
     "E": 16,
@@ -46,7 +54,6 @@
     "Q": 16,
     "W0_control": "**對稱的負對照**：同樣的 surface（goal token、同一 count profile），但 query 與 `(goal, focus)` **獨立**；所有 non-oracle policy 的期望應相等，任何穩定優勢**先查 leakage**"
   },
-
   "references": {
     "note": "四個 reference ＋ 一個上界。**防灌水的方法不是引入 mixing weight，而是補上 single-factor reference**（Codex [177] Q2）",
     "random": "reservoir，`B` 個 slot",
@@ -54,9 +61,9 @@
     "goal_only": "**只讀**可見 goal class；不讀 future query／count／value；同分以事前固定的 canonical-key hash 打破",
     "focus_only": "**只讀** `P(F=e | prefix)`；**不讀** goal attribute",
     "pi_content_star": "`priority = 1[attr ∈ goal] × P(F = e | prefix **含當前 event**)`；同一 online top-B ／同一 tie rule；**不得看 future**。這是 offline 的 Bayes-causal reference，**不可部署**",
-    "oracle": "事後 future-use count 的 top-B。**只報**不可部署上界與剩餘 query-sampling variance"
+    "oracle": "事後 future-use count 的 top-B。**只報**不可部署上界與剩餘 query-sampling variance",
+    "frozen_predictive_surprisal": "見 `frozen_predictive_surprisal` 節（canonical，非文字 LM）"
   },
-
   "headroom_precondition": {
     "H_g": "U(pi_content_star) − U(goal_only)",
     "H_f": "U(pi_content_star) − U(focus_only)",
@@ -64,7 +71,6 @@
     "rule": "**只有每一個 single-factor 都有可量空間才開訓練** —— 三 seed 的 `H_g` 與 `H_f` 若任一的 95% CI 上限 `<= 5pp`，標為 `causally non-discriminating`，**不訓練**",
     "why_min": "若只相對 `goal-only` 量 headroom，learned gate 可以**只學會 focus 這一個因子**就過關（反之亦然）。取 `min` 逼它兩個都要學"
   },
-
   "primary_gate": {
     "per_seed": true,
     "criteria": [
@@ -73,23 +79,54 @@
       "對 `frozen predictive-surprisal` 的 paired CI 下限 `> 0`"
     ],
     "no_pooling": "三個 seed **各自**都要過；**不得** pooled",
-    "also_report": ["oracle-gap（僅描述）", "dropped-record correct abstain",
-                     "真正 absent-key 的 0 delivery", "`h=0` state-ablation 的落差"]
+    "also_report": [
+      "oracle-gap（僅描述）",
+      "dropped-record correct abstain",
+      "真正 absent-key 的 0 delivery",
+      "`h=0` state-ablation 的落差"
+    ]
   },
-
   "frozen_predictive_surprisal": {
-    "rename_note": "**不可再叫 Titans-style** —— 真正的 Titans 有 online associative-memory update，**frozen NLL 不能代稱**",
-    "s_t": "mean_j [ -log P0( x_{t,j} | goal, 最近 W=4 個 raw event, x_{t,<j} ) ]，平均於該 event 的全部非 padding token",
-    "P0": "**獨立**模型，以 checksum 固定、與 MF0-C train/eval **不重疊**的**事件流-only** corpus 預訓練（含同一 goal／event surface，但**沒有** query／future-use／admission／reward／Store label）",
-    "frozen": "MF0-C 之前凍結；**不共享** learned-gate 參數；**不在 session 內更新**",
-    "must_lock": "架構／tokenizer／corpus seed／訓練步數／checkpoint selection **一次鎖死**，**不得**按成績選模型",
-    "on_fail": "三 seed 不勝 `recency` 時，**只封存此 baseline 於此 world**，**不評論 Titans**"
+    "name": "frozen **canonical** predictive-surprisal",
+    "not_a_text_lm": "**不是文字 LM**（Codex [178] 的 scope-alignment）：value 是 iid，且 controller 也讀不到 value；**把隨機 digit 的 NLL 混進 surprise 只是人為加噪，並不更像 Titans**",
+    "rename_note": "**不可叫 Titans-style** —— 真正的 Titans 有 online associative-memory update，frozen 預測誤差不能代稱",
+    "P0_inputs": "可見 goal ＋ **最多前 `W=4` 條** canonical `(entity, attr)`；**每次 scoring window 從零狀態重跑**，**絕不跨四條保留 state**",
+    "P0_outputs": "預測 current entity 的 **16-way** 與 attr 的 **12-way** categorical head",
+    "s_t": "`s_t = 0.5 [ -log p0(e_t | ·) - log p0(a_t | ·) ]`；同一 reservoir／top-B／hash tie rule",
+    "P0_arch": "單層 `GRUCell(28, 16)`（event input = `onehot(entity:16) || onehot(attr:12)`；**goal 的 3-way onehot 接到兩個 output head**，**無其他 embedding／tokenizer**），兩個 softmax head",
+    "P0_corpus": "**獨立預生成 100,000 個 event-only stream**，generator 正是 frozen `W0`／`MF0-C` 的 surface／count profile，**但無** query／value／admission／reward／Store 欄位",
+    "P0_corpus_seed": 2026081301,
+    "P0_corpus_fingerprint": "**待生成後填入 checksum**（prereg 鎖定欄位，不得事後更改）",
+    "P0_train_seed": 2026081302,
+    "P0_optimizer": "AdamW(lr=1e-3, betas=(0.9, 0.999), weight_decay=0.01)",
+    "P0_batch": 512,
+    "P0_batch_note": "**隨機 causal window**",
+    "P0_updates": 20000,
+    "P0_no_selection": "**不設** validation／early stop／checkpoint selection —— **僅取 final step**",
+    "P0_checkpoint_fingerprint": "**待訓練後填入**（鎖定欄位）",
+    "disjoint": "`MF0-C` 的 train／eval artifact 必須與此 corpus 的 **episode-id disjoint**",
+    "after": "P0 結束即 **freeze**；**不共享參數、不更新**",
+    "claim_limit": "這是一個**明確且受限的 predictive baseline**；**它的輸贏不能評論 Titans**"
   },
-
   "stopping_rule": {
-    "order": ["interface/prereg review", "phase-0（不訓練）", "H audit（不訓練）",
-               "唯有 H 有空間才訓練", "一次三-seed run"],
+    "order": [
+      "**interface-only review（本輪）**",
+      "phase-0（不訓練）",
+      "P0 訓練（規格已鎖，**不得先跑看效果再定**）",
+      "H audit（不訓練 gate）",
+      "唯有 `H_g` 與 `H_f` **各自**有空間才訓練 gate",
+      "一次三-seed run"
+    ],
     "on_fail": "記 `MF0-C FAIL` 並依歸因分類；**不得**用 `W0`、`oracle-gap` 或單一 factor 的優勢補過",
     "on_pass": "只可稱「在此受控 latent-topic/count world，future task reward 讓 bounded controller 學出可用的 retention priority」；**不得**升格為自然記憶或一般 formation"
-  }
+  },
+  "assertions_required": [
+    "controller 的 runtime state **恰 32 bytes**（`h.dtype == float16 and h.numel() == 16`），逐步 assert",
+    "兩步之間**不存在** FP32 master／cached state",
+    "controller 的 input 張量維度 **恰 31**，且不含 value／position／hash／count",
+    "`h=0` ablation 走的是 `GRUCell(u_t, 0)` 而**非** head 歸零",
+    "`P0` 的 scoring window **每次從零狀態重跑**",
+    "`MF0-C` artifact 與 `P0` corpus 的 **episode-id 交集為空**",
+    "`P0` corpus 與 checkpoint 的 fingerprint 均已填入且與實際檔案相符"
+  ]
 }
