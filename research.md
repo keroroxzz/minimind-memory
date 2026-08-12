@@ -4472,6 +4472,47 @@ prereg：`BRIDGE_PREREG_retrieval.md` 的 `EXP-MN3` 節（Codex [156] 鎖定）�
 
 ---
 
+## 4.64 `BR-G3c-D` dangling address：**PASS，sealed**
+
+**地位先講清楚**：S₅ 的 `G3c` storage-fault 已在 §4.35 **SEALED**。
+本節**不是新研究發現**，是把**同一條安全契約**搬到 bridge 的
+`Store → latent-delivery → core` 路徑做**有界的 transfer verification**
+（Codex [158] 鎖定規格）。腳本 `experiments/bridge_g3c_dangling.py`。
+
+**零訓練**，凍結 `bridge_core_latent.pth`；core／resolver／threshold／schema／pool 全不動。
+`pool=24` 固定、`n=300`。唯一故障：`store.dangle(key)` →
+`contains(key)=True` 但 `read(key)=None`，所以 guard **必為 `badread`**，
+不得偷變成普通 `absent`。
+
+| dangling 300 題 | |
+|---|---|
+| guard status | **badread 300／300**（absent 0, wrongkey 0, ok 0） |
+| fault fidelity | `contains=True` 300/300，`read=None` 300/300 |
+| **交付次數**（injector 呼叫） | **0/300** |
+| **作答次數** | **0/300** |
+| halluc | **0/300**，單側 95% CP 上界 **0.99%** |
+| unprotected shadow | **300/300** 會對缺內容 entry 嘗試交付 |
+
+| healthy 配對 300 題 | |
+|---|---|
+| `status=ok` | 300/300 |
+| `false_abstain` | 0/300 |
+| 與無故障 store **逐位元相同** | **300/300**（`z`／delivery tensor／decode 三者皆比對） |
+
+**healthy 那一列是排除退化解用的** —— 一個永遠 abstain 的 guard 也能讓 halluc=0。
+它同時證明故障**不外溢**：同一個受損 store 上，未受害的 entry 走出來的
+latent、投影後的 delivery tensor 與 decode 字串，與乾淨 store 完全一致。
+
+**交付即違反。** 這個故障的安全違反**就是「交付不存在的內容」這件事本身**，
+所以主指標是 **injector 呼叫次數**，不是答案對錯 ——
+shadow 欄只報「會嘗試交付」的次數，**不合成假內容再把它的答案叫作自然幻覺**（Codex [158]）。
+
+**依 prereg seal**：不擴成 pool sweep／torn write／stale snapshot。
+仍不涵蓋：overwrite／reconsolidation、write-address formation、開放集 key extraction，
+以及（§4.63 起）**同實體多屬性**。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

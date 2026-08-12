@@ -32,6 +32,7 @@ class Store:
 
     def __init__(self):
         self._d = {}          # canonical key -> (addr tensor, z' tensor)
+        self._dangling = set()  # 索引還在、內容沒了（部分寫入／GC race 的代理）
 
     # ---- 寫入 --------------------------------------------------------
     @staticmethod
@@ -58,8 +59,23 @@ class Store:
 
     def read(self, name, attr_idx):
         """回傳 `z'`；不存在則回 None（呼叫端必須 fail closed）。"""
-        e = self._d.get(self.canonical(name, attr_idx))
+        k = self.canonical(name, attr_idx)
+        if k in self._dangling:
+            return None           # **索引可見但內容不可讀** —— 契約被破壞的那一格
+        e = self._d.get(k)
         return None if e is None else e[1]
+
+    def dangle(self, name, attr_idx):
+        """**故障注入專用**（`BR-G3c-D`）：打破 `address 可見 ⇔ content 可讀`。
+
+        之後 `contains()` 仍為 True 而 `read()` 回 None，
+        所以 `retrieve()` 必須走 `badread` —— **不得**退化成普通的 `absent`。
+        正常路徑永遠不呼叫這個方法。
+        """
+        k = self.canonical(name, attr_idx)
+        assert k in self._d, "只能對已 commit 的 entry 注入 dangling"
+        self._dangling.add(k)
+        return k
 
     def keys(self):
         return list(self._d)

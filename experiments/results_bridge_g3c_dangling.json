@@ -1,0 +1,25 @@
+{
+  "core": "bridge_core_latent.pth",
+  "n": 300,
+  "pool": 24,
+  "status": {
+    "badread": 300,
+    "absent": 0,
+    "wrongkey": 0,
+    "ok": 0
+  },
+  "fault_fidelity": {
+    "contains_true": 300,
+    "read_none": 300
+  },
+  "delivered": 0,
+  "answered": 0,
+  "halluc_ub": 0.00993608194445772,
+  "shadow_unsafe": 300,
+  "healthy": {
+    "ok": 300,
+    "false_abstain": 0,
+    "bitwise_same": 300
+  },
+  "pass": true
+}
