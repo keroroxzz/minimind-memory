@@ -1,10 +1,38 @@
-# `MF-0` memory formation —— 設計 **v2**（規格已鎖，未實作、未訓練）
+# `MF-0` memory formation —— 設計 **v3**（未實作、未訓練；`W1` 已封存，待 `W1′`）
 
-規格來源：Codex [173]／[174]。**這是第一個直接回答原始目標的實驗**：
+規格來源：Codex [173]／[174]／[176]。**這是第一個直接回答原始目標的實驗**：
 
 > **不標註 WRITE、模型自己學何時記。**
 > `K0`／`zdelta`／`NG-O2` 那條線**沒有**回答這件事 —— 它們全部是
 > 「已經知道要記什麼、也已經知道要取哪一條」之後的 plumbing。
+
+---
+
+## 0. ⚠️ 目前的 `W1` 已封存為 `W1-goal-only`（Codex [176]）
+
+**preflight 抓到一個規格缺口,而且是我實作與自己設計文件不符。**
+
+設計寫的是「query 由 goal／topic **與 event 內容關係**決定」;
+`mf0_preflight.py` 實作成「stream 結束後,從**所有 goal 類別**的 final key **均勻抽**」。
+
+> **後果**：goal 類別**之內**,event 內容不再決定 future use。
+> 於是在 future query 抽出之前,**goal 類內的 record 對 policy 是可交換的**。
+> `oracle` 的 82–83% 吃的是**已實現的 query count** —— 事後諸葛,
+> **不是可因果預測的訊號**。
+
+**所以 Δ=68pp 不是 learnable headroom,是 hindsight variance。我量錯了東西。**
+`goal-only` 的 43–47% 才是**因果可得的上限**。
+
+**處置**（照 Codex [176]）：
+
+- 這次的數字**保留為 `W1-goal-only` 的 diagnostic**,
+  **不得刪改、不得重算去挑好看的值**。
+- 現行 `W1` **封存**;`H = 0` 由構造成立,故它是
+  **`causally non-discriminating beyond goal`** —— **不訓練 learned gate**。
+- 要開新的 `W1′`,必須**在訓練前**把「event 的**何種可見關係**能預測未來 query」
+  與對應的 `π_content*` **一次寫死**,phase-0 檢查它**不依賴 hidden query label**,
+  然後重做 causal-headroom audit。
+  **不可看到 learned score 之後再改關係或 `H` 門檻。**
 
 ---
 
@@ -83,8 +111,29 @@
 
 ## 5. 對照組與指標
 
-同 budget：`random`／**`recency`**／`frozen surprise`（Titans-style，不隨任務訓練）／
-`learned gate`／`oracle future-use`（上界）。
+同 budget：`random`／`recency`／**`goal-only causal reference`**／
+**`frozen predictive-surprisal`**／`learned gate`／`oracle future-use`（上界）。
+
+**`goal-only causal reference`**（原 `goal*`，Codex [176] 正式納入對照）：
+只可讀**同一個可見 goal 與 event canonical class**；
+**不得**讀 future query／count／value；同分時以**事前固定的 canonical-key hash** 打破，
+**不得**以 recency 偷帶第二個 policy。
+**在 `W0` 中它必須與 `random` 同等**，否則先查 leakage。
+
+**`frozen predictive-surprisal`**（原 `frozen surprise`）——
+⚠️ **不可再叫 Titans-style**：真正的 Titans 是**有 online associative-memory update**
+的另一個 algorithm，**不能由 frozen NLL 代稱**。
+
+    s_t = mean_j [ -log P0( x_{t,j} | goal, 最近 W=4 個 raw event, x_{t,<j} ) ]
+
+平均於該 event 的**全部非 padding token**；同一 online reservoir、同一 deterministic tie rule。
+`P0` 是**獨立**模型：以 checksum 固定、與 MF-0 train/eval **不重疊**的
+**事件流-only** corpus 預訓練（含同一 goal／event surface，
+但**沒有** query／future-use／admission／reward／Store label）。
+`P0` 於 MF-0 前**凍結**、不共享 learned-gate 參數、**不在 session 內更新**。
+其架構／tokenizer／corpus seed／訓練步數／checkpoint selection 必須在 prereg **一次鎖死**，
+**不得**按 `W1` 成績選模型。
+三 seed 不勝 `recency` 時，**只封存此 baseline 於此 world，不評論 Titans**。
 
 每個 world、每個 seed，用**同一份 frozen 300-session eval**，報：
 
@@ -100,15 +149,27 @@
 **`W0`（負對照）**：預測 `random`／`recency`／`surprise`／`learned` 的**期望相等**（oracle 除外）。
 > **任何顯著優勢 → 先查漏洩，不得先當成能力。**
 
-**`W1`（主閘）**：`learned gate` 必須在**每一個 seed** 上，
-對 `recency` **與** `frozen surprise` **各有 `≥10pp` utility 優勢**，
-且 300 個**配對 session** 的 bootstrap 95% CI 下限 **`> 0`**。
-> 否則只記 **`MF-0 learned formation FAIL`**；
-> **不得**用漂亮的 `W0` 或 oracle-gap 補過。
+**`W1′`（主閘，Codex [176] 改版）** —— **不採 oracle-gap**：
 
-**`frozen surprise`**：若在 `W1` 的三個 seed 都未勝過 `recency`（同一 paired CI 規則），
-**封存為「此兩個 world」的 write-policy 候選** ——
-**不得**泛稱「Titans 被否證」。
+    U(learned) − U(goal-only) >= max(5pp, 0.5 H)
+
+其中 `H = U(π_content*) − U(goal-only)`，且同一 paired bootstrap 95% CI 下限 `> 0`；
+另對 `frozen predictive-surprisal` 亦須 paired CI 下限 `> 0`。
+
+> **這測的是「學到至少一半可因果使用的、超過 visible-goal 的訊號」**，
+> **不是**追逐一個不可能達成的 hindsight oracle。
+> `oracle` 繼續**只報**不可部署上界／剩餘 query-sampling variance。
+
+**先決條件**：`H` 必須先有可量空間。三 seed 的 `H` 若 95% CI **上限都 ≤5pp**，
+標為 **`causally non-discriminating beyond goal`**，**不訓練 learned gate**；
+**這只否定這個 world 的鑑別力**，不否定 formation 研究。
+
+主閘任一條件未達 → 記 **`MF-0 learned formation FAIL`**；
+**不得**用漂亮的 `W0` 或 `oracle-gap` 補過。
+
+**`frozen predictive-surprisal`**：若在 `W1′` 的三個 seed 都未勝過 `recency`
+（同一 paired CI 規則），**只封存此 baseline 於此 world** ——
+**不得**泛稱「Titans 被否證」（它是 frozen NLL，不是 Titans 的 online update）。
 
 ---
 
@@ -136,7 +197,7 @@ Titans 用 **surprise（內部梯度誤差）** 配 momentum 與 adaptive decay 
 
 ⚠️ 且 **surprise 高 ≠ 日後會被問到**。
 「我的門號密碼是 47」在一段平淡對話中並不 surprising，卻正是日後要用的。
-**`MF-0` 的 `frozen surprise` 對照組就是為了量這件事。**
+**`MF-0` 的 `frozen predictive-surprisal` 對照組就是為了量這件事。**
 
 ---
 
