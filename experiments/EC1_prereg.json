@@ -1,0 +1,59 @@
+{
+  "experiment": "EC-1",
+  "title": "exact-key conflict / overwrite contract（單程序、全序 commit）",
+  "spec_source": "Codex [166] 允許直接起草；本檔是**草案**，交 review 後才實作",
+  "status": "draft — 未實作、未跑、無 code",
+
+  "separation": {
+    "note": "這是 **Store contract**，與 `LKE-2R` 的 selector failure **完全分離**",
+    "frozen": ["core", "extractor", "schema z'", "delivery 介面", "任何 threshold"],
+    "key": "固定 canonical exact key `(name, attr)` —— **不經任何 query-side 解析**，所以 §4.67 的失敗不會汙染本關"
+  },
+
+  "scope": {
+    "is": "單程序、**全序 commit** 的 exact-key conflict contract",
+    "is_not": [
+      "crash 復原",
+      "torn write",
+      "concurrent / 多程序",
+      "stale snapshot 隔離",
+      "分散式一致性"
+    ],
+    "note": "加入 crash／torn／concurrent 語意之前，**只可**稱單程序全序版本"
+  },
+
+  "operations": {
+    "note": "四種操作與資料的**線性順序**開跑前鎖死；沒有第五種",
+    "new": "key 不存在 → commit，version 由呼叫端顯式提供",
+    "duplicate_same": "key 存在、version 與 z **完全相同** → **idempotent**，接受但不改變任何狀態",
+    "newer_different": "key 存在、內容不同、**且 version 顯式遞增** → 覆寫，成為最新已接受的 (version, z)",
+    "stale_different": "key 存在、內容不同、version **不遞增**（相等或更舊） → **reject，零 mutation**"
+  },
+
+  "hard_rule": {
+    "no_version_collision": "**沒有 version 的 same-key different-content 一律判 conflict 並 fail closed**",
+    "forbidden": "**不得**暗中 last-write-wins",
+    "rationale": "last-write-wins 會讓『記憶被無聲改寫』看起來像正常運作 —— 那正是這一關要抓的東西"
+  },
+
+  "primary_gate": {
+    "replayable": "每次 commit **前後**的 store snapshot hash、version、key、z 都必須可重放",
+    "read_semantics": "成功 read **只可**回最後一次已接受的 `(version, z)`",
+    "no_partial_write": "stale／conflict／duplicate **不得**造成部分寫入，**不得**改變已 committed 的 z",
+    "zero_delivery": "每一次 reject／conflict 的 injector call 必須是 **0**",
+    "healthy_parity": "healthy 的 newest read 與 direct path 的 `z`／delivery tensor／decode **逐位元相同**"
+  },
+
+  "open_questions_for_review": [
+    "version 的型別與提供者：呼叫端顯式整數，還是 store 內部單調計數？草案採**呼叫端顯式整數**，因為『沒有 version 就是 conflict』這條規則需要 version 是外部語意，不是實作細節。",
+    "duplicate_same 的『完全相同』是否要求 z 逐位元相等（`torch.equal`）而非 allclose？草案採**逐位元**。",
+    "n 與 stratum 比例、以及是否需要 seed —— 本關無學習成分，草案傾向**窮舉四種操作的所有轉移組合**而非抽樣，若可行則不需要 CI。",
+    "healthy_parity 的比較是否沿用 §4.64／§4.66 的三件套（z／delivery tensor／decode）——草案採沿用。"
+  ],
+
+  "stopping_rule": {
+    "run": "一次完成",
+    "on_pass": "只稱「單程序、全序 commit 下的 exact-key conflict contract 成立」；**不得**升格成 crash-safe／concurrent／distributed",
+    "on_fail": "保留原始違規紀錄；修正僅限實作已預先指定的 contract，並以完全同一 spec 重跑作 regression；**不得**改操作定義、version 語意或門檻去救"
+  }
+}

@@ -8,7 +8,8 @@
 1. 用 frozen train（730 筆）訓練 factorized extractor，4000 步。
 2. 用 frozen CAL（**400 個 episode**）選**一次**最低可行 `tau`：
    accept iff `c >= tau`，使 unsafe wrong-existing rate 的單側 95% CP 上界 `<= 1%`。
-   **之後不得再碰。**
+   **之後不得再碰。** 無可行者 → `REJECT_ALL` sentinel，**不是**數值 1
+   （數值 1 在 `c == 1.0` 時仍會 accept —— Codex [166] 抓到的 endpoint 漏洞）。
 3. 四個 test cell 各 300 episode（150 present + 150 absent），報全部 primary 欄位。
 
 `unsafe wrong-existing delivery` = 抽錯 key、通過 confidence gate、
@@ -32,6 +33,17 @@ from bridge_train_core import DEVICE
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# ⚠️ **全拒必須是 sentinel，不能用數值 1 冒充**（Codex [166] 抓到的 endpoint 漏洞）。
+#    實作是 `accept iff c >= tau`，所以浮點 `c == 1.0` 在 `tau=1.0` 時仍會被接受 ——
+#    `LKE-2R` seed 20260812 的 `T 1/300` 就是這個漏口，不是模型真的滿分自信。
+#    `reject_all` 直接 bypass accept／store／injector，語意上不可能有例外。
+REJECT_ALL = "reject_all"
+
+
+def accepts(c, tau):
+    """唯一的 accept 判定入口。任何一側都必須走這裡，不得各自寫 `c >= tau`。"""
+    return False if tau == REJECT_ALL else c >= tau
 P = json.load(open(os.path.join(HERE, "LKE1_prereg.json")))
 E, O = P["learner"]["encoder"], P["optimizer"]
 
@@ -125,7 +137,7 @@ def unsafe_count(preds, entries, tau):
     bad = n = 0
     for (e, side), (k_hat, c) in zip(episodes(entries), preds):
         n += 1
-        if c < tau:
+        if not accepts(c, tau):
             continue                                   # 被 gate 擋掉，沒有交付
         st = mk_store(e[side])
         if tuple(k_hat) != tuple(e["k"]) and st.contains(*k_hat):
@@ -134,7 +146,7 @@ def unsafe_count(preds, entries, tau):
 
 
 def pick_tau(m, tok, art):
-    """從**事前固定的 grid** 選最低可行 tau。無可行者 → tau=1（全拒）。"""
+    """從**事前固定的 grid** 選最低可行 tau。無可行者 → `REJECT_ALL`（真正的全拒）。"""
     cal = art["cal"]
     qs = [e["q"] for e, _ in episodes(cal)]
     preds = predict(m, tok, qs)
@@ -142,7 +154,7 @@ def pick_tau(m, tok, art):
         bad, n = unsafe_count(preds, cal, tau)
         if cp_upper(bad, n) <= 0.01:
             return tau, bad, n, cp_upper(bad, n)
-    tau = P["selective_policy"]["tau_fallback"]
+    tau = REJECT_ALL                                   # fallback = **真的**全拒
     bad, n = unsafe_count(preds, cal, tau)
     return tau, bad, n, cp_upper(bad, n)
 
@@ -162,7 +174,7 @@ def run_cell(core, tok, inj, loops, m, entries, tau):
         for side in ("present", "absent"):
             r["n_ep"] += 1
             st = mk_store(e[side])
-            if c < tau:
+            if not accepts(c, tau):
                 if exact and side == "present":
                     r["false_abstain"] += 1
                 continue

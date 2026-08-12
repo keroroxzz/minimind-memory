@@ -24,7 +24,7 @@ import bridge_renderer as B
 import lke2r_data as D
 from bridge_g3c_dangling import Injector, cp_upper
 from lke1_phase0 import mk_store
-from lke1_run import Extractor, predict, train as train_extractor
+from lke1_run import REJECT_ALL, accepts, Extractor, predict, train as train_extractor
 from lke1_run import run_cell as u_run_cell
 from bridge_train_core import DEVICE
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
@@ -50,7 +50,7 @@ def to_accepts(m, tok, entries, tau, inj=None):
          "same_attr_wrong_existing": 0, "wrong_attr_guarded_absent": 0}
     c0 = inj.calls if inj else 0
     for e, (k_hat, c) in zip(entries, preds):
-        if c < tau:
+        if not accepts(c, tau):
             continue                                  # 正確：拒絕
         r["accepted"] += 1                            # **這一格本身就是 primary unsafe**
         st = mk_store(e["store"])
@@ -71,7 +71,7 @@ def pick_tau(m, tok, art):
         ro = to_accepts(m, tok, art["to_cal"]["O"], tau)
         if rt["accepted"] == 0 and ro["accepted"] == 0:
             return tau, rt, ro
-    tau = P["selective_policy"]["tau_fallback"]
+    tau = REJECT_ALL                                  # fallback = **真的**全拒
     return tau, to_accepts(m, tok, art["to_cal"]["T"], tau), \
         to_accepts(m, tok, art["to_cal"]["O"], tau)
 
@@ -99,7 +99,7 @@ def main():
         print(f"  ==== seed {seed}")
         m = train_extractor(tok, art, seed)
         tau, ct, co = pick_tau(m, tok, art)
-        fb = tau >= 1.0
+        fb = tau == REJECT_ALL
         print(f"    tau={tau}（CAL accept：T {ct['accepted']}/300、"
               f"Ø {co['accepted']}/300）{'  ⚠️ fallback 全拒' if fb else ''}")
         out[str(seed)] = {"tau": tau, "cal": {"T": ct, "O": co},

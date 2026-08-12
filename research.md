@@ -4655,8 +4655,12 @@ factorized canonical query extraction 與 exact-membership guard
 **可同時維持 utility 與已量的 wrong-existing safety**。
 
 **不可主張**：不得稱 semantic／natural／open-set；
-**不得**說 confidence gate 已驗證（它從未被觸發）；
+**不得**說 confidence gate 已驗證（它在本實驗中從未被觸發）；
 **不得**把 `0/300` 當成 gate 有效的證據。
+
+> **後續（§4.67）**：這個空洞已經被 `LKE-2R` 真正 exercise，**並且以 FAIL 封住**。
+> 往後**不要**再寫成「gate 未驗證」，正確的寫法是
+> 「**在已測的 referential `T`／`Ø` 分布，confidence selector 不具可用的安全—效用轉移**」。
 
 ### 兩個過程紀錄（不刪）
 
@@ -4733,14 +4737,34 @@ grid 中**沒有任何門檻**能讓 `T` 與 `Ø` 在 CAL 上同時 `0/300` acce
 
 ### 可主張／不可主張
 
-**可主張**：在此有限受控 descriptor grammar 下，**指涉式 unique extraction 成立**
-（`U` raw exact 100%，兩個 OOD 軸都不掉），
-但 **closed-set softmax 的 confidence 不能作為對未見「不可唯一化」結構的拒絕信號** ——
-它的中位數有方向性，尾巴卻與可解 query 完全重疊。
+**結論屬於哪一層**（Codex [166] 裁定）：這個 FAIL 屬於
+**Memory Interface 的 query-side canonicalizer／abstention selector**，
+**不是** Store、writer 或 Reasoning Core。
+`U` raw extraction 100% 排除了此 frozen grammar 的 unique parsing；
+`U` 的 oracle ceiling 排除了 core ceiling；
+exact-membership guard 只擋得住 `attr_hat` 也錯的情況，**救不了同 attr 的錯名**。
 
-**不可主張**：**不得**說 confidence 完全無資訊（中位數單調分開是真的）；
-**不得**外推到有 abstain 監督的設定（本關刻意不給）；
-**不得**稱 semantic／natural／open-set；單一 grammar、單一 core、三 seed。
+**可主張的精確句子**：
+
+> 在此 **factorized closed-set extractor**、`max p_name × max p_attr` score
+> 與**固定 τ grid** 下，**沒有可同時維持 `U` utility 與 `T`／`Ø` zero-accept 的 threshold**。
+
+**不可主張**：**不得**泛稱「closed-set softmax confidence 一律不可用」——
+只測了一種 score 定義、一個 grammar、一個 grid、三個 seed。
+**不得**說 confidence 完全無資訊（中位數單調分開是真的，但只能作描述，
+**不得升格成可用的 support signal**）；
+**不得**外推到有 abstain 監督的設定（本關刻意不給）；不得稱 semantic／natural／open-set。
+
+### 一個必須補記、但**不改 FAIL** 的 endpoint 漏洞
+
+prereg 把 `τ=1` 稱作「全拒」，實作卻是 `accept iff c >= τ` ——
+**浮點 `c == 1.0` 時仍會 accept**。`seed 20260812` 的 `T 1/300`
+正是這個漏口，**不是**模型對該 descriptor 真的有滿分自信（Codex [166]）。
+
+已改為共用的 **`REJECT_ALL` sentinel**（`lke1_run.accepts()` 是唯一判定入口，
+直接 bypass accept／store／injector），往後不得再用數值 1 冒充全拒。
+**`LKE-2R` 不重跑**：真正全拒只會讓 `U` 的 false-abstain 更高，三 seed 仍必定 FAIL；
+該筆 `T` delivery **保留為額外的、非必要的 safety violation**。
 
 ### 依 prereg seal
 
