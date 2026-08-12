@@ -1,0 +1,158 @@
+{
+  "experiment": "LKE-2R",
+  "title": "controlled referential extraction + selective rejection",
+  "spec_source": "Codex [164] 回覆；本檔只把它固化成可執行的數字。**不是 LKE-1 retry**",
+  "status": "awaiting interface-only review — 未訓練",
+  "scope": {
+    "is": "有限受控 descriptor grammar 下的 unique extraction 與 calibrated abstention",
+    "is_not": [
+      "semantic／natural／open-set",
+      "write-side extraction",
+      "同實體多屬性（§4.63 已封存）",
+      "LKE-1 的重跑"
+    ]
+  },
+  "key_difference_from_lke1": "**query 不得含 canonical name 字面**，只有 descriptor 與 attr alias；extractor 必須做 (color,shape)→name 的指涉解析",
+  "artifact": {
+    "builder": "experiments/lke2r_data.py",
+    "path": "experiments/lke2r_artifact.json",
+    "checksum": "639e74973dc153f4",
+    "split_seed": 20260813,
+    "note": "**不重用 LKE-1 artifact**（不同 seed、不同 grammar）",
+    "descriptor_world": {
+      "U": 16,
+      "T": 16,
+      "O": 48,
+      "source": "凍結的 bridge_store.ENT，每個 color／shape 恰 2 名"
+    },
+    "strata": {
+      "U": "完整 conjunction → 恰 1 個 referent → 解析並交付",
+      "T": "只給單一屬性 → 恰 2 個 → **查 store 前拒絕**",
+      "O": "不存在的組合 → 0 個 → **查 store 前拒絕**"
+    },
+    "sizes": {
+      "train": 730,
+      "u_cal": 200,
+      "u_cells": "4 × 150",
+      "to_cal": "T 300 ＋ Ø 300",
+      "to_test": "T 300 ＋ Ø 300"
+    },
+    "to_store": "T／Ø 的 store **放滿該 attr 的 16 個 name** → 任何 accept 必然 wrong-existing，membership 擋不掉",
+    "u_distractor_rule": "沿用 LKE-1：寫進 artifact 且**必須異名**（§4.63 封存範圍）"
+  },
+  "phase0": {
+    "script": "experiments/lke2r_phase0.py",
+    "result": "PASS",
+    "invariants": "任一 query 不含 name 字面；U/T/Ø 幾何逐題查表；T/Ø 各 300 distinct 且 CAL/test 互斥；held-out frame 無新 lexical atom；T/Ø store 的 16-name coverage；U 的 store 契約沿用 LKE-1",
+    "u_oracle_ceiling": {
+      "ID": {
+        "ok": 147,
+        "n": 150
+      },
+      "K": {
+        "ok": 149,
+        "n": 150
+      },
+      "P": {
+        "ok": 147,
+        "n": 150
+      },
+      "KxP": {
+        "ok": 150,
+        "n": 150
+      }
+    },
+    "note": "T／Ø **不跑 oracle core** —— 預期零交付"
+  },
+  "learner": {
+    "note": "**單一固定架構，不做 architecture sweep**。以下每個數字都在訓練前鎖死。",
+    "tokenizer": "既有 minimind_tokenizer（vocab 6400），不重訓、不擴充",
+    "encoder": {
+      "type": "transformer encoder（非因果，雙向）",
+      "d_model": 256,
+      "layers": 4,
+      "heads": 4,
+      "ffn": 1024,
+      "dropout": 0.1,
+      "max_len": 32,
+      "pos": "learned absolute",
+      "pool": "mean over non-pad positions"
+    },
+    "heads": {
+      "name": "Linear(256 -> 16)",
+      "attr": "Linear(256 -> 3)",
+      "factorized": "兩個 head 各自 softmax，**不共享輸出層、不建 48-way 聯合分類器** —— 聯合分類器會讓 held-out combo 這個軸失去意義"
+    },
+    "loss": "未加權 CE，name 與 attr 等權相加"
+  },
+  "optimizer": {
+    "type": "AdamW",
+    "lr": 0.0003,
+    "betas": [
+      0.9,
+      0.98
+    ],
+    "weight_decay": 0.01,
+    "wd_exempt": [
+      "embedding",
+      "norm",
+      "bias"
+    ],
+    "scheduler": "OneCycleLR, pct_start=0.05",
+    "batch_size": 64,
+    "steps": 4000,
+    "grad_clip": 1.0
+  },
+  "seeds": [
+    20260812,
+    20260813,
+    20260814
+  ],
+  "training_data": "**只有 U**。**不給 T／Ø 任何 abstain label** —— 本關刻意問 closed-set softmax confidence 能否對未見的『不可唯一化』結構轉移；給 label 會讓這個問題消失（Codex [164]）",
+  "selective_policy": {
+    "confidence": "c = max_n p(name=n|x) * max_a p(attr=a|x)",
+    "tau_grid": [
+      0.5,
+      0.6,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.925,
+      0.95,
+      0.975,
+      0.99
+    ],
+    "tau_fallback": 1.0,
+    "rule": "每 seed 用其自己的 extractor ＋ frozen CAL，選**最低**的 tau，使 **T 與 Ø 各自** 0/300 confidence accept（單側 95% CP UB 0.99%）；無可行者則 tau=1（全拒），由 utility gate 判 FAIL",
+    "procedure": "accept iff c >= tau；argmax tie 取固定最小 index；tau 一經選定不得重選、不得在 test 上重調",
+    "note": "這是選 selector policy，**不是**把 test label 偷餵給 learner"
+  },
+  "primary_gate": {
+    "granularity": "三個 seed **各自**都要過；不得 pooled average",
+    "U": [
+      "raw key exact >= 95%（每 cell 150 個相異字串）",
+      "present: key-exact delivery >= 95%",
+      "present: false-abstain <= 5%",
+      "unsafe wrong-existing delivery 0/300",
+      "每次 exact delivery 的 key/z/delivery/decode 與 oracle direct path 逐例相同"
+    ],
+    "T_and_O": [
+      "**各自** 0/300 confidence accept（UB 0.99%）",
+      "**各自** 0/300 injector call／delivery"
+    ],
+    "note": "**accept 本身就是 primary unsafe**；不得因 membership 剛好擋掉而補過。另報 accepted key 是否會形成 wrong-existing，僅作診斷"
+  },
+  "stopping_rule": {
+    "run": "一次三-seed train/eval",
+    "forbidden_after_seeing_results": [
+      "加 typo 配方",
+      "改 ENT／grammar",
+      "改 train mix",
+      "改 tau grid"
+    ],
+    "on_fail": "LKE-2R FAIL；結論僅拆成 U extraction／selective-confidence transfer／downstream ceiling 三者之一，然後轉 exact-key conflict/overwrite",
+    "on_pass": "只稱「此有限受控 descriptor grammar 下的 unique extraction 與 calibrated abstention」；**不升格** natural／semantic"
+  }
+}

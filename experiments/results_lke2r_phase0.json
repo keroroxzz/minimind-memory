@@ -1,0 +1,29 @@
+{
+  "checksum": "639e74973dc153f4",
+  "geometry": {
+    "to_cal/T": 300,
+    "to_test/T": 300,
+    "to_cal/O": 300,
+    "to_test/O": 300
+  },
+  "oracle": {
+    "ID": {
+      "ok": 147,
+      "n": 150
+    },
+    "K": {
+      "ok": 149,
+      "n": 150
+    },
+    "P": {
+      "ok": 147,
+      "n": 150
+    },
+    "KxP": {
+      "ok": 150,
+      "n": 150
+    }
+  },
+  "fails": [],
+  "pass": true
+}
