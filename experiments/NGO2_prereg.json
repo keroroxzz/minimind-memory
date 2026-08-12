@@ -2,15 +2,13 @@
   "experiment": "NG-O2",
   "title": "下一代 core／schema 的 feasibility ceiling：同 entity 多 record 共存下的單目標交付",
   "spec_source": "Codex [169]／[170] 裁定；`NEXTGEN_DESIGN.md` 是設計閘",
-  "status": "draft v2 — 未實作、未訓練、無 code；待第二次 interface review",
-
+  "status": "draft v3 — 未實作、未訓練、無 code；三個 blocker 已逐項封閉，待 checklist",
   "framing": {
     "what_it_is": "**新系統的 feasibility ceiling**",
     "what_it_is_not": "**不是**對 bridge 的 causal ablation。schema、資料任務與 carrier policy **全部都變了**，不得寫成『同架構、只有 schema/task 改變＝單一變因』（Codex [170] blocker 1）",
-    "expected_outcome": "**預期會過。** 單目標交付 ＋ oracle key ＋ 顯式 value carrier，難度很低。本關的價值是**建立歸因基線**，不是發現。若把它寫成研究發現，就是把 ceiling 當結果（§4.65／§4.68 已犯過同類的過度陳述）",
-    "what_a_fail_would_mean": "若連這都不過，代表新 schema 或 Core 連『從單一顯式 carrier 讀出值』都做不到 —— 那必須先修這裡，後面的 extractor／selector 全部無意義"
+    "expected_outcome": "**事前預期 PASS**：在 oracle key、單一顯式 value carrier、且 phase-0 已排除 key/value/delivery wiring 錯誤時，本關是預期低難度的 feasibility ceiling；其價值是提供**後續接口失敗的歸因基線**，**不是新記憶機制的證據**。此預測**不降低 FAIL 的地位**：任一 primary cell FAIL 仍依 stopping rule seal，**不得事後改稱任務其實太難**。",
+    "what_a_fail_would_mean": "若連這都不過，代表新 schema 或 Core 連『從單一顯式 carrier 讀出值』都做不到 —— 必須先修這裡，後面的 extractor／selector 全部無意義"
   },
-
   "what_this_measures": {
     "is": [
       "Store 能否讓同 entity 的多個 record 共存（K0 key 互異）",
@@ -26,7 +24,6 @@
       "address／retrieval 效度（`addr` 已移出 carrier，見 schema）"
     ]
   },
-
   "honesty_note_must_accompany_any_pass": {
     "point": "**架構改動是把 §4.63 的失敗模式「以構造排除」，不是「解掉」。**",
     "detail": "§4.63 的失敗是 Core 在多候選 carrier 之間 routing 時塌成 attr-only。NG 的分工是 Interface 唯一化後才交付，所以 O2 只交付**一個** carrier，那個失敗模式在構造上不可能發生。",
@@ -35,17 +32,19 @@
     "allowed_claim": "「同 entity 多 record 可共存，且已選出的 target 可被消費」",
     "forbidden_claim": "「同實體多屬性已解決」／「§4.63 已修復」"
   },
-
   "key_abi": {
     "version": "K0（literal canonicalization baseline）",
     "form": "key = (scope_id, entity_norm, attribute_norm)",
     "scope_id": "O2 全部用 `SELF`",
     "norm": "**只准** Unicode NFKC、casefold、空白／標點正規化",
-    "forbidden": ["synonym", "fuzzy match", "embedding nearest-neighbor"],
+    "forbidden": [
+      "synonym",
+      "fuzzy match",
+      "embedding nearest-neighbor"
+    ],
     "store": "**完整 K0 key 的 exact lookup**",
     "claim_limit": "只可稱 literal canonicalization baseline，不得稱自然語言理解"
   },
-
   "value_abi": {
     "version": "V0",
     "form": "2–4 位 decimal，generation-time exact ground truth",
@@ -54,7 +53,6 @@
     "A_ans": "value normalizer 之後的**整串 exact match**（normalizer 只做分位空白的正規化）",
     "claim_limit": "任意字串是獨立的 `V1` copy/output 軸，不得靠 V0 外推"
   },
-
   "schema": {
     "z_V": "[ digits(4×10=40) , len_onehot(3) ] = **43 維**",
     "addr_removed": "**`addr` 不進 carrier**（Codex [170] Q1）。單目標交付時 Core 不需知道 address；把它塞進 `z` 只是**未被量到的 nuisance channel**，而『零 exact collision』對 hash→float 向量幾乎是空洞保證。",
@@ -62,49 +60,70 @@
     "deferred": "`ψ` 的 hash family／碰撞／近鄰分離／多候選檢索效度，留給日後**真正使用 address** 的 `K1`／retrieval prereg；屆時**必須量 downstream selection**，不可只數 exact collision",
     "claim_limit": "43 維 one-hot carrier 只可稱 **oracle explicit value carrier**，**不是** learned compression，**不是**一般 latent schema"
   },
-
   "core": {
     "arch": "hidden 512 / 8 layers / 8 heads / 2 KV heads / num_loops=4",
     "flags": "`use_engram=False` 等所有旗標**顯式釘死**（CLAUDE.md：預設 True 會靜默變 134M）",
     "init": "**從頭訓練**，不從 bridge core 續訓",
     "delivery": "**`n=1` 單一 target carrier，train 與 eval 皆然**"
   },
-
   "training_spec_frozen": {
     "note": "Codex [170] blocker 2：**全部凍結，不留到寫 code 時決定**",
-    "generator": "每 episode：`E` 個 entity；target entity 有 `m ∈ {2,3}` 個 attribute；另有**同 attribute 的異 entity** distractor；所有寫入**任意交錯**；查詢其中一個 record",
+    "generator": "見 `generator_frozen`（**該節為準**）—— 本欄原本寫的『任意交錯／同一生成分布』已被 Codex [171] blocker 3 判定為留給實作選擇的自由度，不得再作規格",
     "entity_inventory": "16 個 name（沿用 `bridge_renderer.NAMES`，僅為可重現性；O2 不宣稱 open-set entity）",
     "attribute_inventory": "12 個中文屬性短語，固定清單寫入 artifact",
     "query_template": "`{entity} 的 {attribute} 是 多少 ?` —— **受控文字，O2 不測 natural canonicalization**",
     "answer_format": "值逐位以空白分隔（沿用 CLAUDE.md 記過的 6400 BPE 數字切分教訓）",
     "tokenizer": "既有 `minimind_tokenizer`，**不重訓、不擴充**",
-    "split": "train／eval 為**不相交的 episode**，同一生成分布（O2 是 ceiling，**不設 OOD 軸**）",
+    "split": "train stream 與 eval artifact 為**不相交的 episode**，同一生成分布；各自帶生成 seed 與 fingerprint（見 `generator_frozen.artifacts`）。O2 是 ceiling，**不設 OOD 軸**",
     "optimizer": "AdamW，lr 6e-4，betas (0.9, 0.95)，weight_decay 0.01（**grouped**：embedding／norm／bias 豁免）",
     "scheduler": "OneCycleLR，pct_start 0.03",
     "batch_size": 48,
     "steps": 24000,
     "grad_clip": 1.0,
     "loss": "answer token 的 CE，prompt 全部 mask 成 -100；**未加權**",
-    "seeds": [20260812, 20260813, 20260814],
+    "seeds": [
+      20260812,
+      20260813,
+      20260814
+    ],
     "checkpoint_rule": "**只用最終步的 checkpoint。不挑點、不早停、不做 model selection。**"
   },
-
   "cells": {
     "note": "Codex [170] Q2：五格是**不規則但完全合法**的條件設計",
-    "list": ["m2-first", "m2-last", "m3-first", "m3-middle", "m3-last"],
+    "list": [
+      "m2-first",
+      "m2-last",
+      "m3-first",
+      "m3-middle",
+      "m3-last"
+    ],
     "no_fabrication": "**不虛構** `m2-middle` 來湊 2×3 factorial",
     "n_per_cell": 300,
     "per_seed": true,
     "threshold": "每一格 `A_ans >= 95%`；**不得** pooled",
     "across_m": "跨 `m` 的比較**只能描述**，**不可**作主效果"
   },
-
   "oracle_ceilings": {
-    "O1": "單一 fact、oracle key、單目標交付 → 作答",
-    "O2": "**主閘**，見 cells",
-    "O3": "**只驗** oracle serialize → Store → read → delivery 的 round-trip。**絕不沾** write-side text→key"
+    "note": "三者**各自獨立可執行**，**不得**借彼此的漂亮數字補過（Codex [171] blocker 1）",
+    "O1": {
+      "what": "**繞過 Store**，`z_V → delivery → core` 的 direct path",
+      "n": "每 seed 固定 **300** 個 2–4 digit episode（凍結）",
+      "gate": "整串 exact `A_ans >= 95%`"
+    },
+    "O3": {
+      "what": "**同一批凍結 episodes**：`oracle z_V` direct path vs `Store.write/read z_V` path",
+      "n": ">= 300／seed（即 O1 的同一批）",
+      "gate": [
+        "逐題比較 **readback** 與 **delivery tensor** 的 bitwise 相等",
+        "兩條路徑**各自**的 exact decode"
+      ],
+      "scope": "**只驗** oracle serialize → Store → read → delivery 的接合；**絕不沾** write-side text→key"
+    },
+    "O2": {
+      "what": "五個 **store-populated** cell，見 `cells`",
+      "gate": "每格 `A_ans >= 95%`"
+    }
   },
-
   "phase0_before_training": [
     "K0 的 norm 冪等：`norm(norm(x)) == norm(x)`",
     "每 episode 的**所有** K0 key 互異（同 entity 不同 attr、同 attr 不同 entity 皆然）",
@@ -112,20 +131,34 @@
     "逐題 assert query 文字**不含任何 target 或 non-target 的 value token**",
     "target 的 `z_V` 與 Store readback、與 delivery tensor **逐位元一致**",
     "Store `verify() == 0`",
-    "value 每 episode 重抽（fingerprint 檢查，非只看 seed）"
+    "value 每 episode 重抽（fingerprint 檢查，非只看 seed）",
+    "O1／O3 的 300 個凍結 episode 具 fingerprint，且與 O2 的 eval artifact 不共用",
+    "`target_write_index` 與答案**統計獨立**的前置檢查：在 oracle 直送下各 index 的正確率不得有系統差異（用以排除 generator/評估的 position leakage）"
   ],
-
   "fault_attribution": {
     "store_cannot_hold": "同 entity 的多 record 發生 key 碰撞或互相覆寫 → **Store／K0 問題**（phase-0 應先擋下）",
     "delivery_core": "key 與 `z_V` 都正確、答案仍錯 → **Core 消費能力不足**（O2 FAIL 的主要歸因）",
-    "position_dependence": "某個 `target_write_index` 顯著較差 → Core 從**寫入順序**取得了不該有的信號",
+    "position_dependence": "某個 `target_write_index` 顯著較差 → **首先**表示 generator／Store read／delivery／評估切分有 **position leakage 或 bug**（Core 只看 query ＋同一個 selected `z_V`，**理論上看不到寫入位置**）。phase-0 之後仍存在，才記為**未解的 position-conditioned end-to-end failure**。**Core 歸因只在**同一 `(query, z_V, delivery)` 的 **paired counterfactual 輸出不同**時才成立。",
     "wrong_record": "答案等於某個 distractor 的值 → **拿錯 record**；因 phase-0 已保證值兩兩相異，此格可被乾淨識別"
   },
-
   "stopping_rule": {
     "run": "一次三-seed train/eval",
     "order": "**O2 未過 → 不進入 extractor**。硬性順序，非建議",
     "on_fail": "seal，依 fault_attribution 記明歸因；**不換 schema／不調 core／不改 cell 比例**去救",
     "on_pass": "只稱「同 entity 多 record 可共存，且已選出的 target 可被消費」；**必須同時引用 `honesty_note_must_accompany_any_pass`**"
+  },
+  "generator_frozen": {
+    "note": "Codex [171] blocker 3：「任意交錯」「同一生成分布」**不得**留給實作選擇",
+    "E": 2,
+    "E_meaning": "target entity ＋ **一個**同-attribute 的 distractor entity",
+    "entities": "從 16 個 name 均勻無放回抽 2 個",
+    "m_ratio": "`m ∈ {2,3}` **等比例**（各 50%）",
+    "target_index": "target entity 的內部寫入序取均勻隨機排列；`target_write_index` 在**每個可行 index 上等比例**（m=2 取 {0,1}；m=3 取 {0,1,2}）",
+    "nontarget_records_per_entity": "distractor entity **恰 1 筆**，其 attribute 與被查詢的 attribute **相同**",
+    "attribute_rule": "target entity 從 12 個屬性短語**均勻無放回**抽 m 個；distractor 使用**被查詢的**那一個",
+    "interleave": "把 target entity 的 m 筆與 distractor 的 1 筆合併後，**均勻抽取一個保持各 entity 內部順序的交錯**（等價於在 m+1 個位置中均勻選出 distractor 的插入點）",
+    "values": "2–4 位 decimal，每 episode 重抽；**episode 內兩兩相異**（不符即整批重抽，非逐一修補）",
+    "artifacts": "**train stream 一份**、**eval 三份**（每個 run seed 一份，各為 5 cell × 300），**各自帶生成 seed 與 fingerprint**",
+    "artifact_caveat": "eval 三份各自獨立，故**跨 seed 的差異同時含 eval artifact 的差異**。本關是 ceiling 而非 seed 比較，可接受；但**不得**把跨 seed 差異解讀成訓練變異。"
   }
 }
