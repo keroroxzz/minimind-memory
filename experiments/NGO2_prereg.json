@@ -1,0 +1,102 @@
+{
+  "experiment": "NG-O2",
+  "title": "下一代 core／schema 的 oracle ceiling：同 entity 多 attribute 的單目標交付",
+  "spec_source": "Codex [169] 裁定；`NEXTGEN_DESIGN.md` 是設計閘",
+  "status": "draft — 未實作、未訓練、無 code",
+
+  "what_this_measures": {
+    "is": "新 schema ＋ 新 Core 能否消費**已唯一選出的** latent；以及 Store 能否讓同 entity 的多 attribute 共存",
+    "is_not": [
+      "canonicalizer（讀寫兩側的 text→key 都用 oracle k*）",
+      "write formation（write-side text→key 仍是獨立未測 blocker）",
+      "natural canonicalization",
+      "selector／abstention（§4.67 的 blocker 未動）"
+    ]
+  },
+
+  "honesty_note_must_accompany_any_pass": {
+    "point": "**架構改動是把 §4.63 的失敗模式「以構造排除」，不是「解掉」。**",
+    "detail": "§4.63 的失敗是 Core 在多個候選 carrier 之間 routing 時塌成 attr-only。NG 的分工是 **Interface 唯一化後才交付**，所以 O2 只交付**一個** target carrier，那個失敗模式**在構造上不可能發生**。",
+    "forbidden_reading": "**不得**把 O2 PASS 寫成「同實體多屬性已解決」或「§4.63 已修復」。它只證明：在單目標交付下，同 entity 多 attribute 不造成問題。多候選 routing 這個問題被**移出 Core 的職責**，而不是被解決 —— 它變成 Interface 的唯一化問題，那正是 §4.67 FAIL 的地方。"
+  },
+
+  "key_abi": {
+    "version": "K0（literal canonicalization baseline，Codex [169] Q2）",
+    "form": "key = (scope_id, entity_norm, attribute_norm)",
+    "scope_id": "由可信 session／source metadata 決定；O2 全部用 `SELF`",
+    "norm": "**只准** Unicode NFKC、casefold、空白／標點正規化",
+    "forbidden": ["synonym", "fuzzy match", "embedding nearest-neighbor"],
+    "store": "**永遠保留 full key** 作 exact equality",
+    "address": "若 address 由 key 導出，**collision／驗證失敗必 fail-closed**；**hash 相同不等於 identity 相同**",
+    "claim_limit": "只可稱 literal canonicalization baseline，**不得**稱自然語言理解"
+  },
+
+  "value_abi": {
+    "version": "V0（Codex [169] Q3）",
+    "form": "2–4 位 decimal，generation-time exact ground truth",
+    "resample": "**每 episode 重抽**",
+    "prompt": "讀取 prompt **絕不含 value text**、無 placeholder",
+    "output": "容許既定的分位空白正規化",
+    "claim_limit": "任意字串是**獨立的 V1 copy/output 軸**，**不得**靠 V0 PASS 外推"
+  },
+
+  "schema_proposal": {
+    "note": "**新 schema，不繼承 bridge 的 `z'`**（後者 value 是純量、attr 是 3 類 one-hot，兩者都撐不住開放集）",
+    "z": "[ addr(32) , digits(4×10=40) , len_onehot(3) ] = 75 維",
+    "addr": "`ψ(key)` —— 由 **canonical key 字串**導出的決定性函數（固定 seed 的 hash → 高斯 → 單位化）。**不是查表**，所以未見 entity／attribute 也有 address。這是 `φ` 的開放集替代品。",
+    "digits": "每一位一個 10 類 one-hot，**精確可逐 token 驗**；不用 `v/100` 純量（4 位數會失真）",
+    "open_question": "`ADDR_DIM=32` 與 hash 族的選擇：**collision 率必須在 phase-0 量並 assert**，不得假設。若在本任務的 key 空間上有 collision，依 K0 必 fail-closed。"
+  },
+
+  "core_proposal": {
+    "note": "**架構與 bridge core 相同，只有 schema 與任務改變** —— 維持單一變因",
+    "arch": "hidden 512 / 8 layers / 8 heads / 2 KV heads / num_loops=4",
+    "flags": "`use_engram=False` 等所有旗標**顯式釘死**（CLAUDE.md 記過：預設 True 會靜默變 134M）",
+    "training": "**從頭訓練**，不從 bridge core 續訓（schema 維度不同，且 §4.63 的 routing 策略不應被繼承）",
+    "delivery": "**單一 target carrier（n=1）**。新 core 從頭訓練，不存在 bridge core『沒訓練過 n=1』的問題"
+  },
+
+  "oracle_ceilings": {
+    "O1": "單一 fact、oracle key、單目標交付 → 作答。界定 Core 的消費能力",
+    "O2": "**主閘**。同 entity 的 m 個 attribute 同時在 Store；另有**同 attr 的異 entity distractor**；Interface 只讀出 target 的一個 `z` 注入",
+    "O3": "寫入 → Store → 讀出 → 交付的 round-trip，全程 oracle key。**只是 Store-delivery 接合**，不含 write-side text→key formation",
+    "threshold": "每一格 `A_ans >= 95%`"
+  },
+
+  "cells": {
+    "note": "每個 cell **各自** `>=95%`；**不得** pooled average",
+    "factors": {
+      "m": "同 entity 的 attribute 數 ∈ {2, 3}",
+      "target_write_index": "target 在該 entity 的寫入序中的位置：first／middle（m=3 才有）／last"
+    },
+    "list": ["m2-first", "m2-last", "m3-first", "m3-middle", "m3-last"],
+    "interleave": "其他 entity 的寫入與本 entity 的寫入**任意交錯**（acceptance target 的第 4 條）",
+    "distractors": "Store 內固定含 (a) 同 entity 的其餘 attribute、(b) **同 attribute 的異 entity** 條目 —— 後者確保 attribute 本身不足以識別"
+  },
+
+  "seeds": [20260812, 20260813, 20260814],
+
+  "fault_attribution": {
+    "note": "本關全程 oracle key，所以失敗面窄；仍須事前分開",
+    "store_cannot_hold": "同 entity 的多 attribute 發生 key 碰撞或互相覆寫 → **Store／key ABI 問題**（phase-0 應以 assert 先擋下）",
+    "address_collision": "`ψ` 在本 key 空間上碰撞 → **schema 問題**，依 K0 fail-closed",
+    "delivery_core": "key 與 z 都正確、答案仍錯 → **Core 消費能力不足**，這是 O2 FAIL 的主要歸因",
+    "position_dependence": "若某個 `target_write_index` 顯著較差 → Core 從**寫入順序**取得了不該有的信號（違反契約 2.1(c)）"
+  },
+
+  "phase0_before_training": [
+    "K0 的 norm 在資料上冪等（`norm(norm(x)) == norm(x)`）",
+    "同 entity 不同 attribute 的 key **互異**；同 attribute 不同 entity 的 key 互異",
+    "`ψ` 在**全部**出現過的 key 上**零 collision**（實測並 assert，不得假設）",
+    "讀取 prompt 不含 value text，且不含任何 placeholder",
+    "value 每 episode 重抽（fingerprint 檢查，非只看 seed）",
+    "Store `verify() == 0`"
+  ],
+
+  "stopping_rule": {
+    "run": "一次三-seed train/eval",
+    "order": "**O2 未過 → 不進入 extractor**。硬性順序，非建議",
+    "on_fail": "seal，依 fault_attribution 記明歸因；**不換 schema／不調 core／不改 cell 比例**去救",
+    "on_pass": "只稱「在單目標交付下，新 schema／Core 可消費同 entity 多 attribute 的 latent」；**必須同時引用 `honesty_note_must_accompany_any_pass`**"
+  }
+}

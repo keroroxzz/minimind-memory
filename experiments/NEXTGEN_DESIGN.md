@@ -46,9 +46,15 @@ Codex [168] 要求：不動 code，先鎖 acceptance target、各元件擁有的
 | **擁有的 state** | 權重。**不擁有任何記憶內容。** |
 | **輸入** | token 序列 ＋ 一組 memory carrier(latent) |
 | **輸出** | token |
-| **可觀測契約** | (a) 給定同一組 carrier 與同一段文字,輸出**決定性**;(b) carrier 為空時**不得**編造記憶內容;(c) 對 carrier 的**順序**不變 |
+| **可觀測契約** | (a) 給定同一組 carrier 與同一段文字,輸出**決定性**;(b) 生成任務中,absent key 必答 `?` 且零交付;(c) **僅對沒有順序語意的同角色 delivery set** 順序不變 |
 
-**(c) 是新的**。目前靠訓練時隨機打亂 carrier 順序達成,但從未被當作契約驗證過。
+**(b) 的措辭已收窄**（Codex [169]）:這只是**本生成任務**的 absent-key 行為,
+**不是**「一般語言模型不會幻覺」那種宣稱。
+
+**(c) 也已收窄**:順序不變**只適用於同角色、無順序語意的 delivery set**。
+若未來真的交付多項,**Interface 必須以明示的 metadata／slot 定義語意順序**,
+**Core 不得**從 raw insertion position 猜 recency 或 identity。
+⚠️ 訓練時 shuffle **不等於**契約已驗證 —— 目前它從未被量過,不得寫成已成立。
 
 ### 2.2 Memory Interface
 
@@ -56,7 +62,12 @@ Codex [168] 要求：不動 code，先鎖 acceptance target、各元件擁有的
 |---|---|
 | **擁有的 state** | 無持久 state。**每次呼叫都是純函數。** |
 | **職責** | `文字 → key`(讀寫兩側)、`key → address`、`latent ↔ 交付張量` |
-| **可觀測契約** | (a) 讀寫兩側對同一實體必須產生**同一個 key**;(b) 無法唯一化時**必須拒絕**且**零交付**;(c) 拒絕與交付之間沒有第三種狀態 |
+| **可觀測契約** | (a) 讀寫兩側對同一實體必須產生**同一個 key**;(b) 無法唯一化時**必須拒絕**且**零交付**;(c) 拒絕與交付之間沒有第三種狀態;(d) **唯一化在交付之前完成** |
+
+**(d) 是架構的硬分工**（Codex [169] 指出我草案的結構衝突）:
+**Interface 唯一化後才 deliver,不得把多個候選丟給 Core 讓它自己 routing。**
+舊 bridge 正是那樣做的,而 §4.63 證明 Core 會把 routing 塌成 attr-only。
+把那個分工帶進下一代,等於重製一個已知會壞的設計。
 
 **(a) 是整個系統的樞紐,而且從未被測過** —— LKE 系列只做了讀取側。
 寫入時說「我的門號密碼」與讀取時問「門號密碼多少」必須映到同一個 key,
@@ -152,12 +163,38 @@ key 必須由內容導出(例如 canonical 化的字串),address 必須由 key �
 
 ---
 
-## 8. 待裁的三個問題
+## 8. 三個問題的裁決（Codex [169]）
 
-1. **第一關該是 O2(同實體多屬性的新 schema/core),還是先鎖 key 的
-   canonical 化規則?** 我傾向 **O2 先**,因為它是產品目標的斷點,
-   而且不需要任何 learned 元件就能量。
-2. **key 的 canonical 化**要用什麼機制?這是 §4.67 失敗的正面問題。
-   我沒有好答案,**刻意不在此提方案**,以免又變成「先想到一個機制再找理由」。
-3. **值的表示**:繼續用固定格式短字串(可逐 token 驗),
-   還是要求支援任意字串?後者會讓 evaluation 立刻退化成人工判讀。
+### Q1 —— `NG-O2` 是第一個**實驗**,但 key ABI 先凍結
+
+key ABI 的凍結是**規格前置,不是另開實驗**。O2 用 oracle `k*` 做讀寫,
+量的是**新 schema ＋ Core 能否消費「已唯一選出的」latent**,
+以及 **Store 能否讓同 entity 的多 attribute 共存**。**它不測 canonicalizer。**
+
+### Q2 —— 鎖的是 key 的 **ABI**,不選 learned canonicalizer 機制
+
+第一版 **`K0`**,fail-closed 的 deterministic scaffold:
+
+```
+key = (scope_id, entity_norm, attribute_norm)
+```
+
+- `scope_id` 由**可信的** session／source metadata 決定（例如 `SELF`）。
+- `norm` **只准** Unicode NFKC、casefold、空白／標點正規化。
+- **不得**偷偷做 synonym、fuzzy match 或 embedding nearest-neighbor。
+- Store **永遠保留 full key** 作 exact equality。
+- 若 address code 由 key 導出,**collision／驗證失敗必 fail-closed** ——
+  **hash 相同不等於 identity 相同**。
+
+**`K0` 只可稱 literal canonicalization baseline,不得稱自然語言理解。**
+paraphrase／別名／coreference 的 learned canonicalization 是 O2 之後的 **`K1`**,
+且**必須先有獨立的 read-write agreement gate**,不得藉 selector 分數放行。
+
+### Q3 —— 值的表示採 **`V0` 固定格式短值**
+
+generation-time exact ground truth 的 **2–4 位 decimal**（輸出容許既定的分位空白正規化）,
+**每 episode 重抽**,讀取 prompt **絕不含 value text**。
+這先隔離「值能否由 latent 消費」,不把 tokenizer／長文字 copy 的壓力混進 O2。
+
+任意字串**不必然**需要人工判讀（日後可用生成值的 normalized exact match）,
+但它是**獨立的 `V1` copy/output 軸**,**不得**靠 `V0` PASS 外推。
