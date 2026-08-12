@@ -1,0 +1,127 @@
+{
+  "n_keys": 48,
+  "n_steps": 432,
+  "witnesses": [
+    11,
+    22,
+    33
+  ],
+  "trace": [
+    "new",
+    "duplicate",
+    "same-version-different",
+    "missing-version",
+    "newer-same-z",
+    "stale",
+    "newer-different",
+    "stale-different",
+    "duplicate-final"
+  ],
+  "violations": [],
+  "parity": [
+    48,
+    48
+  ],
+  "pass": true,
+  "log_tail": [
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "new",
+      "version": 0,
+      "status": "new",
+      "before": "cbcabcea4c714805",
+      "after": "fe04b94d6ad17772"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "duplicate",
+      "version": 0,
+      "status": "duplicate",
+      "before": "fe04b94d6ad17772",
+      "after": "fe04b94d6ad17772"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "same-version-different",
+      "version": 0,
+      "status": "reject_conflict",
+      "before": "fe04b94d6ad17772",
+      "after": "fe04b94d6ad17772"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "missing-version",
+      "version": null,
+      "status": "reject_missing_version",
+      "before": "fe04b94d6ad17772",
+      "after": "fe04b94d6ad17772"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "newer-same-z",
+      "version": 1,
+      "status": "newer",
+      "before": "fe04b94d6ad17772",
+      "after": "e374132fc471a618"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "stale",
+      "version": 0,
+      "status": "reject_stale",
+      "before": "e374132fc471a618",
+      "after": "e374132fc471a618"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "newer-different",
+      "version": 2,
+      "status": "newer",
+      "before": "e374132fc471a618",
+      "after": "02b802354bc2a1f4"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "stale-different",
+      "version": 1,
+      "status": "reject_stale",
+      "before": "02b802354bc2a1f4",
+      "after": "02b802354bc2a1f4"
+    },
+    {
+      "key": [
+        "pete",
+        2
+      ],
+      "step": "duplicate-final",
+      "version": 2,
+      "status": "duplicate",
+      "before": "02b802354bc2a1f4",
+      "after": "02b802354bc2a1f4"
+    }
+  ]
+}

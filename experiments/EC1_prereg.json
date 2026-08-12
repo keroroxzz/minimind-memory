@@ -2,14 +2,18 @@
   "experiment": "EC-1",
   "title": "exact-key conflict / overwrite contract（單程序、全序 commit）",
   "spec_source": "Codex [166] 允許直接起草；本檔是**草案**，交 review 後才實作",
-  "status": "draft — 未實作、未跑、無 code",
-
+  "status": "authorized — Codex [167] 裁定四項並授權實作與一次 deterministic run",
   "separation": {
     "note": "這是 **Store contract**，與 `LKE-2R` 的 selector failure **完全分離**",
-    "frozen": ["core", "extractor", "schema z'", "delivery 介面", "任何 threshold"],
+    "frozen": [
+      "core",
+      "extractor",
+      "schema z'",
+      "delivery 介面",
+      "任何 threshold"
+    ],
     "key": "固定 canonical exact key `(name, attr)` —— **不經任何 query-side 解析**，所以 §4.67 的失敗不會汙染本關"
   },
-
   "scope": {
     "is": "單程序、**全序 commit** 的 exact-key conflict contract",
     "is_not": [
@@ -21,39 +25,62 @@
     ],
     "note": "加入 crash／torn／concurrent 語意之前，**只可**稱單程序全序版本"
   },
-
   "operations": {
-    "note": "四種操作與資料的**線性順序**開跑前鎖死；沒有第五種",
-    "new": "key 不存在 → commit，version 由呼叫端顯式提供",
-    "duplicate_same": "key 存在、version 與 z **完全相同** → **idempotent**，接受但不改變任何狀態",
-    "newer_different": "key 存在、內容不同、**且 version 顯式遞增** → 覆寫，成為最新已接受的 (version, z)",
-    "stale_different": "key 存在、內容不同、version **不遞增**（相等或更舊） → **reject，零 mutation**"
+    "note": "四類，**線性順序開跑前鎖死**。Codex [167] 補上原草案漏掉的 `newer_same-z` 格",
+    "version_rule": "呼叫端顯式、**每 key 的非負整數**，每次正常 commit 都必填。Store **不生成語意時間**，只比較 `v_new` 與該 key 已 committed 的 `v_cur`",
+    "new": "key 不存在且有 version → commit",
+    "duplicate": "**僅限** `(v, z)` 都相同 → idempotent，零狀態改變",
+    "newer": "`v_new > v_cur` → 接受並推進 version，**z 可相同或不同皆接受**（原草案的 `newer_different` 改名，避免 `newer_same-z` 落在未定義區）",
+    "reject": "所有 `v_new <= v_cur` 但非 exact duplicate（**含相同 z 的 stale version**）一律 reject、零 mutation",
+    "reject_missing_version": "`version=None` 一律 reject、零 mutation —— 既有 key 的 different-content 如此，**新 key 缺 version 亦然**，以免產生無法比較的 entry"
   },
-
-  "hard_rule": {
-    "no_version_collision": "**沒有 version 的 same-key different-content 一律判 conflict 並 fail closed**",
-    "forbidden": "**不得**暗中 last-write-wins",
-    "rationale": "last-write-wins 會讓『記憶被無聲改寫』看起來像正常運作 —— 那正是這一關要抓的東西"
-  },
-
   "primary_gate": {
-    "replayable": "每次 commit **前後**的 store snapshot hash、version、key、z 都必須可重放",
-    "read_semantics": "成功 read **只可**回最後一次已接受的 `(version, z)`",
-    "no_partial_write": "stale／conflict／duplicate **不得**造成部分寫入，**不得**改變已 committed 的 z",
+    "replayable": "每次 commit 前後的 store snapshot hash、version、key、z 都可重放",
+    "read_semantics": "成功 read 只回最後一次已接受的 `(version, z)`；newest accepted read 必須先有正確的 `(key, version, z)`",
+    "no_partial_write": "stale／conflict／duplicate／missing-version 不得造成部分寫入，不得改變已 committed 的 z",
     "zero_delivery": "每一次 reject／conflict 的 injector call 必須是 **0**",
-    "healthy_parity": "healthy 的 newest read 與 direct path 的 `z`／delivery tensor／decode **逐位元相同**"
+    "healthy_parity": "newest accepted read 的 `z`／delivery tensor／同 core 的 decode **三件套逐位元**皆與 direct-current-z path 相同。這是 **parity**，**不要求** core 的文字答案 100%（既有 oracle ceiling 本就不是 100%）"
   },
-
-  "open_questions_for_review": [
-    "version 的型別與提供者：呼叫端顯式整數，還是 store 內部單調計數？草案採**呼叫端顯式整數**，因為『沒有 version 就是 conflict』這條規則需要 version 是外部語意，不是實作細節。",
-    "duplicate_same 的『完全相同』是否要求 z 逐位元相等（`torch.equal`）而非 allclose？草案採**逐位元**。",
-    "n 與 stratum 比例、以及是否需要 seed —— 本關無學習成分，草案傾向**窮舉四種操作的所有轉移組合**而非抽樣，若可行則不需要 CI。",
-    "healthy_parity 的比較是否沿用 §4.64／§4.66 的三件套（z／delivery tensor／decode）——草案採沿用。"
-  ],
-
   "stopping_rule": {
     "run": "一次完成",
     "on_pass": "只稱「單程序、全序 commit 下的 exact-key conflict contract 成立」；**不得**升格成 crash-safe／concurrent／distributed",
-    "on_fail": "保留原始違規紀錄；修正僅限實作已預先指定的 contract，並以完全同一 spec 重跑作 regression；**不得**改操作定義、version 語意或門檻去救"
+    "on_fail": "保留原始違規紀錄；**只可修 contract 實作**並以**完全相同的 trace／witness** 做 regression；**不得**改 version 語意、trace 或 witness 去救"
+  },
+  "equality": {
+    "rule": "**canonical stored representation 的嚴格相等**（Codex [167] Q2）",
+    "steps": "先固定 dtype／shape／device normalization，再要求 version 相同、shape／dtype 相同、且 `torch.equal(z_new, z_cur)`",
+    "forbidden": [
+      "`allclose`",
+      "把 metadata 偷列為同一內容"
+    ],
+    "note": "version 是獨立欄、address 由 key 決定，兩者另行逐位驗"
+  },
+  "design": {
+    "sampling": "**不抽樣、不設 n／seed／CI**；採『凍結有限 trace 的窮舉』（Codex [167] Q3）",
+    "keys": "全部 48 個 canonical key",
+    "witnesses": "每 key **三個事前固定且相異**的 value／z witness（zA, zB, zC）",
+    "trace": [
+      "new(v0, zA)",
+      "duplicate(v0, zA)",
+      "same-version-different reject(v0, zB)",
+      "missing-version reject(None, zB)",
+      "newer-same-z(v1, zA)",
+      "stale reject(v0, zA)",
+      "newer-different(v2, zB)",
+      "stale-different reject(v1, zC)",
+      "duplicate(v2, zB)"
+    ],
+    "per_step_asserts": [
+      "target 的前後 snapshot",
+      "**所有非 target key 的 snapshot 不變**",
+      "accepted／rejected status 與預期相符",
+      "`verify() == 0`"
+    ],
+    "scope_note": "窮舉的是**已鎖的 operation／transition domain**，**不冒充**窮舉連續 latent 空間"
+  },
+  "hard_rule": {
+    "no_version_collision": "**沒有 version 的 same-key different-content 一律 reject 並 fail closed**",
+    "forbidden": "**不得**暗中 last-write-wins",
+    "rationale": "last-write-wins 會讓『記憶被無聲改寫』看起來像正常運作 —— 那正是這一關要抓的東西"
   }
 }

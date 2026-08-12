@@ -4777,6 +4777,63 @@ prereg 把 `τ=1` 稱作「全拒」，實作卻是 `accept iff c >= τ` ——
 
 ---
 
+## 4.68 `EC-1` exact-key conflict / overwrite contract：**PASS（單程序、全序）**
+
+規格 `experiments/EC1_prereg.json`（Codex [166] 允許起草、[167] 裁定四項並授權）。
+`experiments/ec1_run.py`，`bridge_store.Store.commit_v`。
+**無學習成分、無抽樣、無 seed、無 CI** —— 窮舉**已鎖的 operation／transition domain**，
+**不冒充**窮舉連續 latent 空間。
+
+`commit()` **一個字都沒動**（§4.57 以降所有已封存實驗逐位元依賴它）；
+版本語意走獨立的 `commit_v()`。
+
+### 契約
+
+Store **不生成語意時間**，只比較呼叫端顯式給的 `v_new` 與該 key 的 `v_cur`：
+
+| 條件 | status | 改變狀態？ |
+|---|---|---|
+| `version is None`（**新 key 亦然**） | `reject_missing_version` | 否 |
+| key 不存在 | `new` | 是 |
+| `v_new > v_cur`（**z 可同可異**） | `newer` | 是 |
+| `v_new == v_cur`，z 嚴格相等 | `duplicate` | **否**（idempotent） |
+| `v_new == v_cur`，z 不同 | `reject_conflict` | 否 |
+| `v_new < v_cur`（**含 z 相同**） | `reject_stale` | 否 |
+
+**硬規則**：沒有 version 的 same-key different-content 一律 reject 並 fail closed，
+**不得暗中 last-write-wins** —— 那會讓「記憶被無聲改寫」看起來像正常運作。
+
+相等性用 **canonical stored representation 的嚴格相等**
+（dtype／shape 正規化後 `torch.equal`），**不用 `allclose`**。
+
+### 結果
+
+48 個 canonical key × 9 步全序 trace = **432 次操作，違規 0 筆**。
+healthy parity **48/48 逐位元相同**（`z`／delivery tensor／decode 三件套）。
+
+### 這個 PASS 有多少資訊量 —— 同 §4.65 的自我扣減
+
+**契約是我寫的，測試也是我寫的，所以「實作遵守自己的契約」接近同義反覆。**
+真正非平凡的只有三件：
+
+1. **每一步都 assert 全部 48 個非 target key 的 snapshot 不變** ——
+   這才抓得到「意外的全域 mutation」，而那正是 last-write-wins 類 bug 的形狀。
+2. **parity**：從 store **讀回**的 `z` 與**直接構造**的 `z`，
+   經過投影與 core 之後 delivery tensor 與 decode 字串**逐位元相同**。
+   這驗的是 round-trip 沒有悄悄改變表示。
+3. **`newer_same-z` 原本是規格漏洞**：我的草案只寫了 `newer_different`，
+   `v_new > v_cur` 但 z 相同的情形**落在未定義區**。Codex [167] 補上，
+   改為 `newer` 只看 version。**這是規格 review 抓到的，不是實作抓到的。**
+
+### 範圍
+
+**只可稱「單程序、全序 commit 下的 exact-key conflict contract 成立」。**
+**不得**升格成 crash-safe／concurrent／distributed。
+不涵蓋：crash 復原、torn write、多程序併發、stale snapshot 隔離。
+也仍不涵蓋同實體多屬性（§4.63）與 query-side selector（§4.67）。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

@@ -33,6 +33,7 @@ class Store:
     def __init__(self):
         self._d = {}          # canonical key -> (addr tensor, z' tensor)
         self._dangling = set()  # 索引還在、內容沒了（部分寫入／GC race 的代理）
+        self._ver = {}          # EC-1：canonical key -> 已接受的 version（`commit()` 不寫這格）
 
     # ---- 寫入 --------------------------------------------------------
     @staticmethod
@@ -76,6 +77,71 @@ class Store:
         assert k in self._d, "只能對已 commit 的 entry 注入 dangling"
         self._dangling.add(k)
         return k
+
+    # ---- EC-1：版本化 commit（`EC1_prereg.json`，Codex [167] 鎖定） ---------
+    #
+    # ⚠️ **`commit()` 一個字都沒動** —— §4.57 以降所有已封存的實驗逐位元依賴它。
+    #    版本語意走這條獨立路徑，兩者不共用狀態以外的東西。
+    #
+    # Store **不生成語意時間**，只比較呼叫端給的 `v_new` 與該 key 的 `v_cur`：
+    #
+    #   version is None      -> reject_missing_version（**新 key 亦然**，
+    #                           否則會產生無法比較的 entry）
+    #   key 不存在           -> new
+    #   v_new >  v_cur       -> newer（**z 可同可異皆接受**，並推進 version）
+    #   v_new == v_cur, z 同 -> duplicate（idempotent，零狀態改變）
+    #   v_new == v_cur, z 異 -> reject_conflict
+    #   v_new <  v_cur       -> reject_stale（**含 z 相同的情形**）
+    #
+    # **不得暗中 last-write-wins** —— 那會讓「記憶被無聲改寫」看起來像正常運作。
+
+    @staticmethod
+    def _same_z(a, b):
+        """canonical stored representation 的**嚴格**相等。不用 `allclose`。"""
+        return (a.shape == b.shape and a.dtype == b.dtype and torch.equal(a, b))
+
+    def commit_v(self, name, attr_idx, z, version):
+        """版本化 commit。回傳 status 字串；**任何 reject 都是零 mutation**。"""
+        k = self.canonical(name, attr_idx)
+        z = z.detach().to("cpu", torch.float32).contiguous()
+        if version is None:
+            return "reject_missing_version"
+        assert isinstance(version, int) and version >= 0, "version 必須是非負整數"
+        if k not in self._d:
+            self._d[k] = (S.phi(name, attr_idx).clone(), z.clone())
+            self._ver[k] = version
+            return "new"
+        v_cur, z_cur = self._ver[k], self._d[k][1]
+        if version > v_cur:
+            self._d[k] = (self._d[k][0], z.clone())
+            self._ver[k] = version
+            return "newer"
+        if version == v_cur:
+            return "duplicate" if self._same_z(z, z_cur) else "reject_conflict"
+        return "reject_stale"
+
+    def version(self, name, attr_idx):
+        return self._ver.get(self.canonical(name, attr_idx))
+
+    def snapshot(self):
+        """全狀態的可重放指紋：key、version、z 的**位元組**。"""
+        import hashlib
+        h = hashlib.sha256()
+        for k in sorted(self._d):
+            h.update(repr(k).encode())
+            h.update(repr(self._ver.get(k)).encode())
+            h.update(self._d[k][1].numpy().tobytes())
+        return h.hexdigest()[:16]
+
+    def entry_snapshot(self, name, attr_idx):
+        """單一 key 的指紋 —— 用來 assert 非 target key 未被動到。"""
+        import hashlib
+        k = self.canonical(name, attr_idx)
+        if k not in self._d:
+            return None
+        h = hashlib.sha256(repr(self._ver.get(k)).encode())
+        h.update(self._d[k][1].numpy().tobytes())
+        return h.hexdigest()[:16]
 
     def keys(self):
         return list(self._d)
