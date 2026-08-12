@@ -4513,6 +4513,61 @@ shadow 欄只報「會嘗試交付」的次數，**不合成假內容再把它�
 
 ---
 
+## 4.65 `B0-N` noisy symbolic descriptor：**九格全過**，但要看清楚它證明了什麼
+
+規格 Codex [159] 回覆鎖定，腳本 `experiments/bridge_b0n_eval.py`。
+**零訓練**，凍結 `bridge_core_latent.pth`。距離是明確的 Hamming error model
+—— `d(q,e) = 1[color 不同] + 1[shape 不同]` —— **不是相似度**。
+resolver 規則（`bridge_store.resolve_noisy`）**開跑前鎖死**：
+只在 `d1=1` 且 `d2−d1≥1` 時解出唯一最近鄰；`d1=d2=1` 為 near-tie、
+`d1≥2` 為 no-match，兩者一律 hard-abstain。
+
+| pool | stratum | key exact | abstain | **unsafe 交付** | 逐位元同 | 相異 query 數 |
+|---|---|---|---|---|---|---|
+| 8 | `N-U` | **300/300** | 0/300 | 0/300 | **300/300** | 76 |
+| 8 | `N-T` | — | 300/300 | **0/300** | — | 18 |
+| 8 | `N-Ø` | — | 300/300 | **0/300** | — | 90 |
+| 24 | `N-U` | **300/300** | 0/300 | 0/300 | **300/300** | 50 |
+| 24 | `N-T` | — | 300/300 | **0/300** | — | 66 |
+| 24 | `N-Ø` | — | 300/300 | **0/300** | — | 10 |
+| 36 | `N-U` | **300/300** | 0/300 | 0/300 | **300/300** | 11 |
+| 36 | `N-T` | — | 300/300 | **0/300** | — | 36 |
+| 36 | `N-Ø` | — | 300/300 | **0/300** | — | **2** |
+
+`unsafe 交付` 依 Codex [159] 的定義：`N-T`／`N-Ø` 上**任一** resolver key、
+**任一** injector call、**任一**模型作答都算，**不論答案剛好是誰的值**。
+診斷欄 `wrong-existing / target-by-luck / third` 全為 0/0/0。
+
+### 這個 PASS 有多少資訊量 —— 說清楚，不要當成發現
+
+**`N-T`／`N-Ø` 的 0 unsafe 幾乎是規則的重述。** resolver 是規則式的，
+abstain 條件就寫在規則裡，所以「規則式 resolver 遵守自己的規則」接近同義反覆。
+那兩格真正驗到的只有 plumbing：**abstain 之後 injector 呼叫數增量為 0**
+（逐題 assert），也就是 fail-closed 沒有在實作層漏掉。
+
+**真正非平凡的是兩件事：**
+
+1. **`N-U` 的逐位元同一性 300/300** —— 用**噪聲描述**解出的 key，
+   其 `z`、投影後的 delivery tensor、decode 字串，與用該 entity
+   **真實 (color, shape)** 走 B0-U 精確路徑的結果**完全相同**。
+   resolver 換了入口而下游一位元都沒變。
+2. **三個 stratum 在三個 pool 下都非空**，且逐題 assert 幾何成立
+   —— 不是靠重抽湊出好看的配置。
+
+### 必須跟著報的限制
+
+**`n=300` 是從相異 query 有放回抽樣，有效多樣性遠低於 300。**
+最極端的 `pool=36 / N-Ø` 只有 **2 個**相異 query，`pool=36 / N-U` 只有 **11 個**
+（全部 `8×8×3 = 192` 個 query 窮舉分類後的結果）。
+**那些格子的 300/300 不得當成 300 個獨立證據。**
+
+**措辭鎖定**：這是 `noisy symbolic descriptor resolution`，
+**不是** semantic／open-set retrieval，PASS **不得**升格。
+下一個問題是 learned／自然語言 key extraction 的**獨立**規格。
+仍不涵蓋：同實體多屬性（§4.63 起）、overwrite／reconsolidation、write-address formation。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

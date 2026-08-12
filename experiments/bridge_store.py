@@ -178,3 +178,44 @@ def resolve(store, color=None, shape=None, attr_idx=0):
     if not cand:
         return None, "absent"
     return (cand[0], attr_idx), "ok"
+
+
+# ------------------------------------------------------------ B0-N 噪聲描述
+# **明確的 Hamming error model，不是語意相似度**（Codex [159] 回覆鎖定規格）：
+#
+#     d(q, e) = 1[color 不同] + 1[shape 不同]      ∈ {0, 1, 2}
+#
+# 值域與 `ENT` 兩欄完全沿用 B0，**不新增任何學習成分、不設閾值**。
+# 措辭限定為 `noisy symbolic descriptor resolution`；
+# **不得**叫作 semantic／open-set retrieval，PASS 也不得升格。
+
+
+def hamming(q_color, q_shape, name):
+    c, s = ENT[name]
+    return int(c != q_color) + int(s != q_shape)
+
+
+def resolve_noisy(store, q_color, q_shape, attr_idx):
+    """噪聲描述 → key。**規則開跑前鎖死，不得因結果調整。**
+
+    只在 `d1 == 1` 且 `d2 - d1 >= 1` 時回傳唯一最近鄰：
+
+    - `d1 == 1 and d2 == 1` → `near_tie`  → **hard-abstain**
+    - `d1 >= 2`             → `no_match`  → **hard-abstain**
+    - `d1 == 0`             → `exact`     → 交給 B0-U 的精確路徑，不歸 B0-N 管
+
+    回傳 `(key_or_None, status)`。
+    """
+    cand = sorted(((hamming(q_color, q_shape, nm), nm) for nm in B.NAMES
+                   if store.contains(nm, attr_idx)))
+    if not cand:
+        return None, "no_match"
+    d1 = cand[0][0]
+    if d1 == 0:
+        return None, "exact"
+    if d1 >= 2:
+        return None, "no_match"
+    d2 = cand[1][0] if len(cand) > 1 else 99
+    if d2 - d1 < 1:
+        return None, "near_tie"
+    return (cand[0][1], attr_idx), "ok"

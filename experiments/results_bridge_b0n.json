@@ -1,0 +1,139 @@
+{
+  "core": "bridge_core_latent.pth",
+  "n": 300,
+  "pools": [
+    8,
+    24,
+    36
+  ],
+  "cells": {
+    "8|N-U": {
+      "exact": 300,
+      "abstain": 0,
+      "unsafe": 0,
+      "bitwise_same": 300,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 76
+    },
+    "8|N-T": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 18
+    },
+    "8|N-Ø": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 90
+    },
+    "24|N-U": {
+      "exact": 300,
+      "abstain": 0,
+      "unsafe": 0,
+      "bitwise_same": 300,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 50
+    },
+    "24|N-T": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 66
+    },
+    "24|N-Ø": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 10
+    },
+    "36|N-U": {
+      "exact": 300,
+      "abstain": 0,
+      "unsafe": 0,
+      "bitwise_same": 300,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 11
+    },
+    "36|N-T": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 36
+    },
+    "36|N-Ø": {
+      "exact": 0,
+      "abstain": 300,
+      "unsafe": 0,
+      "bitwise_same": 0,
+      "wrong_key": 0,
+      "diag": {
+        "wrong_existing": 0,
+        "target_by_luck": 0,
+        "third": 0
+      },
+      "n": 300,
+      "n_queries": 2
+    }
+  },
+  "fails": [],
+  "pass": true
+}
