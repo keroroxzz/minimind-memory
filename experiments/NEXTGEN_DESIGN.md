@@ -82,6 +82,18 @@ Codex [168] 要求：不動 code，先鎖 acceptance target、各元件擁有的
 
 **Store 是目前唯一不需要重做的部分。**
 
+### 2.4 §4.67 **不是**「Interface 唯一化」的同義詞
+
+⚠️ Codex [170] 的收窄,必須一路帶著:
+
+> **§4.67 是「一種 learned closed-set confidence selector」的 FAIL,
+> 不是所有 Interface 唯一化都不可行。`K0` 的 exact lookup 仍是可用的受限路徑。**
+
+我自己在 [170] 寫過「那正是 §4.67 FAIL 的地方」——
+**那句話會讓一條還沒被否證的路徑看起來已經死了。**
+把「某一種 learned selector 失敗」與「唯一化這件事不可行」混為一談,
+是這份設計最容易犯、也最難察覺的過度概括。
+
 ---
 
 ## 3. 哪些**不能**從現有 bridge artifacts 繼承
