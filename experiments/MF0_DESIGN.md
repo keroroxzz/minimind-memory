@@ -1,6 +1,6 @@
-# `MF-0` memory formation —— 設計草案，**未實作、未訓練**
+# `MF-0` memory formation —— 設計 **v2**（規格已鎖，未實作、未訓練）
 
-規格來源：Codex [173]。**這是第一個直接回答原始目標的實驗**：
+規格來源：Codex [173]／[174]。**這是第一個直接回答原始目標的實驗**：
 
 > **不標註 WRITE、模型自己學何時記。**
 > `K0`／`zdelta`／`NG-O2` 那條線**沒有**回答這件事 —— 它們全部是
@@ -12,87 +12,145 @@
 
 一串事件流過來，**容量有限**。模型必須自己決定**留下哪些**。
 
-- **沒有 `WRITE` 標籤** —— 不告訴它哪一句該記。
-- **沒有 `SEARCH` 標籤** —— 不告訴它何時該查。
-- **沒有 importance 標註** —— 不給任何人工的重要性訊號。
-- **事件文字在 formation 之後丟棄** —— 不能靠留著原文偷看。
-- **唯一的學習訊號**：**未來 query 的 task loss ＋ budget 成本。**
+- **沒有 `WRITE`／`SEARCH`／importance 標籤。**
+- **事件文字在 admission 之後丟棄** —— 不能靠留著原文偷看。
+- **唯一的學習訊號**：**未來 query 的 task reward ＋ hard budget。**
 
 也就是：**「該記什麼」必須從「後來被問到什麼」反推出來。**
 
 ---
 
-## 2. 為什麼不是照抄 Titans
+## 2. 兩個 world —— **不選一個**（Codex [174]）
 
-Titans 用 **surprise（內部梯度誤差）** 當保留訊號，配 momentum 與 adaptive decay。
-它處理**形成與壓縮**確實比我們手工指定的 schema 優雅。
+我原本想在「query 均勻抽」與「query 偏向最近」之間**選一個**。
+**那是錯的**：二選一都會把**一種產品環境假設偽裝成 gate 的結論**。
+（而且我發現自己想選的那個，剛好讓 `learned gate` 好看。）
 
-但它更新的是 neural associative memory 的**參數／狀態**，
-**不天然給每筆事實一個可版本化的物件** ——
-沒有存在性、沒有版本、沒有刪除、無法證明缺席。
+兩個 world **同等預先登記**，相同 `N`／`B`／模型／訓練預算與**同一張比較表**：
 
-⚠️ 而且有一個必須量、不能用美感補的風險：
-**surprise 高 ≠ 日後會被問到。** 一個低-surprise 但日後關鍵的事件
-（「我的門號密碼是 47」在一段平淡對話中並不 surprising）會被漏掉。
-**`MF-0` 正是要量這個。**
+| world | query 從何而來 | 角色 |
+|---|---|---|
+| **`W0-exchangeable`** | 對已寫入 record **均勻抽樣** | **負對照** |
+| **`W1-goal-predictable`** | 由 **event 到達時已可見**的 session goal／topic 與 event 內容關係決定；事件順序隨機化 | 真正的問題 |
+
+- **`W0` 是負對照**：任何 online non-oracle policy 對 `random` 的**穩定優勢，
+  一律先視為 leakage**，不是能力。
+- **`W1`** 才問：task loss 能不能從**可見情境**學到 retention。
+- **兩個 world 不得 pooled**；**不得**用 `W1` 的成功宣稱一般性的自然湧現。
+
+⚠️ `W1` 的 goal 是**可見的 future-use predictor**，
+**不是** `important` token、**不是**隱藏標籤。
+`W0` 保留**同樣的 surface goal**，但讓它與 query target **獨立** ——
+兩個 world 的表面長得一樣，只有統計相依性不同。
 
 ---
 
-## 3. 角色分離（Codex [173] 的硬約束）
+## 3. 規格（全部鎖死）
+
+| # | 項目 | 值 |
+|---|---|---|
+| 1 | 每 session 事件數 `N` | **64** |
+| 1 | committed record budget `B` | **8** |
+| 1 | budget 型別 | 所有 record 同型 → **record budget 即 byte budget**；bytes 另報但**不加第二個約束** |
+| 2 | active raw-event window `W` | **4** |
+| 2 | goal context | 每 session **固定且全程可見** |
+| 2 | 事件原文 | **admission 之後丟棄** |
+| 2 | 每 session query 數 `Q` | **16**，在 stream 之後問；**query-delay 覆蓋整個 64-event stream** |
+| 4 | gate 形式 | **因果的 per-event scalar priority** |
+| 4 | 訓練期 policy | 固定溫度的 **stochastic weighted-reservoir／without-replacement**，維持**恰 `B` 個 slot**，**只可 evict 過去的 item** |
+| 4 | 訓練訊號 | future-query return 的 **policy gradient ＋ 固定 leave-one-out baseline** |
+| 4 | 評估期 policy | **同一 priority 的 deterministic online top-B** |
+| 5 | oracle | query 是 **atomic exact-key read**，故**不是 NP-hard**：事後按每 record 的 `Q` 次 **future-use count** 選 top-B |
+
+⚠️ **第 4 項的最後一句是防作弊的關鍵**：訓練時**不得** soft/dense 地偷看全部 64 個 event。
+線上、因果、恰 `B` 個 slot —— 否則測到的是「事後選最優子集」，那是 oracle 的工作。
+
+⚠️ **oracle 只是一個不可部署的上界**，必須明列。
+
+---
+
+## 4. 角色分離（硬約束）
 
 | 元件 | 可以做 | **不可以**做 |
 |---|---|---|
-| 學習式 gate（surprise／task-learned） | 決定「這個 event 值不值得**形成／保留**」——**admission／priority policy** | **不是**存在性證明；**不得**用於 query-time 的 accept／abstain |
-| typed Store | 授權答案；`commit(full key, version/provenance, z)` 是原子的 | —— |
+| 學習式 gate | 決定「這個 event 值不值得**形成／保留**」——**admission／priority policy** | **不是**存在性證明；**不得**用於 query-time 的 accept／abstain |
+| typed Store | 授權答案；`commit` 是原子的 | —— |
 
 **沒有 committed record 時，guard 的語意是「沒有可交付的證據」，零交付／abstain ——
 不是「該事實在世界中為假」。**
 
-神經記憶可以**提案、壓縮、排序**；**只有 typed Store 有權授權答案。**
-這不是把兩個同類模組硬黏在一起，而是把 **lossy optimization** 與
-**可稽核的 epistemic commit** 放在各自做得到的層。
-**目前這仍是設計命題，沒有實測成功。**
+---
+
+## 5. 對照組與指標
+
+同 budget：`random`／**`recency`**／`frozen surprise`（Titans-style，不隨任務訓練）／
+`learned gate`／`oracle future-use`（上界）。
+
+每個 world、每個 seed，用**同一份 frozen 300-session eval**，報：
+
+- mean **future-query utility**
+- **oracle-gap**
+- **dropped-record correct abstain**（被丟掉的 record 被問到時，是否正確拒絕）
+- 真正 absent-key 的 **0 delivery**
 
 ---
 
-## 4. 對照組（同 budget，缺一不可）
+## 6. 事前裁決 —— 開跑前鎖死
 
-| policy | 內容 | 角色 |
-|---|---|---|
-| `random` | 隨機留 | 地板 |
-| **`recency`** | 留最近的 | **真正要打敗的對手** |
-| `frozen surprise` | Titans-style，不隨任務訓練 | 被檢定的假說 |
-| `learned gate` | 由未來 query 的 task loss ＋ budget 成本學 | 主角 |
-| `oracle future-use` | 事後才知道哪些會被問到 | **上界** |
+**`W0`（負對照）**：預測 `random`／`recency`／`surprise`／`learned` 的**期望相等**（oracle 除外）。
+> **任何顯著優勢 → 先查漏洩，不得先當成能力。**
 
-**主指標**：future-query utility，以及與 oracle 的差距（**oracle-gap**）。
-**安全指標**：absent key 的**零交付**（沿用既有 guard 語意）。
+**`W1`（主閘）**：`learned gate` 必須在**每一個 seed** 上，
+對 `recency` **與** `frozen surprise` **各有 `≥10pp` utility 優勢**，
+且 300 個**配對 session** 的 bootstrap 95% CI 下限 **`> 0`**。
+> 否則只記 **`MF-0 learned formation FAIL`**；
+> **不得**用漂亮的 `W0` 或 oracle-gap 補過。
 
----
-
-## 5. 事前裁決 —— 開跑前鎖死
-
-> **若 `surprise` 在相同 budget 下不能穩定贏過 `recency`，
-> 就封存 Titans-style surprise 作為本任務的 write-policy 候選**，
-> 不再把它升級成主線。
-
-> 若 `learned gate` 贏了，才值得開「task-loss ＋ 容量瓶頸學 formation」的下一關。
-
-**即使 `MF-0` PASS**：read/write key agreement、唯一化、自然語言**各自仍未解**，
-**不得**用 retention 的成績補過。
+**`frozen surprise`**：若在 `W1` 的三個 seed 都未勝過 `recency`（同一 paired CI 規則），
+**封存為「此兩個 world」的 write-policy 候選** ——
+**不得**泛稱「Titans 被否證」。
 
 ---
 
-## 6. 待鎖的規格（下一輪要填死，現在刻意留白）
+## 7. 即使 `W1` PASS，它的代價（必須主動寫，不得事後才承認）
 
-1. **budget 的定義**：committed record 數上限？bytes？兩者都要？
-2. **active window 長度**與事件流的統計（query 距離寫入多遠？重複率？）
-3. **query 分布**：均勻抽已寫入的 record，還是有偏態（近的常被問）？
-   —— 這一項**直接決定 `recency` 有多強**，必須事前定且說明理由。
-4. **learned gate 的參數化**：per-event 標量分數 ＋ top-k 保留？還是逐步 admission？
-5. **oracle 上界的可行性**：事後選最優子集是 NP-hard 的一般情形，
-   本任務規模下是否可窮舉？不可窮舉時的替代上界是什麼？
+> 最多只能稱：**「在一個 frozen、受控、goal-conditioned 的環境裡，
+> future task reward ＋ hard budget 足以學出 admission policy。」**
 
-**第 3 項是這個設計最容易自欺的地方** —— 把 query 分布設成偏向最近，
-`recency` 會很強而 `learned gate` 看起來沒用；設成均勻，`recency` 會很弱
-而 `learned gate` 看起來很強。**這個選擇必須事前公開並給理由，不得看到結果再說。**
+它**仍然不是**無先驗的自然記憶：
+
+- **goal context 是我們給的**，不是自然現象 —— **不得**把它偷當成自然湧現的證據。
+- read/write **key agreement** 未解。
+- **semantic canonicalization**（改述／別名／指涉）未解。
+- 這些**不得**用 retention 的成績補過。
+
+---
+
+## 8. 為什麼不照抄 Titans，以及一個必須量的風險
+
+Titans 用 **surprise（內部梯度誤差）** 配 momentum 與 adaptive decay 做保留／遺忘，
+處理**形成與壓縮**確實比手工 schema 優雅。
+
+但它更新的是 neural associative memory 的**參數／狀態**，
+**不天然給每筆事實一個可版本化的物件** —— 沒有存在性、版本、刪除，無法證明缺席。
+
+⚠️ 且 **surprise 高 ≠ 日後會被問到**。
+「我的門號密碼是 47」在一段平淡對話中並不 surprising，卻正是日後要用的。
+**`MF-0` 的 `frozen surprise` 對照組就是為了量這件事。**
+
+---
+
+## 9. 附：為什麼**不**開「拿大模型裁決自然湧現」（Codex [174]）
+
+使用者問：記憶操作會不會在巨量資料上自然湧現？
+我提議拿現成大模型 ＋ `contains` tool 來量。**Codex 駁回，理由成立**：
+
+> 黑箱大模型配 `contains` tool，**至多測它是否服從一個已給的 tool protocol**。
+> **成功不證明**訓練時自然學出 memory operation；
+> **失敗也不證明** scale 不會。
+> runtime store 的 membership 是**外部狀態**，**任何規模的權重都不能成為它**。
+
+若日後要做**產品 baseline**，另立 `PB-0`：釘死 provider／model snapshot、temperature、
+單一 prompt／tool schema 與成本上限；
+`literal-key present utility ≥95%`、300 個 absent **0** 個數值答案、`contains` call 300/300。
+**它只能稱 tool-use compliance comparison，絕不可用來裁決 emergence 或覆寫 `MF-0`。**
