@@ -4834,6 +4834,54 @@ healthy parity **48/48 逐位元相同**（`z`／delivery tensor／decode 三件
 
 ---
 
+## 4.69 橋接線整體 status（Codex [168] 要求的收束）
+
+**這不是結案，是停止在同一個有限 grammar 上繼續累積 plumbing PASS。**
+
+### 成立的（全部帶範圍限制）
+
+| 軸 | 結論 | 範圍 |
+|---|---|---|
+| latent-only delivery | §4.55 PASS | 文字無事實、無 placeholder；`n≤4`；固定 20 維 schema |
+| exact-key retrieval ＋ typed guard | §4.57 PASS | halluc 結構性為 0；shadow 相似度同題 200/200 幻覺 |
+| 描述定址（conjunction／歧義） | §4.59 PASS | **規則式**，非 semantic |
+| 噪聲描述（Hamming） | §4.65 PASS | 有限 support，最窄一格僅 2 個相異 query |
+| dangling storage fault | §4.64 **sealed** | 單一故障、注入即測 |
+| exact-key conflict／overwrite | §4.68 **sealed** | **單程序、全序 commit** |
+
+### 兩條 selector 路徑必須分開講 —— 不得互相掩蓋
+
+> **schema-backed structural resolver：在受限 grammar 下 PASS。**
+> `contains` 是查表、Hamming 是算術、conjunction 是約束解析 ——
+> 「不可唯一化」是**可判定的事實**，於是可以結構性 fail-closed。
+>
+> **learned closed-set confidence selector：FAIL（§4.67）。**
+> 在此 factorized closed-set extractor、`max p_name × max p_attr` score
+> 與固定 τ grid 下，**沒有**可同時維持 utility 與 zero-accept 的 threshold。
+
+**不得**用前者掩蓋後者（結構 resolver 的成功不代表 learned selector 可用）；
+**也不得**把後者泛稱為「所有 learned／semantic selector 都不可能」
+（只測了一種 score、一個 grammar、一個 grid、三個 seed）。
+
+### 未解的產品 blocker —— 明列，不藏在 PASS 後面
+
+1. **同實體多屬性（§4.63 封存）。** 訓練分布一旦出現同名多屬性，
+   已量到的 address routing 就被 attr-only 策略取代，且 1:1 強迫也學不回來。
+   **這條未過之前，單做 write plumbing 不能代表使用者可持續累積多項記憶。**
+2. **query-side learned selector（§4.67 FAIL）。** 抽取 100% 但無法安全拒絕。
+3. **write-address formation** —— 從未做。
+4. **crash 復原／torn write／多程序併發** —— §4.68 明確排除，
+   **不得**被 healthy parity 的 48/48 淡化。
+5. **開放集**：真實自然語言、未見實體、無可靠 canonical key —— 全部未觸及。
+
+### 一句話
+
+**儲存層每一關都過，倒下的都在接口。**
+`Store` 側（membership、fault、conflict）是可判定的，所以能一關一關封；
+`文字 → 可判定 key` 這一段，規則式可行、learned 目前不可行。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
