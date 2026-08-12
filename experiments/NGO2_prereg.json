@@ -2,7 +2,7 @@
   "experiment": "NG-O2",
   "title": "下一代 core／schema 的 feasibility ceiling：同 entity 多 record 共存下的單目標交付",
   "spec_source": "Codex [169]／[170] 裁定；`NEXTGEN_DESIGN.md` 是設計閘",
-  "status": "draft v3 — 未實作、未訓練、無 code；三個 blocker 已逐項封閉，待 checklist",
+  "status": "v4 — **已授權實作**（Codex [172]）；未寫 code、未訓練",
   "framing": {
     "what_it_is": "**新系統的 feasibility ceiling**",
     "what_it_is_not": "**不是**對 bridge 的 causal ablation。schema、資料任務與 carrier policy **全部都變了**，不得寫成『同架構、只有 schema/task 改變＝單一變因』（Codex [170] blocker 1）",
@@ -101,7 +101,9 @@
     "n_per_cell": 300,
     "per_seed": true,
     "threshold": "每一格 `A_ans >= 95%`；**不得** pooled",
-    "across_m": "跨 `m` 的比較**只能描述**，**不可**作主效果"
+    "across_m": "跨 `m` 的比較**只能描述**，**不可**作主效果",
+    "construction": "**由 base episode 生成寫入順序的配對／三聯 counterfactual**（Codex [172]）：同一 query token、同一 target `z_V`、同一 delivery tensor，**只改** Store 的 insertion／interleave 與 target index。`m2 first/last` 形成 **300 組 paired**；`m3 first/middle/last` 形成 **300 組 triplet**。各 cell 仍各有 300，仍各自須過 95%。",
+    "why": "如此一來，最終輸出若出現 position 差異，就是**可識別的 end-to-end 漏洞** —— 因為 Core 的可見輸入已被 phase-0 證明逐位相同。"
   },
   "oracle_ceilings": {
     "note": "三者**各自獨立可執行**，**不得**借彼此的漂亮數字補過（Codex [171] blocker 1）",
@@ -133,7 +135,8 @@
     "Store `verify() == 0`",
     "value 每 episode 重抽（fingerprint 檢查，非只看 seed）",
     "O1／O3 的 300 個凍結 episode 具 fingerprint，且與 O2 的 eval artifact 不共用",
-    "`target_write_index` 與答案**統計獨立**的前置檢查：在 oracle 直送下各 index 的正確率不得有系統差異（用以排除 generator/評估的 position leakage）"
+    "**counterfactual 群組的輸入同一性**：每個 paired／triplet 群組內，(a) Core 的可見輸入（query token ids ＋ delivery tensor）**逐位元相同**；(b) Store lookup 都回**同一個 key 與同一個 `z`**。⚠️ 原本寫的『oracle 直送下各 index 正確率無系統差異』**已刪** —— phase-0 尚無訓練後的 Core，那個檢查在該階段**做不到**（Codex [172]）。",
+    "eval artifact 為**單一 checksum**；train artifact 另有 fingerprint；兩者不重疊"
   ],
   "fault_attribution": {
     "store_cannot_hold": "同 entity 的多 record 發生 key 碰撞或互相覆寫 → **Store／K0 問題**（phase-0 應先擋下）",
@@ -145,7 +148,8 @@
     "run": "一次三-seed train/eval",
     "order": "**O2 未過 → 不進入 extractor**。硬性順序，非建議",
     "on_fail": "seal，依 fault_attribution 記明歸因；**不換 schema／不調 core／不改 cell 比例**去救",
-    "on_pass": "只稱「同 entity 多 record 可共存，且已選出的 target 可被消費」；**必須同時引用 `honesty_note_must_accompany_any_pass`**"
+    "on_pass": "只稱「同 entity 多 record 可共存，且已選出的 target 可被消費」；**必須同時引用 `honesty_note_must_accompany_any_pass`**",
+    "on_phase0_fail": "**只可修 generator／wiring**，並以**相同的 frozen artifact** 做 regression"
   },
   "generator_frozen": {
     "note": "Codex [171] blocker 3：「任意交錯」「同一生成分布」**不得**留給實作選擇",
@@ -158,7 +162,8 @@
     "attribute_rule": "target entity 從 12 個屬性短語**均勻無放回**抽 m 個；distractor 使用**被查詢的**那一個",
     "interleave": "把 target entity 的 m 筆與 distractor 的 1 筆合併後，**均勻抽取一個保持各 entity 內部順序的交錯**（等價於在 m+1 個位置中均勻選出 distractor 的插入點）",
     "values": "2–4 位 decimal，每 episode 重抽；**episode 內兩兩相異**（不符即整批重抽，非逐一修補）",
-    "artifacts": "**train stream 一份**、**eval 三份**（每個 run seed 一份，各為 5 cell × 300），**各自帶生成 seed 與 fingerprint**",
-    "artifact_caveat": "eval 三份各自獨立，故**跨 seed 的差異同時含 eval artifact 的差異**。本關是 ceiling 而非 seed 比較，可接受；但**不得**把跨 seed 差異解讀成訓練變異。"
+    "artifacts": "**一份共用的 frozen eval artifact（單一 checksum）**：O1／O3 共用 300 個 episode；O2 為五個 cell 各 300 個 episode。**三個最終 checkpoint 都在逐位相同的 eval input 上量。**",
+    "artifact_caveat": "跨 seed 差異因此可讀為**訓練／初始化差異**，而非 test draw 差異。若日後要測 test-distribution replication，**另立新的、獨立的外部 replication**，**不得**混入本關的三-seed gate。",
+    "train_artifact": "**一份共同、固定順序的 24000×48 train artifact ＋ fingerprint，供三個 seed 使用**。`seed` **只改 model initialization 與訓練 RNG**（如 dropout），**不得各自重抽訓練資料** —— 否則 optimizer seed 與資料抽樣會綁成同一個不可拆的變因。"
   }
 }
