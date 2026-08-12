@@ -1,68 +1,71 @@
 {
   "8": {
     "retr": [
-      200,
-      200
+      60,
+      60
     ],
     "abstain": [
-      200,
-      200
+      60,
+      60
     ],
     "false_abstain": 0,
+    "ambiguous_abstain": 0,
     "halluc": 0,
     "e2e": [
-      176,
-      200
+      51,
+      60
     ],
     "shadow_halluc": [
-      200,
-      200
+      60,
+      60
     ],
-    "us_per_lookup": 59.56968438113108,
+    "us_per_lookup": 74.12102228651443,
     "store_bytes": 1152
   },
   "24": {
     "retr": [
-      200,
-      200
+      36,
+      60
     ],
     "abstain": [
-      200,
-      200
+      60,
+      60
     ],
     "false_abstain": 0,
+    "ambiguous_abstain": 24,
     "halluc": 0,
     "e2e": [
-      192,
-      200
+      35,
+      36
     ],
     "shadow_halluc": [
-      200,
-      200
+      60,
+      60
     ],
-    "us_per_lookup": 56.872928980737925,
+    "us_per_lookup": 56.09877019499739,
     "store_bytes": 3456
   },
   "36": {
     "retr": [
-      200,
-      200
+      16,
+      60
     ],
     "abstain": [
-      200,
-      200
+      60,
+      60
     ],
     "false_abstain": 0,
+    "ambiguous_abstain": 44,
     "halluc": 0,
     "e2e": [
-      198,
-      200
+      16,
+      16
     ],
     "shadow_halluc": [
-      200,
-      200
+      60,
+      60
     ],
-    "us_per_lookup": 56.56218534568325,
+    "us_per_lookup": 45.953423250466585,
     "store_bytes": 5184
   }
 }

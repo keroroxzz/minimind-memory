@@ -35,7 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def build_batch(tok, rng, bs, js, latent_p=0.5, nf_min=2, nf_max=4, l0_nf_max=None,
-                same_name_p=0.0):
+                same_name_p=0.0, pool=None, relation_strat=False):
     """回傳 (X, Y, Z, use_latent)。`Z` 是 (bs, n_car, LAT_DIM) 或 None。
 
     ⚠️ `n_fact` **每個 batch 固定**：`memory_carriers` 是單一張量,
@@ -57,13 +57,25 @@ def build_batch(tok, rng, bs, js, latent_p=0.5, nf_min=2, nf_max=4, l0_nf_max=No
     else:
         n_fact = rng.randint(min(2, l0_nf_max), l0_nf_max)
     rows, maxlen = [], 0
-    for _ in range(bs):
+    rel_count = {"R_addr": 0, "R_attr": 0}
+    for bi in range(bs):
         j = js[rng.randrange(len(js))]
-        # same_name_p：保證同名的題目比例。自然抽樣在 n=2 只有 4.6%，
-        # 而 n=2 正是主 gate 格 —— 太稀疏教不動，所以顯式提高覆蓋率。
-        # **這是刻意的分布選擇，必須明寫**；評估另做 0 vs >=1 的 factorial。
-        sn = True if (same_name_p and rng.random() < same_name_p) else False
-        ep = B.make_episode(rng, j, n_fact=n_fact, same_name=sn)
+        if relation_strat:
+            # `EXP-MN3`：關係分層。n=2 用**索引奇偶**決定關係，
+            # 所以每個 batch 的 R_addr / R_attr 計數**結構上**等量，不靠隨機收斂。
+            # n>=3 由 `make_episode_rel` 保證每題至少各一條。
+            rel = B.REL[bi % 2] if n_fact == 2 else None
+            ep = B.make_episode_rel(rng, j, n_fact, relation=rel, pool=pool)
+            sn = any(f[0] == g[0] for i, f in enumerate(ep.facts)
+                     for g in ep.facts[i + 1:])
+            if n_fact == 2:
+                rel_count[rel] += 1
+        else:
+            # same_name_p：保證同名的題目比例。自然抽樣在 n=2 只有 4.6%，
+            # 而 n=2 正是主 gate 格 —— 太稀疏教不動，所以顯式提高覆蓋率。
+            # **這是刻意的分布選擇，必須明寫**；評估另做 0 vs >=1 的 factorial。
+            sn = True if (same_name_p and rng.random() < same_name_p) else False
+            ep = B.make_episode(rng, j, n_fact=n_fact, same_name=sn, pool=pool)
         if use_latent:
             p, ans = S.render_latent(ep)
             order = list(range(n_fact))
@@ -78,6 +90,9 @@ def build_batch(tok, rng, bs, js, latent_p=0.5, nf_min=2, nf_max=4, l0_nf_max=No
         y = list(full); y[:plen] = [-100] * plen
         rows.append((full, y, lat, bool(sn)))
         maxlen = max(maxlen, len(full))
+    if relation_strat and n_fact == 2:
+        # Codex [156]：「每個固定訓練 block 實際計數必須等量，並以 assert 驗證」
+        assert rel_count["R_addr"] == rel_count["R_attr"], rel_count
     pad = tok.pad_token_id or 0
     X = torch.tensor([f + [pad] * (maxlen - len(f)) for f, _, _, _ in rows])
     Y = torch.tensor([y + [-100] * (maxlen - len(y)) for _, y, _, _ in rows])
@@ -140,12 +155,20 @@ def main():
                     help=">0 時每 N 步另存一個**帶步數的** checkpoint（保留中途狀態）")
     ap.add_argument("--init-from", default=None,
                     help="從既有 checkpoint 續訓（機制探針：測『要多少步才學會』）")
+    ap.add_argument("--heldout", action="store_true",
+                    help="保留 10/48 的 (name,attr) 組合不進訓練（組合泛化 gate）")
     ap.add_argument("--same-name-p", type=float, default=0.0,
                     help="保證同名的題目比例（同實體多屬性覆蓋率）；0 = 歷史行為")
+    ap.add_argument("--relation-strat", action="store_true",
+                    help="EXP-MN3：關係分層取樣（R_addr / R_attr 固定 1:1）；"
+                         "開啟時 --same-name-p 失效，兩者互斥")
     ap.add_argument("--l0-nf-max", type=int, default=None,
                     help="L0 分支的 n_fact 上限（容量實驗用 4）；None = 與 latent 相同")
     ap.add_argument("--out", default="bridge_core_latent.pth")
     a = ap.parse_args()
+    # 兩種分布控制互斥 —— 同時開會讓「唯一介入」的說法失效
+    assert not (a.relation_strat and a.same_name_p), \
+        "--relation-strat 與 --same-name-p 互斥（EXP-MN3 的唯一介入是關係分層）"
 
     torch.manual_seed(a.seed)
     tok = AutoTokenizer.from_pretrained(os.path.join(HERE, "..", "model"))
@@ -174,14 +197,15 @@ def main():
     print(f"  prereg: BRIDGE_PREREG_latent.md")
     print(f"  schema z' = [addr({S.ADDR_DIM}) + value(1) + attr(3)] = {S.LAT_DIM} 維（**含身份**）")
     print(f"  carrier 投影：**固定未訓練**（可訓練參數 {npj}），scale={sc:.3f}")
-    print(f"  same_name_p={a.same_name_p}（同實體多屬性覆蓋率；0 = 歷史行為）\n  n_fact：latent {a.nf_min}..{a.nf_max}   L0 {min(2, a.l0_nf_max) if a.l0_nf_max else a.nf_min}..{a.l0_nf_max or a.nf_max}（format anchor）\n  訓練 j={a.js}；**L0 與 latent 各半**；latent 的文字裡沒有事實、沒有 placeholder")
+    print(f"  {'關係分層 R_addr:R_attr = 1:1（EXP-MN3；same_name_p 不適用）' if a.relation_strat else f'same_name_p={a.same_name_p}（同實體多屬性覆蓋率；0 = 歷史行為）'}\n  n_fact：latent {a.nf_min}..{a.nf_max}   L0 {min(2, a.l0_nf_max) if a.l0_nf_max else a.nf_min}..{a.l0_nf_max or a.nf_max}（format anchor）\n  訓練 j={a.js}；**L0 與 latent 各半**；latent 的文字裡沒有事實、沒有 placeholder")
     print(f"  use_engram={ARCH['use_engram']}（顯式釘死）\n")
 
     # ---- smoke：三個必須成立的不變量 -------------------------------------
     r = random.Random(a.seed + 7)
     X, Y, Z, ul, H = build_batch(tok, r, 8, a.js, latent_p=1.0,
                               nf_min=a.nf_min, nf_max=a.nf_max,
-                              l0_nf_max=a.l0_nf_max, same_name_p=a.same_name_p)
+                              l0_nf_max=a.l0_nf_max, same_name_p=a.same_name_p,
+                              relation_strat=a.relation_strat)
     print("  ---- smoke")
     print(f"    latent render 範例：{tok.decode(X[0], skip_special_tokens=True)!r}")
     assert "是 多少" in tok.decode(X[0]), "問句不見了"
@@ -240,13 +264,52 @@ def main():
           "weight_decay": 0.0}], lr=a.lr, betas=(0.9, 0.95))
     sch = torch.optim.lr_scheduler.OneCycleLR(opt, a.lr, total_steps=a.steps, pct_start=0.03)
     scaler = torch.amp.GradScaler("cuda", enabled=DEVICE == "cuda")
+    pool = None
+    if a.heldout:
+        ho = B.heldout_split()
+        pool = [(nm, ai) for nm in B.NAMES for ai in range(len(B.ATTRS))
+                if (nm, ai) not in ho]
+        print(f"  held-out {len(ho)}/48 組合不進訓練；訓練 pool = {len(pool)} 組合\n")
+    # ⚠️ **旗標印出來 ≠ 旗標生效。** 上一輪 `--heldout` 印了「10/48 不進訓練」，
+    #    但 `pool` 沒傳進訓練迴圈 —— 兩次訓練逐位小數相同才露餡，
+    #    而結論方向沒變，差點就寫進 research.md。
+    #    所以這裡**驗實際產生的資料**，不是驗有沒有印那行字。
+    if pool is not None:
+        _ps = set(pool); _r = random.Random(a.seed + 555); _bad = _tot = 0
+        for _ in range(400):
+            _e = (B.make_episode_rel(_r, 0, 3, pool=pool) if a.relation_strat else
+                  B.make_episode(_r, 0, n_fact=3,
+                                 same_name=(_r.random() < a.same_name_p), pool=pool))
+            for _nm, _ai, _ in _e.facts:
+                _tot += 1; _bad += int((_nm, _ai) not in _ps)
+        assert _bad == 0, f"pool 未生效：{_bad}/{_tot} 條 fact 落在 pool 外"
+        print(f"  ---- pool 生效自檢：{_tot} 條 fact 全部在訓練 pool 內 ✓\n")
+
+    # 同一個教訓的第二次應用：`--relation-strat` 也必須**驗實際產生的資料**。
+    # 印出旗標不算數 —— 上一輪 `--heldout` 就是這樣差點寫進 research.md。
+    if a.relation_strat:
+        _r = random.Random(a.seed + 777); _c = {"R_addr": 0, "R_attr": 0, "free": 0}
+        for _i in range(400):
+            _e = B.make_episode_rel(_r, 0, 2, relation=B.REL[_i % 2], pool=pool)
+            _o = 1 - _e.ask_idx[0]
+            _c[B.relation_of(_e, _o)] += 1
+        assert _c["R_addr"] == _c["R_attr"] == 200 and _c["free"] == 0, _c
+        for _n in (3, 4):
+            for _ in range(200):
+                _e = B.make_episode_rel(_r, 0, _n, pool=pool)
+                _rs = [B.relation_of(_e, _i) for _i in range(_n) if _i != _e.ask_idx[0]]
+                assert _rs.count("R_addr") >= 1 and _rs.count("R_attr") >= 1, _rs
+        print(f"  ---- relation-strat 自檢：n=2 計數 {_c}；n=3,4 每題至少各一條 ✓\n")
+
     rng = random.Random(a.seed)
     m.train(); t0 = time.time()
     ema = {}
     for step in range(1, a.steps + 1):
         X, Y, Z, ul, H = build_batch(tok, rng, a.bs, a.js,
-                                  nf_min=a.nf_min, nf_max=a.nf_max,
-                              l0_nf_max=a.l0_nf_max, same_name_p=a.same_name_p)
+                                     nf_min=a.nf_min, nf_max=a.nf_max,
+                                     l0_nf_max=a.l0_nf_max,
+                                     same_name_p=a.same_name_p, pool=pool,
+                                     relation_strat=a.relation_strat)
         X, Y = X.to(DEVICE), Y.to(DEVICE)
         Z = Z.to(DEVICE) if Z is not None else None
         s0 = time.time()

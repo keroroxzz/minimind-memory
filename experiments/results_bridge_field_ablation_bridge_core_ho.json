@@ -1,0 +1,87 @@
+{
+  "core": "bridge_core_ho.pth",
+  "n": 200,
+  "strata": {
+    "hard": {
+      "intact": {
+        "target": 200,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 3,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 131,
+        "dis": 1,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 0,
+        "dis": 199,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 199,
+        "dis": 0,
+        "n": 200
+      }
+    },
+    "easy-diff": {
+      "intact": {
+        "target": 198,
+        "dis": 1,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 2,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 147,
+        "dis": 0,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 0,
+        "dis": 198,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 197,
+        "dis": 1,
+        "n": 200
+      }
+    },
+    "easy-same": {
+      "intact": {
+        "target": 65,
+        "dis": 52,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 0,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 70,
+        "dis": 63,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 65,
+        "dis": 52,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 68,
+        "dis": 58,
+        "n": 200
+      }
+    }
+  }
+}

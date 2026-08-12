@@ -4168,6 +4168,310 @@ gradient mass 與 accuracy，**先看「梯度反轉是否先於能力崩壞」*
 
 ---
 
+## 4.59 B0 描述定址：`B0-U` PASS、`B0-A` 歧義一律 hard-abstain
+
+prereg：`BRIDGE_PREREG_retrieval.md` ＋ Codex [149]。
+**凍結 core，不重訓** —— resolver 在 core 外，core 拿到的仍是 `問 anna a 是 多少`，
+**描述只被 core 外的 resolver 消費**。實作只加了兩個函式到 `bridge_store.py`。
+
+### 屬性空間（構造保證，不是抽樣碰運氣）
+
+16 個 name → `(color, shape)`，`N_COLOR = N_SHAPE = 8`，確定性構造並以 assert 驗：
+
+- **完整 conjunction 全域唯一**（16 個 pair 互異）
+- **每個單一屬性恰好 2 個名字** → **任何單屬性描述必然歧義**（8+8 個全驗過）
+
+初版用隨機分配，實測有 **3 個顏色只分到 1 個名字**，那些單屬性查詢仍唯一命中 ——
+**`B0-A` 的歧義條件會失效**。改為確定性構造。
+
+### `B0-U`（完整 conjunction，query **完全不帶 name**）
+
+| pool | retrieval | R_abstain | false_ab | **halluc** | E2E\|retr | shadow |
+|---|---|---|---|---|---|---|
+| 8 | 100/100 | 100/100 | 0 | **0** | 87.0% | 100/100 |
+| 24 | 100/100 | 100/100 | 0 | **0** | 97.0% | 100/100 |
+| 36 | 100/100 | 100/100 | 0 | **0** | 98.0% | 100/100 |
+
+### `B0-A`（單屬性 → 必然歧義）
+
+| pool | 解到唯一 | **正確歧義 abstain** | false_ab | **halluc** |
+|---|---|---|---|---|
+| 8 | 60/60 | 0 | 0 | **0** |
+| 24 | 36/60 | **24** | 0 | **0** |
+| 36 | 16/60 | **44** | 0 | **0** |
+
+**歧義時一律 hard-abstain，一次都沒有「任意挑一個答案」**（Codex [149] 的硬要求）。
+
+**一個附帶性質**：**歧義是 store 內容的函數，不只是描述的函數** ——
+pool 小時單屬性描述往往仍唯一（其他候選不在 store 裡）。
+「這個描述夠不夠精確」**不能離開 store 談**。
+
+### 措辭限制（Codex [149] 事前鎖死）
+
+> 這是 **`description-to-unique-key resolution`**，**不是 semantic retrieval**。
+> resolver **是規則式的** —— 研究價值在**資料／candidate-set／guard plumbing 與 transfer**，
+> **不宣稱學到語意**。
+
+**`B0` 不涵蓋**：同實體多屬性（§4.57/§4.58 的已知缺陷）、同 exact key 衝突、
+近鄰相似度、語意歧義。**不得把 `B0-U` 的唯一命中泛化成「描述檢索已解決」。**
+
+### 一個會讓正確行為看起來像失敗的欄位錯誤（已修）
+
+初版把 `ambiguous` 的 abstain 記進 `false_abstain`（pool=36 時是 44 筆）。
+但依 Codex [149]「歧義描述應 hard-abstain」，**那是正確行為**。
+分開後 `false_abstain` 全部為 **0**。
+
+---
+
+## 4.60 mixed-name compositional-generalization gate：**FAIL**（事前預期命中）
+
+prereg：`BRIDGE_PREREG_retrieval.md` 的 mixed-name 修訂（Codex [151]）。
+`bridge_core_ho2.pth`（`same_name_p=0.5` ＋ **held-out 10/48 組合**，其餘全不動）。
+
+### ⚠️ 先記一次**無效的 run**（不進任何結論）
+
+第一次 held-out run（`bridge_core_ho.pth`）**完全無效**：
+`--heldout` 印出「10/48 不進訓練」，但 **`pool` 沒傳進訓練迴圈**
+（`build_batch(...)` 少了 `pool=pool`），**模型其實看過全部 48 個組合**。
+
+**怎麼抓到的**：兩次訓練的最終 loss **逐位小數完全相同**（`L0=0.5867 latent=0.6828`），
+且 `seen/easy` 與前一輪**一模一樣的 75.2%**。md5 不同（CUDA 非確定性）看起來像兩個模型，
+**結論方向也沒變** —— **只看結論的話，這個 bug 會直接進 `research.md` 且看起來完全正常。**
+
+修正後補了兩道驗證：啟動前實測 **9000 條 fact、落在 held-out 者 0 條**；
+以及重跑與無效輪的 loss **逐步數皆不同**（500/1500/2500/3000 步全部分岔）。
+並在 trainer 加了**開跑前的 assert**（實際產生 400 個 episode 驗歸屬）。
+
+### 有效 run 的結果
+
+| | easy（全不同名） | hard（目標有同名兄弟） |
+|---|---|---|
+| **seen 組合** | **79.6%** [74, 84] ✗ | 98.8% [97, 100] ✓ |
+| **held-out 組合** | **83.6%** [79, 88] ✗ | 98.8% [97, 100] ✓ |
+
+**門檻：四格點估計都須 ≥95%（held-out 不放寬）→ `easy` 兩格未過 → gate FAIL。**
+
+**事前預期命中**：我在 `pool` 修好、重跑啟動之後、**看到任何新數字之前**
+登記「`easy` 仍預期未過」（Codex [152] 記錄時間點，並明令
+**不得用無效 run 的數字支持這個預期**）。
+
+### 一個描述性事實（**不是**機制主張；措辭已依 Codex [153] 收窄）
+
+`held-out`（83.6% [79, 88]）**略高於** `seen`（79.6% [74, 84]）。
+
+> **⚠️ 我原本寫成「排除了『背誦 vs 學會』」—— 那是過度宣稱，已更正。**
+> **兩者的 95% CI 重疊**，因此**不能邏輯上排除組合泛化因素**。
+> 只能說：**held-out 沒有特別惡化，目前主要的失敗表現是 `easy` 的整體退化，
+> 而非 held-out 專有崩潰。**
+
+`easy` 的錯誤有 ~10% 是答成**不同名的另一條**。
+
+### 裁決（Codex [150]/[151] 事前寫死，照字面執行）
+
+> **mixed-name／compositional-generalization gate FAIL。**
+> **不讀 `hard` 的 98.8%、不開機制假說、不調配方。**
+> 結論停在 **「目前 core／訓練預算不支援 mixed-name」**，另立新 core 規格。
+
+**角色分離（Codex [152]）**：新 core 的技術規格由 Claude 起草
+（僅架構／資料流／訓練資源／變因／non-goals，**不得同時改 gate**），
+Codex 獨立審核並**鎖定判準**；結果出來後**兩方都不得回填或放寬門檻**。
+新 core 另立 experiment ID，**唯一主張是「修復 mixed-name 能力」**；
+**若方案需要多個未鎖定介入，就先不跑。**
+
+---
+
+## 4.61 `EXP-MN1`（60k 步）：**gate FAIL —— 加步數這條路被排除**
+
+prereg：`BRIDGE_PREREG_retrieval.md` 的 `EXP-MN1` 節（Codex [153] 審核並鎖定判準）。
+**唯一介入：`24000 → 60000` 步。** 架構／schema／`φ`／投影／資料比例／
+split artifact／loss／consumer／tokenizer **全部固定**。
+
+| `n=2, j=0` | easy | hard |
+|---|---|---|
+| **seen** | 79.6% → **80.8%** [75, 85] ✗ | 98.8% → **100.0%** [98, 100] ✓ |
+| **held-out** | 83.6% → **87.2%** [82, 91] ✗ | 98.8% → **100.0%** [98, 100] ✓ |
+
+**四格點估計須各自 ≥95% → `easy` 兩格未過 → gate FAIL。**
+
+### 這一輪買到什麼
+
+**2.5 倍訓練預算換到 `easy` +1.2pp（seen）／+3.6pp（held-out），而 `hard` 飽和到 100%。**
+`seen/easy` 的 `distractor` 錯誤反而從 11.6% 升到 **15.2%** ——
+模型更常答成**不同名的另一條**。
+
+> **在相同架構、資料與最佳化排程下，單純把步數增至 60k 不足以通過 mixed-name gate。**
+> 這一輪的價值在於**排除這一條路**，而不是逼近門檻：`hard` 已經 100%，`easy` 仍差 14pp。
+>
+> ⚠️ **不得**收成「訓練預算／最佳化已全部排除」（Codex [154] 的措辭收窄）——
+> 只換過步數這一個變因，learning rate schedule、batch、正則化都沒動過。
+
+### 裁決（Codex [153] 事前鎖死，照字面執行）
+
+> **「同一架構在 60k 步仍未通過 mixed-name gate。」**
+> **不得**再加步數、改 loss／架構／資料，或開機制假說。
+> 容量或架構改動 → **另立新 experiment**（需重新起草＋審核＋鎖判準）。
+
+中途 checkpoint（s8000…s56000）**只供事後軌跡診斷，不得挑最佳點、不得續訓改配方**。
+
+### 目前 mixed-name 的完整帳
+
+| # | 條件 | seen/easy | 結果 |
+|---|---|---|---|
+| 1 | `same_name_p=0.5`，24k 步 | 75.2% | FAIL |
+| 2 | ＋held-out（**無效**：`pool` 未傳入） | 75.2% | 作廢 |
+| 3 | ＋held-out（有效），24k 步 | 79.6% | FAIL |
+| 4 | **`EXP-MN1`：60k 步** | **80.8%** | **FAIL** |
+
+**共同形狀**：`hard`（同名）一路從 29.3% → 99.2% → 100%，
+而 `easy`（全不同名）從 §4.55 的 **99.2%** 掉到 **80.8%** 後就卡住。
+**學會同名的代價落在 easy 上，且加訓練預算買不回來。**
+
+---
+
+## 4.62 事後診斷：mixed-name 訓練**拆掉了 address routing**
+
+**這是事後 error attribution，不是新 milestone，也不翻 §4.61 的 FAIL。**
+零訓練、凍結 core、只動注入 latent 的欄位。
+腳本：`experiments/bridge_addr_confusion.py`、`experiments/bridge_field_ablation.py`。
+
+### 一、`easy` 不是「整體退化」，是一個乾淨的二分
+
+`bridge_core_ho.pth`，easy stratum，n=400/組。同時量
+`|cos(φ(tgt), φ(dis))|` 與「tgt/dis 的 attr 是否相同」：
+
+| seen | 同 attr | 異 attr |
+|---|---|---|
+| 正確 | 47 | 269 |
+| 答成 distractor | **40** | **0** |
+| 答成第三值 | **43** | **1** |
+
+條件正確率 —— `seen` 同 attr **36.2%**(47/130) vs 異 attr **99.6%**(269/270)；
+`held-out` **33.9%**(37/109) vs **99.3%**(289/291)。
+同 attr 佔 32.5%，正好是 3 屬性的 1/3 base rate，**無取樣偏差**。
+80.8% 可由 `0.325 × 0.36 + 0.675 × 0.996` 重建。
+
+**且 `|cos|` 在答對與答錯上完全重疊**（seen 0.205 vs 0.196；held-out 0.234 vs 0.235）
+→ **address 碰撞不是原因**，`ADDR_DIM 16→32` 就此排除（與 Codex [154] 的判斷一致）。
+
+### 二、干預證據：兩個 core 的 routing 欄位完全對調
+
+主證據用 **`swap_*`：把兩條 carrier 的某欄位互換** ——
+latent 集合的分佈**逐元素完全不變**，只搬動資訊，故無 OOD 疑慮。
+（`zero_*` 會離開流形，僅供參考：`zero_attr` 崩到 1%，低於亂猜，
+是把 carrier 推出流形而非資訊被移除，**不可單獨作為歸因**。）
+
+格式「目標值% / distractor值%」，n=200，seen 組合。
+
+`bridge_core_ho.pth`（mixed-name，24k）：
+
+| stratum | intact | `swap_attr` | `swap_addr` |
+|---|---|---|---|
+| `hard` | 100.0% / 0.0% | **0.0% / 99.5%** | 99.5% / 0.0% |
+| `easy-diff` | 99.0% / 0.5% | **0.0% / 99.0%** | 98.5% / 0.5% |
+| `easy-same` | 32.5% / 26.0% | 32.5% / 26.0% | 34.0% / 29.0% |
+
+`bridge_core_latent.pth`（§4.55，未見同名資料）：
+
+| stratum | intact | `swap_attr` | `swap_addr` |
+|---|---|---|---|
+| `easy-same` | 92.0% / 0.0% | 92.0% / 0.0% | **0.0% / 94.0%** |
+| `easy-diff` | 100.0% / 0.0% | 57.5% / 7.0% | 8.0% / 58.5% |
+| `hard` | 31.5% / 2.5% | 17.0% / 20.0% | 19.0% / 13.5% |
+
+| | `swap_addr` 改向 | `swap_attr` 改向 |
+|---|---|---|
+| §4.55 core | **94%** | 0（無反應） |
+| mixed-name core | 0（無反應） | **99.5%** |
+
+- mixed-name core 換 attr 欄 → 答案**整批搬到 distractor 的值，準確度不變（99.5%）**。
+  這不是退化，是**系統性改向**；換 addr 欄**完全無影響** —— 16 維 address 被整個忽略。
+- §4.55 core 的 `easy-same` 是決定性那格（異名、attr 碰撞，**只有 addr 能決定**）：
+  intact **92%**，`swap_addr` 搬走 **94%**，`swap_attr` **零反應**。它讀的是 addr。
+- mixed-name core 的 `easy-same` 兩種 swap 皆為 no-op（兩條 attr 本就相同），
+  停在三路平分 —— **它手上沒有任何可分辨的東西**。
+
+### 可主張／不可主張
+
+**可主張**（措辭照 Codex [156] 回覆收窄）：**在已量的 strata，mixed-name core 的
+有效 routing cue 是 attr one-hot，addr segment 對「選哪一條 carrier」可有可無**；
+而 §4.55 core 在 attr-collision 格對 `swap_addr` 改向 94%，
+表示 address route 曾經有效、被目前的訓練策略取代。§4.55 的 address 能力是量到的，不是推論的。
+
+**不可主張**：**不得**說「模型所有內部計算只用 3 個 bit」——
+消融只證明 routing cue，沒有測內部表徵。
+不說這是容量或最佳化的必然結果（容量**未被邏輯排除**，只是暫不作第一個槓桿）；
+不說換 loss 就會好；不拿它翻 §4.61 的 FAIL；
+`zero_*` 因離開流形，不可單獨作為歸因證據。
+消融只在 `seen` 組合、單一 seed、`n=2, j=0`。
+
+**實作修正（Codex [156] 審計）**：舊版 `pick()` 的 `hard` distractor 取自 `allp`，
+會落到 held-out 組合，那一列不是嚴格 seen×seen；已改為一律取自 `src` 並加 assert 重跑。
+決策所依的 `easy-diff`／`easy-same` 兩格本來就取自 `src`，**不受影響**。
+
+---
+
+## 4.63 `EXP-MN3`（address-necessity sampling）：**gate FAIL —— 封存 fixed-schema mixed-name 線**
+
+prereg：`BRIDGE_PREREG_retrieval.md` 的 `EXP-MN3` 節（Codex [156] 鎖定）。
+**唯一介入：資料 generator 的關係分層。** `hidden=512`、60k 步、
+同 split／schema／`ADDR_DIM=16`／projection／loss／L0 比／n 分布／隨機 carrier order。
+`EXP-MN2`（width-only, `hidden=768`）在開跑前撤銷，記為 **`not run`，不是 FAIL**。
+
+分層：`R_addr` = 異名／同 attr（**只有 addr 能定位**）；`R_attr` = 同名／異 attr。
+`n=2` 由 batch 內索引奇偶決定 → 計數**結構上**等量；`n=3,4` 每題至少各一條。
+訓練啟動時驗實際產生的資料：`n=2 計數 {R_addr: 200, R_attr: 200, free: 0}` ✓
+
+| n=250/格 | `R_addr` | `R_attr` | `R_both`（n=3） |
+|---|---|---|---|
+| **seen** | **54.4%** [48, 60] ✗ | 100.0% [98, 100] ✓ | **61.2%** [55, 67] ✗ |
+| **held-out** | **45.2%** [39, 51] ✗ | 98.8% [97, 100] ✓ | **42.0%** [36, 48] ✗ |
+
+**六格中四格未過 → gate FAIL。**
+`R_addr` 在 n=2 的亂猜基準是 **50%** —— 54.4%／45.2% **基本上就在亂猜**。
+佐證欄同向：`R_addr` 的凍結 `swap_addr` distractor-output **57.0%**（門檻 ≥90%）✗。
+（佐證本來就不得抵銷 primary FAIL，此處也沒有可抵銷的空間。）
+
+### 這一輪買到什麼
+
+**MN3 的訓練分布讓 attr-only shortcut 在一半的題目上完全無效** ——
+`R_addr` 那半只有 addr 能解，走 attr 拿不到任何 loss 下降。
+**模型仍然沒學會用 addr。**
+
+> 失敗的性質因此改變了：**不是「捷徑比較好走」，
+> 而是「在有同名資料存在時，addr routing 學不起來」。**
+> MN1 只能說「加步數沒用」；MN3 進一步排除了「因為 shortcut 近乎最優」這個解釋。
+
+**最尖銳的對照**：`R_addr` 就是 §4.62 裡 `easy-same` 的同一個結構格子，
+而 §4.55 那個**沒看過同名資料**的 core 在該格做到 **92%**（`swap_addr` 改向 94%）。
+同架構、同 schema、同 16 維 address ——
+**只要訓練分布裡出現同實體多屬性，這個能力就不再出現。**
+
+### 裁決（prereg 事前鎖死，照字面執行）
+
+> **封存這條 fixed-schema mixed-name 線。**
+> **不**自動接 width／address／loss 實驗，轉回 retrieval 軸，
+> 且屆時所有結論必須帶「**不涵蓋同實體多屬性**」的範圍限制。
+
+### 不可主張
+
+- **不得**說「addr routing 不可學」——只證明**在此固定 schema／此分布／此規模／單一 seed**下沒學到。
+- **不得**說容量已被排除：`EXP-MN2` 是 `not run`，容量從未被測。
+- **不得**把 §4.55 與 MN3 的對照講成受控實驗：兩者訓練分布不同**且**只有單一 seed，
+  這是**觀察到的對照**，不是干預證明。
+
+### mixed-name 的完整帳（封存版）
+
+| # | 條件 | seen 的關鍵格 | 結果 |
+|---|---|---|---|
+| 1 | `same_name_p=0.5`，24k | easy 75.2% | FAIL |
+| 2 | ＋held-out（**無效**：`pool` 未傳入） | 75.2% | 作廢 |
+| 3 | ＋held-out（有效），24k | easy 79.6% | FAIL |
+| 4 | `EXP-MN1`：60k | easy 80.8% | FAIL |
+| — | `EXP-MN2`：`hidden=768` | — | **not run**（開跑前撤銷） |
+| 5 | **`EXP-MN3`：關係分層 1:1** | **R_addr 54.4%** | **FAIL → 封存** |
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

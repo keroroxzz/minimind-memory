@@ -50,7 +50,7 @@ def make_ep(target, distractor, tv, dv):
 
 
 @torch.no_grad()
-def main(n=250, core="bridge_core_latent.pth"):
+def main(n=250, core="bridge_core_latent.pth", by_desc=False, amb=False):
     tok = AutoTokenizer.from_pretrained(os.path.join(HERE, "..", "model"))
     blob = torch.load(os.path.join(HERE, core), map_location="cpu")
     arch = dict(blob["arch"])
@@ -61,7 +61,10 @@ def main(n=250, core="bridge_core_latent.pth"):
     proj = S.CarrierProj(arch["hidden_size"]).to(DEVICE)
     proj.scale.fill_(blob["carrier_scale"])
 
-    print("  A 路：exact-key retrieval ＋ typed membership guard")
+    mode = ("B0-A 歧義描述（單屬性）" if amb else
+            "B0-U 描述定址（conjunction）" if by_desc else
+            "A 路：exact-key retrieval")
+    print(f"  {mode} ＋ typed membership guard")
     print(f"  prereg: BRIDGE_PREREG_retrieval.md   凍結 core={core}（**不重訓**）")
     print(f"  active injection 固定 n={N_ACTIVE}；pool ∈ {POOLS}（+{HOLDOUT} 個 holdout 永不寫入）；hit/miss = 50/50")
     print("  ⚠️ 這是 transfer/safety baseline，**不是** semantic retrieval\n")
@@ -69,6 +72,7 @@ def main(n=250, core="bridge_core_latent.pth"):
     res = {}
     print(f"  {'pool':>5s} {'retr exact':>12s} {'R_abstain':>11s} {'false_ab':>9s} "
           f"{'halluc':>8s} {'E2E|retr':>18s} {'shadow halluc':>14s} {'µs/查':>8s}")
+    print(f"  {'':>5s} {'':>12s} {'':>11s} {'fab/歧義':>9s}")
     for pool in POOLS:
         rng = random.Random(70000 + pool)
         # holdout 由**固定 seed** 抽定，三個 pool 共用同一組，確保 miss 查詢可比
@@ -82,7 +86,7 @@ def main(n=250, core="bridge_core_latent.pth"):
         assert store.verify() == 0, "store 契約自檢不過"
         absent_pool = list(holdout)   # **只從 holdout 抽 miss**，三個 pool 完全一致
 
-        retr_ok = ab = fab = hal = e2e_ok = e2e_n = shadow_hal = 0
+        retr_ok = ab = fab = hal = e2e_ok = e2e_n = shadow_hal = amb_ab = 0
         n_hit = n_miss = 0
         lat_t = 0.0
         for i in range(n):
@@ -97,7 +101,18 @@ def main(n=250, core="bridge_core_latent.pth"):
                 n_miss += 1
 
             t0 = time.perf_counter()
-            z, status = ST.retrieve(store, *tgt)
+            if by_desc:
+                # B0：query 只給 (color, shape) 的 conjunction，**不給 name**。
+                # resolver 在 core 外，consumer 完全不動、不重訓（Codex [144]）。
+                col, sh = ST.ENT[tgt[0]]
+                if amb:                       # B0-A：只給一個屬性 → 必然歧義
+                    col, sh = (col, None) if (i // 2) % 2 == 0 else (None, sh)
+                key, rstatus = ST.resolve(store, col, sh, tgt[1])
+                z, status = (None, rstatus) if key is None else ST.retrieve(store, *key)
+                if key is not None and key != tgt:
+                    status = "wrongkey"       # 解到別條 → 算錯，不算 ok
+            else:
+                z, status = ST.retrieve(store, *tgt)
             lat_t += time.perf_counter() - t0
 
             # shadow：沒有 guard 的相似度檢索會怎樣（**不得覆寫 guard**）
@@ -107,7 +122,14 @@ def main(n=250, core="bridge_core_latent.pth"):
 
             if status != "ok":
                 if hit:
-                    fab += 1                          # 該答卻 abstain
+                    # ⚠️ 分開兩種 abstain：`ambiguous` 是**描述真的有多個候選**，
+                    #    依 Codex [149]「歧義描述應 hard-abstain」那是**正確行為**；
+                    #    只有在描述唯一、key 也在 store 裡卻 abstain，才是 false_abstain。
+                    #    混報會讓正確行為看起來像失敗。
+                    if status == "ambiguous":
+                        amb_ab += 1
+                    else:
+                        fab += 1
                 else:
                     ab += 1                           # 正確 abstain
                 continue
@@ -130,11 +152,11 @@ def main(n=250, core="bridge_core_latent.pth"):
 
         lo, hi = wilson(e2e_ok, e2e_n) if e2e_n else (0, 1)
         print(f"  {pool:>5d} {f'{retr_ok}/{n_hit}':>12s} {f'{ab}/{n_miss}':>11s} "
-              f"{fab:>9d} {hal:>8d} "
+              f"{f'{fab}/{amb_ab}':>9s} {hal:>8d} "
               f"{e2e_ok/max(e2e_n,1):>9.1%}[{lo:.0%},{hi:.0%}] "
               f"{f'{shadow_hal}/{n_miss}':>14s} {lat_t/n*1e6:>8.1f}")
         res[pool] = {"retr": [retr_ok, n_hit], "abstain": [ab, n_miss],
-                     "false_abstain": fab, "halluc": hal,
+                     "false_abstain": fab, "ambiguous_abstain": amb_ab, "halluc": hal,
                      "e2e": [e2e_ok, e2e_n], "shadow_halluc": [shadow_hal, n_miss],
                      "us_per_lookup": lat_t / n * 1e6,
                      "store_bytes": sum(v[1].numel() * 4 + v[0].numel() * 4
@@ -154,4 +176,5 @@ def main(n=250, core="bridge_core_latent.pth"):
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 250)
+    main(int(sys.argv[1]) if len(sys.argv) > 1 else 250,
+         by_desc="--desc" in sys.argv or "--amb" in sys.argv, amb="--amb" in sys.argv)

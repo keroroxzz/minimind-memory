@@ -1,0 +1,84 @@
+{
+  "core": "bridge_core_mn1.pth",
+  "n": 250,
+  "heldout": [
+    [
+      "anna",
+      1
+    ],
+    [
+      "elsa",
+      1
+    ],
+    [
+      "finn",
+      0
+    ],
+    [
+      "gina",
+      2
+    ],
+    [
+      "hugo",
+      2
+    ],
+    [
+      "jack",
+      2
+    ],
+    [
+      "kira",
+      0
+    ],
+    [
+      "leo",
+      0
+    ],
+    [
+      "noah",
+      0
+    ],
+    [
+      "pete",
+      1
+    ]
+  ],
+  "cells": {
+    "seen|easy": {
+      "counts": {
+        "target": 202,
+        "dis": 38,
+        "third": 10
+      },
+      "n": 250
+    },
+    "seen|hard": {
+      "counts": {
+        "target": 250,
+        "dis": 0,
+        "third": 0
+      },
+      "n": 250
+    },
+    "held-out|easy": {
+      "counts": {
+        "target": 218,
+        "dis": 28,
+        "third": 4
+      },
+      "n": 250
+    },
+    "held-out|hard": {
+      "counts": {
+        "target": 250,
+        "dis": 0,
+        "third": 0
+      },
+      "n": 250
+    }
+  },
+  "fails": [
+    "seen/easy",
+    "held-out/easy"
+  ]
+}

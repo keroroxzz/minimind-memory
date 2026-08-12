@@ -1,0 +1,47 @@
+{
+  "core": "bridge_core_mn3.pth",
+  "n": 250,
+  "cells": {
+    "seen|R_addr": {
+      "ok": 136,
+      "dis": 96,
+      "n": 250
+    },
+    "seen|R_attr": {
+      "ok": 250,
+      "dis": 0,
+      "n": 250
+    },
+    "seen|R_both": {
+      "ok": 153,
+      "dis": 80,
+      "n": 250
+    },
+    "held-out|R_addr": {
+      "ok": 113,
+      "dis": 102,
+      "n": 250
+    },
+    "held-out|R_attr": {
+      "ok": 247,
+      "dis": 0,
+      "n": 250
+    },
+    "held-out|R_both": {
+      "ok": 105,
+      "dis": 107,
+      "n": 250
+    },
+    "fidelity_swap_addr": {
+      "dis_output": 114,
+      "n": 200,
+      "target": 73
+    }
+  },
+  "fails": [
+    "seen/R_addr",
+    "seen/R_both",
+    "held-out/R_addr",
+    "held-out/R_both"
+  ]
+}

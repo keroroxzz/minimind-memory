@@ -110,3 +110,55 @@ def retrieve(store, name, attr_idx):
     if not torch.allclose(z[:S.ADDR_DIM], S.phi(name, attr_idx)):
         return None, "wrongkey"
     return z, "ok"
+
+
+# ---------------------------------------------------------------- B0 描述定址
+# 每個 entity 帶兩個獨立屬性（Codex [149]）：query 只給**屬性子集的 conjunction**、
+# 不給 name。16 個 name 各分到一組互異的 (color, shape)，所以完整 conjunction
+# 全域唯一；但 8 種顏色分給 16 個名字 → **每個單一屬性都有多個 distractor**，
+# 這才是「交集解析」而不是把 `(name, attr)` 換個字串。
+#
+# resolver **是規則式的**：研究價值在資料／candidate-set／guard plumbing，
+# **不宣稱學到語意**（Codex [149]）。
+N_COLOR = N_SHAPE = 8
+
+
+def _ent_table():
+    """16 名字 → (color, shape)，**確定性構造**，同時滿足兩個硬條件：
+
+    - **完整 conjunction 全域唯一**（16 個 pair 互異）
+    - **每個單一屬性恰好有 2 個名字**（color 與 shape 皆是）→ 單屬性查詢必然歧義
+
+    隨機分配做不到後者：實測會有 3 個顏色只分到 1 個名字，
+    那些查詢就算「只給 color」也唯一命中，**B0-A 的歧義條件失效**。
+    """
+    t = {nm: (i // 2, (i // 2 + (i % 2) * (N_SHAPE // 2)) % N_SHAPE)
+         for i, nm in enumerate(B.NAMES)}
+    from collections import Counter
+    assert len(set(t.values())) == len(B.NAMES), "conjunction 必須唯一"
+    assert set(Counter(v[0] for v in t.values()).values()) == {2}, "每個 color 須恰 2 名"
+    assert set(Counter(v[1] for v in t.values()).values()) == {2}, "每個 shape 須恰 2 名"
+    return t
+
+
+ENT = _ent_table()
+
+
+def resolve(store, color=None, shape=None, attr_idx=0):
+    """描述 → key。回傳 `(key_or_None, status)`。
+
+    `status`：`ok`（唯一命中）／`ambiguous`（多候選 → **hard-abstain，不得任意挑**）／
+    `absent`（無候選，或候選不在 store 裡）。
+
+    ⚠️ 這是**可判定的約束解析**，不是 semantic retrieval ——
+    措辭限定為 `description-to-unique-key resolution`（Codex [149]）。
+    """
+    cand = [nm for nm in B.NAMES
+            if (color is None or ENT[nm][0] == color)
+            and (shape is None or ENT[nm][1] == shape)
+            and store.contains(nm, attr_idx)]
+    if len(cand) > 1:
+        return None, "ambiguous"
+    if not cand:
+        return None, "absent"
+    return (cand[0], attr_idx), "ok"

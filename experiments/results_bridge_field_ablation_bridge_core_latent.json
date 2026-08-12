@@ -1,0 +1,87 @@
+{
+  "core": "bridge_core_latent.pth",
+  "n": 200,
+  "strata": {
+    "hard": {
+      "intact": {
+        "target": 72,
+        "dis": 5,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 3,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 75,
+        "dis": 8,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 35,
+        "dis": 40,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 37,
+        "dis": 31,
+        "n": 200
+      }
+    },
+    "easy-diff": {
+      "intact": {
+        "target": 200,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 2,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 70,
+        "dis": 6,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 115,
+        "dis": 14,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 16,
+        "dis": 117,
+        "n": 200
+      }
+    },
+    "easy-same": {
+      "intact": {
+        "target": 184,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_attr": {
+        "target": 0,
+        "dis": 0,
+        "n": 200
+      },
+      "zero_addr": {
+        "target": 3,
+        "dis": 7,
+        "n": 200
+      },
+      "swap_attr": {
+        "target": 184,
+        "dis": 0,
+        "n": 200
+      },
+      "swap_addr": {
+        "target": 0,
+        "dis": 188,
+        "n": 200
+      }
+    }
+  }
+}
