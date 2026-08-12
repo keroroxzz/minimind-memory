@@ -65,18 +65,31 @@ def invariants(art):
     # lexical atom：held-out frame 一個新詞都不得引入
     assert D._atoms(art["heldout_frames"]) <= D._atoms(art["seen_frames"])
 
-    # membership 恰 50:50（每個 query 各配一個 present 與一個 absent store）
-    for c, v in art["cells"].items():
+    # membership 恰 50:50，以及 active distractor 的規則
+    # **CAL 與 test cell 走完全相同的檢查** —— tau 的選擇條件就是量在 CAL 上，
+    # 若 CAL 沒有凍結的 store，threshold protocol 不封閉（Codex [162] review 的 blocker）。
+    for c, v in list(art["cells"].items()) + [("CAL", art["cal"])]:
         for e in v:
             k = tuple(e["k"])
-            assert k in {tuple(p) for p in e["present"]["keys"]}, f"{c} present 不含 k*"
+            pk = {tuple(p) for p in e["present"]["keys"]}
+            assert k in pk, f"{c} present 不含 k*"
             assert k not in {tuple(p) for p in e["absent"]["keys"]}, f"{c} absent 含 k*"
             assert len(e["present"]["keys"]) == len(e["absent"]["keys"]) == art["pool"]
-    return {c: {"distinct_q": len(s),
+            d = tuple(e["dis"])
+            assert d in pk, f"{c} 的 dis 不在 present store 裡"
+            assert d != k, f"{c} 的 dis 等於 target"
+            assert d[0] != k[0], f"{c} 的 dis 與 target 同名（§4.63 已封存的範圍）"
+    sup = {c: {"distinct_q": len(s),
                 "distinct_k": len({tuple(e["k"]) for e in art["cells"][c]}),
                 "distinct_frame": len({e["frame"] for e in art["cells"][c]}),
                 "distinct_alias": len({e["alias"] for e in art["cells"][c]})}
-            for c, s in cells.items()}
+           for c, s in cells.items()}
+    sup["CAL"] = {"distinct_q": len(ca),
+                  "distinct_k": len({tuple(e["k"]) for e in art["cal"]}),
+                  "distinct_frame": len({e["frame"] for e in art["cal"]}),
+                  "distinct_alias": len({e["alias"] for e in art["cal"]}),
+                  "episodes": 2 * len(art["cal"])}
+    return sup
 
 
 def mk_store(spec):
@@ -121,7 +134,8 @@ def main(core="bridge_core_latent.pth"):
     for c, v in sup.items():
         print(f"  {c:>5s} {v['distinct_q']:>11d} {v['distinct_k']:>11d} "
               f"{v['distinct_frame']:>7d} {v['distinct_alias']:>8d}")
-    print(f"\n  train {len(art['train'])}   cal {len(art['cal'])}"
+    print(f"\n  train {len(art['train'])}   cal {len(art['cal'])} query"
+          f" → **{2*len(art['cal'])} 個 CAL episode**（50:50，store 已凍結）"
           f"   held-out combos {len(art['heldout_combos'])}/48")
 
     tok = AutoTokenizer.from_pretrained(os.path.join(HERE, "..", "model"))

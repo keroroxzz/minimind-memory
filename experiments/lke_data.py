@@ -125,7 +125,7 @@ def build(seed=SPLIT_SEED):
     idp = pools["ID"][:]
     rng.shuffle(idp)
     cells = {"ID": idp[:N_PER_CELL]}
-    cal = idp[N_PER_CELL:N_PER_CELL + 200]
+    cal_items = idp[N_PER_CELL:N_PER_CELL + 200]
     train = idp[N_PER_CELL + 200:]
     for c in ("K", "P", "KxP"):
         v = pools[c][:]
@@ -167,8 +167,11 @@ def build(seed=SPLIT_SEED):
            "heldout_frames": HELDOUT_FRAMES,
            "train": [{"q": s, "k": list(k), "frame": f, "alias": a}
                      for s, k, f, a in train],
-           "cal": [{"q": s, "k": list(k), "frame": f, "alias": a}
-                   for s, k, f, a in cal],
+           # ⚠️ CAL **必須**帶凍結的 store —— tau 的選擇條件是 CAL 上的
+           #    wrong-existing delivery rate，若在跑的時候才用 seed 動態造 store，
+           #    threshold protocol 就不封閉、也不可 checksum（Codex [162] review 的 blocker）。
+           #    200 個 CAL query × (present, absent) = **400 個 CAL episode**，50:50。
+           "cal": stores_for(cal_items, 4),
            "cells": {c: stores_for(v, i) for i, (c, v) in enumerate(cells.items())}}
     art["checksum"] = checksum(art)
     return art

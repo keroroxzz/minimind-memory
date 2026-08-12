@@ -3,7 +3,6 @@
   "title": "query-side learned controlled-language key extraction",
   "spec_source": "Codex [161] 回覆；本檔只把它固化成可執行的數字",
   "status": "awaiting interface-only review — 未訓練",
-
   "scope": {
     "is": "learned controlled-language canonicalization：受控英語表面 → 既有 canonical (name, attr)",
     "is_not": [
@@ -14,29 +13,47 @@
       "core 直接理解自然問題"
     ]
   },
-
   "artifact": {
     "builder": "experiments/lke_data.py",
     "path": "experiments/lke1_artifact.json",
-    "checksum": "946659293b76b3ab",
+    "checksum": "c2abbd5eff9d7a0c",
     "split_seed": 20260812,
     "heldout_combos": 12,
     "n_per_cell": 150,
     "pool": 24,
     "train": 730,
-    "cal": 200,
+    "cal": "200 query × (present, absent) = **400 個凍結 CAL episode**，50:50；values 與 active dis 全部寫入 artifact",
     "frozen": true,
-    "distractor_rule": "與 target 一起注入的 distractor 寫進 artifact，**必須異名**（§4.63 封存範圍）；同名以外不再篩選"
+    "distractor_rule": "與 target 一起注入的 distractor 寫進 artifact，**必須異名**（§4.63 封存範圍）；同名以外不再篩選",
+    "superseded": {
+      "946659293b76b3ab": "被 Codex [162] review 擋下：CAL 缺凍結 store，tau 的 threshold protocol 不封閉",
+      "a2b6472cddede5dd": "**INVALID（scope violation）**：active distractor 可能與 target 同名，把 §4.63 已封存的能力混進 LKE-1。ceiling 94.0/94.7 保留紀錄，但不是 LKE-1 的 FAIL"
+    }
   },
-
   "phase0": {
     "script": "experiments/lke1_phase0.py",
     "result": "PASS",
-    "invariants": "raw-string 無重疊、無 pair/template leakage、name/attr 邊際皆見過、held-out frame 不引入新詞、membership 恰 50:50",
-    "oracle_ceiling": {"ID": [147, 150], "K": [149, 150], "P": [148, 150], "KxP": [150, 150]},
+    "invariants": "raw-string 無重疊、無 pair/template leakage、name/attr 邊際皆見過、held-out frame 不引入新詞、membership 恰 50:50 ；CAL 走與 test cell 完全相同的檢查（membership、pool size、dis != target、dis.name != target.name）",
+    "oracle_ceiling": {
+      "ID": [
+        147,
+        150
+      ],
+      "K": [
+        149,
+        150
+      ],
+      "P": [
+        148,
+        150
+      ],
+      "KxP": [
+        150,
+        150
+      ]
+    },
     "note": "oracle ceiling 四 cell 皆 >=95%，故 extractor 分數可與 delivery 失敗分離"
   },
-
   "learner": {
     "note": "**單一固定架構，不做 architecture sweep**。以下每個數字都在訓練前鎖死。",
     "tokenizer": "既有 minimind_tokenizer（vocab 6400），不重訓、不擴充",
@@ -58,30 +75,50 @@
     },
     "loss": "未加權 CE，name 與 attr 等權相加"
   },
-
   "optimizer": {
     "type": "AdamW",
-    "lr": 3e-4,
-    "betas": [0.9, 0.98],
+    "lr": 0.0003,
+    "betas": [
+      0.9,
+      0.98
+    ],
     "weight_decay": 0.01,
-    "wd_exempt": ["embedding", "norm", "bias"],
+    "wd_exempt": [
+      "embedding",
+      "norm",
+      "bias"
+    ],
     "scheduler": "OneCycleLR, pct_start=0.05",
     "batch_size": 64,
     "steps": 4000,
     "grad_clip": 1.0
   },
-
-  "seeds": [20260812, 20260813, 20260814],
-
+  "seeds": [
+    20260812,
+    20260813,
+    20260814
+  ],
   "selective_policy": {
     "confidence": "c = max_n p(name=n|x) * max_a p(attr=a|x)",
-    "tau_grid": [0.50, 0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.925, 0.95, 0.975, 0.99],
+    "tau_grid": [
+      0.5,
+      0.6,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.925,
+      0.95,
+      0.975,
+      0.99
+    ],
     "tau_fallback": 1.0,
-    "calibration_set": "只用 cal（ID 的未見 instantiations），**不得**用任何 test cell",
+    "calibration_set": "frozen CAL 的 400 個 episode（ID 的未見 instantiations）；**不得**用任何 test cell",
     "rule": "從 grid 選**最低**的 tau，使 cal 的 wrong-existing delivery 單側 95% CP 上界 <= 1%；若 grid 內無可行者，令 tau=1（全拒），由 utility gate 判 FAIL",
-    "test": "tau 鎖死，**不得**在 test 上重調"
+    "test": "tau 鎖死，**不得**在 test 上重調",
+    "procedure": "每個 seed 用**其自己**的已訓練 extractor、**同一份** frozen CAL，按全 **400 個 CAL episode** 的 unsafe wrong-existing rate 選最低可行 tau；tie 採**固定最小 index**。任一 seed 的 tau 一經選定即不得重選。"
   },
-
   "attribution": {
     "note": "先拆死，才不會讓 halluc=0 掩蓋 extractor 無用",
     "raw_exact_present": "抽對且 k* 在 store → 正確交付路徑",
@@ -91,7 +128,6 @@
     "false_abstain": "raw exact + present 卻被 confidence gate 擋掉",
     "authority": "membership 只由 store.contains(k_hat) 決定，**不由 confidence 決定**"
   },
-
   "primary_gate": {
     "granularity": "三個 seed × 四個 cell **各自**都要過；**不得** pooled average，不得用漂亮的 cell 補過",
     "criteria": [
@@ -102,10 +138,15 @@
       "每次 exact delivery 的 key / z / delivery tensor / decode 與 oracle direct path 逐例相同"
     ]
   },
-
   "stopping_rule": {
     "run": "一次三-seed train/eval",
-    "forbidden_after_seeing_results": ["調 grammar", "調 split", "調 tau", "換模型", "改資料量"],
+    "forbidden_after_seeing_results": [
+      "調 grammar",
+      "調 split",
+      "調 tau",
+      "換模型",
+      "改資料量"
+    ],
     "on_pass": "只稱「在這個 frozen controlled-language grammar 下，factorized canonical query extraction 與 exact-membership guard 可同時維持 utility 與已量的 wrong-existing safety」；**不稱** semantic／natural／open-set",
     "on_fail": "封存 LKE-1，依 attribution 記明是 safe-but-useless／raw extraction／confidence transfer／downstream ceiling 何者；下一個有界問題改做 exact-key conflict/overwrite contract，**不另開第二套自然語言配方**"
   }

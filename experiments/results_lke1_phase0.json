@@ -1,5 +1,5 @@
 {
-  "checksum": "946659293b76b3ab",
+  "checksum": "c2abbd5eff9d7a0c",
   "support": {
     "ID": {
       "distinct_q": 150,
@@ -24,6 +24,13 @@
       "distinct_k": 12,
       "distinct_frame": 3,
       "distinct_alias": 5
+    },
+    "CAL": {
+      "distinct_q": 200,
+      "distinct_k": 36,
+      "distinct_frame": 6,
+      "distinct_alias": 5,
+      "episodes": 400
     }
   },
   "oracle": {
