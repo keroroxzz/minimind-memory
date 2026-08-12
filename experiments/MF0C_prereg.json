@@ -2,7 +2,7 @@
   "experiment": "MF0-C",
   "title": "causal formation with a bounded learned controller",
   "spec_source": "Codex [173]/[174]/[176]/[177]；`MF0_DESIGN.md` 為設計閘",
-  "status": "draft v2 — spec 已鎖（Codex [178]）；**尚未授權 code／H／P0**",
+  "status": "v3 — interface **通過**（Codex [179]）；目前僅授權 artifact phase",
   "why_not_MF0": {
     "point": "**這不是 `MF-0` 的一個 world，是不同的研究問題**（Codex [177]）",
     "detail": "`π_content*` 需要 prefix 的 entity counts，而 `MF-0` 的 gate 只拿得到 `W=4` 個 raw event。把 count vector **外接**給 learner，等於**手工把 focus 判據交給它**，而那不在 `W=4` 內。",
@@ -96,17 +96,19 @@
     "P0_arch": "單層 `GRUCell(28, 16)`（event input = `onehot(entity:16) || onehot(attr:12)`；**goal 的 3-way onehot 接到兩個 output head**，**無其他 embedding／tokenizer**），兩個 softmax head",
     "P0_corpus": "**獨立預生成 100,000 個 event-only stream**，generator 正是 frozen `W0`／`MF0-C` 的 surface／count profile，**但無** query／value／admission／reward／Store 欄位",
     "P0_corpus_seed": 2026081301,
-    "P0_corpus_fingerprint": "**待生成後填入 checksum**（prereg 鎖定欄位，不得事後更改）",
+    "P0_corpus_fingerprint": "a4b73fa74b11ff17",
     "P0_train_seed": 2026081302,
     "P0_optimizer": "AdamW(lr=1e-3, betas=(0.9, 0.999), weight_decay=0.01)",
     "P0_batch": 512,
     "P0_batch_note": "**隨機 causal window**",
     "P0_updates": 20000,
     "P0_no_selection": "**不設** validation／early stop／checkpoint selection —— **僅取 final step**",
-    "P0_checkpoint_fingerprint": "**待訓練後填入**（鎖定欄位）",
     "disjoint": "`MF0-C` 的 train／eval artifact 必須與此 corpus 的 **episode-id disjoint**",
     "after": "P0 結束即 **freeze**；**不共享參數、不更新**",
-    "claim_limit": "這是一個**明確且受限的 predictive baseline**；**它的輸贏不能評論 Titans**"
+    "claim_limit": "這是一個**明確且受限的 predictive baseline**；**它的輸贏不能評論 Titans**",
+    "P0_final_checkpoint_fingerprint_recorded_after_run": "**只能在固定的第 20,000 次 final update 之後如實記錄**。⚠️ **不可**當作訓練前 requirement，**不可**作為 checkpoint-selection 條件",
+    "manifest": "兩個 fingerprint 都須連同 **builder／trainer 的 code revision、完整 config、檔案 bytes hash** 寫入 manifest",
+    "P0_corpus_fingerprint_note": "**已於 artifact phase 生成後填入（required commit）**；phase 完成後**不得再生 corpus 或換 seed**"
   },
   "stopping_rule": {
     "order": [
@@ -126,7 +128,47 @@
     "controller 的 input 張量維度 **恰 31**，且不含 value／position／hash／count",
     "`h=0` ablation 走的是 `GRUCell(u_t, 0)` 而**非** head 歸零",
     "`P0` 的 scoring window **每次從零狀態重跑**",
-    "`MF0-C` artifact 與 `P0` corpus 的 **episode-id 交集為空**",
-    "`P0` corpus 與 checkpoint 的 fingerprint 均已填入且與實際檔案相符"
+    "`P0` corpus 與 checkpoint 的 fingerprint 均已填入且與實際檔案相符",
+    "**exact-stream digest 交集為空**：對 `(goal, 64 個 canonical (entity,attr) 的有序 stream)` 算 canonical digest，assert `P0 corpus` 與 `MF0-C train/eval` 的 digest 集合**交集為空**，並另報各集合大小。⚠️ 只讓 episode-id 名稱不同**不夠** —— 這條堵的是「不同 ID 但其實同一 episode」的漏口（不保證分布獨立，但堵住重疊）"
+  ],
+  "authorization": {
+    "granted": "**範圍 A（Codex [179]）**：corpus builder／manifest／assertions ＋ 生成 100,000-stream `P0` corpus ＋ 填 corpus fingerprint ＋ phase-0",
+    "forbidden_now": [
+      "寫或訓練 controller",
+      "訓練 `P0`",
+      "計算 `H`"
+    ],
+    "next": "artifact phase 過後送簡短 report → 才授權**固定一次**的 `P0` final-step training → 記錄 final checkpoint fingerprint → 才能做**不訓練**的 H audit"
+  },
+  "artifact_phase": {
+    "status": "PASS（Codex [179] 範圍 A）",
+    "P0_corpus": {
+      "sha": "a4b73fa74b11ff17",
+      "n_stream": 100000,
+      "shape": [
+        100000,
+        65,
+        2
+      ],
+      "dtype": "uint8"
+    },
+    "MF0C_artifact": {
+      "sha": "9bc1848c9c84c4a1",
+      "sizes": {
+        "W0|train": 2000,
+        "W0|eval": 300,
+        "W1|train": 2000,
+        "W1|eval": 300
+      }
+    },
+    "exact_stream_digest": {
+      "P0_distinct": 100000,
+      "MF0C_distinct": 4300,
+      "intersection": 0
+    },
+    "manifest": "experiments/mf0c_manifest.json"
+  },
+  "not_yet_locked": [
+    "**controller 的訓練預算**（session 數／update 數／optimizer／batch）—— artifact 裡的 `train=2000 sessions` 是我為了產生 artifact 而**暫定**的，**必須在訓練授權前鎖定**，否則它會變成一個看到結果才調的自由度"
   ]
 }

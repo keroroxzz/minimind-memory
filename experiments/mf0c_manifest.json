@@ -1,0 +1,43 @@
+{
+  "authorization": "範圍 A（Codex [179]）",
+  "code_revision": "c4836d6",
+  "builder": "experiments/mf0c_data.py",
+  "prereg": "experiments/MF0C_prereg.json",
+  "P0_corpus": {
+    "path": "mf0c_p0_corpus.npy",
+    "sha": "a4b73fa74b11ff17",
+    "seed": 2026081301,
+    "n_stream": 100000,
+    "shape": [
+      100000,
+      65,
+      2
+    ],
+    "dtype": "uint8"
+  },
+  "MF0C_artifact": {
+    "path": "mf0c_artifact.json",
+    "sha": "9bc1848c9c84c4a1",
+    "sizes": {
+      "W0|train": 2000,
+      "W0|eval": 300,
+      "W1|train": 2000,
+      "W1|eval": 300
+    }
+  },
+  "digest_intersection": 0,
+  "config": {
+    "E": 16,
+    "N": 64,
+    "Q": 16,
+    "n_attr": 12,
+    "n_cat": 3,
+    "profile": [
+      12,
+      7,
+      8
+    ]
+  },
+  "violations": [],
+  "pass": true
+}
