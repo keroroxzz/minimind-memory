@@ -1,0 +1,56 @@
+{
+  "coverage": {
+    "8|N-U": {
+      "covered": 76,
+      "distinct": 76
+    },
+    "8|N-T": {
+      "covered": 18,
+      "distinct": 18
+    },
+    "8|N-Ø": {
+      "covered": 90,
+      "distinct": 90
+    },
+    "24|N-U": {
+      "covered": 50,
+      "distinct": 50
+    },
+    "24|N-T": {
+      "covered": 66,
+      "distinct": 66
+    },
+    "24|N-Ø": {
+      "covered": 10,
+      "distinct": 10
+    },
+    "36|N-U": {
+      "covered": 11,
+      "distinct": 11
+    },
+    "36|N-T": {
+      "covered": 36,
+      "distinct": 36
+    },
+    "36|N-Ø": {
+      "covered": 2,
+      "distinct": 2
+    }
+  },
+  "injector_calls": 0,
+  "mismatches": [],
+  "finite_support": {
+    "24|N-Ø": {
+      "covered": 10,
+      "distinct": 10
+    },
+    "36|N-U": {
+      "covered": 11,
+      "distinct": 11
+    },
+    "36|N-Ø": {
+      "covered": 2,
+      "distinct": 2
+    }
+  }
+}

@@ -4554,15 +4554,55 @@ abstain 條件就寫在規則裡，所以「規則式 resolver 遵守自己的�
 2. **三個 stratum 在三個 pool 下都非空**，且逐題 assert 幾何成立
    —— 不是靠重抽湊出好看的配置。
 
-### 必須跟著報的限制
+### 必須跟著報的限制：`0/300` 是有限 support 上的操作次數，不是 300 個獨立 query
 
-**`n=300` 是從相異 query 有放回抽樣，有效多樣性遠低於 300。**
-最極端的 `pool=36 / N-Ø` 只有 **2 個**相異 query，`pool=36 / N-U` 只有 **11 個**
-（全部 `8×8×3 = 192` 個 query 窮舉分類後的結果）。
-**那些格子的 300/300 不得當成 300 個獨立證據。**
+`n=300` 是從**相異 query 有放回抽樣**。窮舉 `8×8×3 = 192` 個 query 分類後，
+有三格的 descriptor support 很窄 —— 依 Codex [160]，**三格要一起報，
+不能只挑最刺眼的一格**：
 
-**措辭鎖定**：這是 `noisy symbolic descriptor resolution`，
-**不是** semantic／open-set retrieval，PASS **不得**升格。
+| 格 | 相異 query 數 |
+|---|---|
+| `pool=36 / N-Ø` | **2** |
+| `pool=24 / N-Ø` | 10 |
+| `pool=36 / N-U` | 11 |
+
+因此那些格的 `0/300, UB 0.99%` **只能**解讀為
+「**在這個有放回 episode distribution 上的 300 次操作沒有 unsafe delivery**」，
+**不可**解讀為 300 個獨立／多樣 no-match 描述的安全證據，
+**更不可**外推到更大的 attribute universe。
+
+**PASS 本身不因此改動。** 事前 gate 是三個 pool 各三格 `0/300`；
+結果出來後把最窄的一格踢出 PASS，等於**事後改變已通過的判準**，不做
+（我曾提議降級成 underpowered，Codex [160] 駁回，理由成立）。
+擴大 `ENT` 值域也不做 —— 那是換 artifact，等於另一個實驗。
+
+### 追加：exhaustive coverage audit（非 gate、非 retry）
+
+`experiments/bridge_b0n_coverage.py`。主 gate 是抽樣 300 次，
+所以「每一個相異 query 都被實際 exercise 過」原本並未被證明。
+本 audit 固定沿用同三個 store artifact，對**每一個**相異 `(qc, qs, attr)`
+實際呼叫 resolver 並 assert：stratum 相符、`N-U` key 正確、
+`N-T`／`N-Ø` 無 key 且 **injector 呼叫增量為 0**。
+**不改**模型／seed／distance／margin／比例／門檻，**不重跑** 300 episode，
+**不產生**新的 PASS／FAIL。
+
+| pool | `N-U` | `N-T` | `N-Ø` |
+|---|---|---|---|
+| 8 | 76/76 | 18/18 | 90/90 |
+| 24 | 50/50 | 66/66 | **10/10** |
+| 36 | **11/11** | 36/36 | **2/2** |
+
+359 個相異 query 全數覆蓋，**交付總次數 0**。
+
+### 最終措辭（Codex [160] 鎖定）
+
+> B0-N 證明的是：**在固定有限 descriptor universe 上，
+> 規則式 unique-near／tie／no-match policy 與 bridge delivery 的
+> 一致性與 fail-closed plumbing 通過。**
+
+非平凡的下游證據仍是 `N-U` 的 direct-path **逐位元同一性**；
+`N-T`／`N-Ø` 主要證明**沒有漏交付**。
+**不得**寫成 robust approximate retrieval，**更不得**升格為 semantic／open-set。
 下一個問題是 learned／自然語言 key extraction 的**獨立**規格。
 仍不涵蓋：同實體多屬性（§4.63 起）、overwrite／reconsolidation、write-address formation。
 
