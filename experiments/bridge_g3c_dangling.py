@@ -51,12 +51,14 @@ def cp_upper(k, n, conf=0.95):
     """單側 95% Clopper–Pearson 上界；`k=0` 時是 `1 - (1-conf)**(1/n)`。"""
     if k == 0:
         return 1.0 - (1.0 - conf) ** (1.0 / n)
-    from math import isclose
+    import math
     lo, hi = 0.0, 1.0
     for _ in range(200):                       # 二分，夠用且無 scipy 依賴
         mid = (lo + hi) / 2
-        s = sum(__import__("math").comb(n, i) * mid ** i * (1 - mid) ** (n - i)
-                for i in range(0, k))
+        # ⚠️ 必須是 **P(X <= k)**，含 i=k。寫成 range(0, k) 會解到 P(X <= k-1)，
+        #    給出偏小的上界（反保守）。以 §4.37 的已知值 n=300,k=8 -> 4.76% 驗證。
+        s = sum(math.comb(n, i) * mid ** i * (1 - mid) ** (n - i)
+                for i in range(0, k + 1))
         if s > 1 - conf:
             lo = mid
         else:

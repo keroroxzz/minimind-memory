@@ -4608,6 +4608,73 @@ abstain 條件就寫在規則裡，所以「規則式 resolver 遵守自己的�
 
 ---
 
+## 4.66 `LKE-1` 受控語言 key extraction：**PASS，但這個 PASS 幾乎沒有鑑別力**
+
+規格 Codex [161]／[163] 授權，artifact checksum **`c2abbd5eff9d7a0c`**。
+`experiments/lke_data.py`、`lke1_phase0.py`、`lke1_run.py`、`LKE1_prereg.json`。
+
+**範圍（先講，因為結論很容易被高估）**：這是
+**learned controlled-language canonicalization** —— 受控英語表面 → 既有 canonical
+`(name, attr)`。**不是**自然語言、**不是** open-set identity、**不是** write-side
+extraction、**不涵蓋**同實體多屬性。真實文本必須另立有雙標註／adjudication 的
+data protocol，**不得用本實驗的分數冒充**。
+
+三個 seed（`20260812/13/14`）× 四個 cell，每 cell 150 個相異 query、300 個 episode：
+
+| cell | raw key exact | 交付答對 | false-abstain | unsafe wrong-existing | 逐位元同 |
+|---|---|---|---|---|---|
+| `ID` | **100.0%** | 98.0% | 0.0% | **0/300** | 150/150 |
+| `K`（held-out combo） | **100.0%** | 99.3% | 0.0% | **0/300** | 150/150 |
+| `P`（held-out frame） | **100.0%** | 98.7% | 0.0% | **0/300** | 150/150 |
+| `K×P` | **100.0%** | 100.0% | 0.0% | **0/300** | 150/150 |
+
+三個 seed 的數字**逐格完全相同**。依 prereg：**PASS**。
+
+### 為什麼這個 PASS 幾乎沒有鑑別力 —— 三件事必須一起報
+
+1. **raw extraction 是 1800/1800，一次都沒錯。** 兩個 OOD 軸都沒有造成任何壓力。
+   原因結構上很清楚：query 字串裡 **name 是字面出現的 token**，attr 只有
+   3 類 × 5 個固定 alias。extractor 只需要認出 name token 並比對 alias ——
+   這離查表很近，**held-out combo／frame 都改變不了這件事**。
+   `K×P` 也 100%，正說明兩個軸都沒咬住。
+
+2. **selective policy 從未被 exercise。** 三個 seed 都選到 grid 最低值 `τ=0.5`，
+   而且因為抽取零錯誤，confidence gate **一次都沒有拒絕過任何東西**。
+   → **本實驗沒有測到 confidence transfer**，那條安全機制目前仍是未驗證的。
+   `unsafe wrong-existing 0/300` 為真，但它成立的原因是**沒有錯誤可供 gate 攔**，
+   不是 gate 有效。
+
+3. **「交付答對」那一欄逐格等於 oracle ceiling**（147/149/148/150 之於 150）。
+   這是恆等的結果不是巧合：抽取全對 → `k_hat = k*` → 交付路徑**就是** oracle 路徑。
+   逐位元同一性 150/150 因此只驗到 plumbing 正確，不是額外能力。
+
+### 可主張／不可主張
+
+**可主張**（措辭照 Codex [161] 鎖定）：在這個 frozen controlled-language grammar 下，
+factorized canonical query extraction 與 exact-membership guard
+**可同時維持 utility 與已量的 wrong-existing safety**。
+
+**不可主張**：不得稱 semantic／natural／open-set；
+**不得**說 confidence gate 已驗證（它從未被觸發）；
+**不得**把 `0/300` 當成 gate 有效的證據。
+
+### 兩個過程紀錄（不刪）
+
+- **artifact 版本**：`a2b6472cddede5dd` = **INVALID（scope violation）** ——
+  active distractor 可能與 target 同名，把 §4.63 已封存的能力混進來，
+  oracle ceiling 因此只有 94.0/94.7。保留紀錄，**不是** LKE-1 的 FAIL。
+  `946659293b76b3ab` = **INVALID（incomplete calibration interface）** ——
+  CAL 缺凍結 store，τ 的 threshold protocol 不封閉（Codex [162] review 擋下）。
+  兩者都**不得**與 `c2ab…` 的成績混算。
+
+- **`cp_upper` 的 Clopper–Pearson 上界曾寫錯**：求和範圍是 `range(0, k)`
+  即 `P(X ≤ k-1)`，應為 `P(X ≤ k)`，會給出**偏小的上界（反保守）**。
+  已修，並以本專案兩個獨立記錄值驗證：`n=300, k=8 → 4.7600%`（§4.37 記 4.76%）、
+  `n=300, k=0 → 0.9936%`（§4.38 記 0.99%）。
+  **先前所有結果都走 `k=0` 的封閉解分支，不經過該段二分搜尋，因此未受影響。**
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

@@ -1,0 +1,181 @@
+{
+  "artifact": "c2abbd5eff9d7a0c",
+  "seeds": {
+    "20260812": {
+      "tau": 0.5,
+      "cal": [
+        0,
+        400,
+        0.0074613555287995625
+      ],
+      "cells": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 147,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 149,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 148,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 150,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        }
+      }
+    },
+    "20260813": {
+      "tau": 0.5,
+      "cal": [
+        0,
+        400,
+        0.0074613555287995625
+      ],
+      "cells": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 147,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 149,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 148,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 150,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        }
+      }
+    },
+    "20260814": {
+      "tau": 0.5,
+      "cal": [
+        0,
+        400,
+        0.0074613555287995625
+      ],
+      "cells": {
+        "ID": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 147,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "K": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 149,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "P": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 148,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        },
+        "KxP": {
+          "raw_exact": 150,
+          "n_raw": 150,
+          "unsafe": 0,
+          "n_ep": 300,
+          "present_deliver_ok": 150,
+          "present_deliver_n": 150,
+          "false_abstain": 0,
+          "correct_missing_abstain": 150,
+          "wrong_absent": 0,
+          "bitwise_same": 150
+        }
+      }
+    }
+  },
+  "fails": [],
+  "pass": true
+}
