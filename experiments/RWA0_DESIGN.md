@@ -49,30 +49,43 @@
 
 ---
 
-## 5. 訓練與命名的硬約束
+## 5. 訓練與命名的硬約束（**已鎖定，條件式文字已刪**）
 
-> 若訓練使用 **same/different referent pair 標籤**，
-> **必須**叫 **`supervised semantic canonicalization`**，
-> **不得**叫無標籤的自然湧現。
->
-> 若**只作 eval**（用既有 encoder 探測），則叫 **既有 encoder probe**。
+**訓練形式已鎖為 direct CE**（Codex [186]／[187]）：
+write／read 各自輸出離散 typed product key `K=(entity_code, attribute_code)`，
+以 oracle `K*` 的**交叉熵**訓練。
 
-兩者**不得混稱**。這一項在起草時就要決定並寫死，不得跑完再選稱呼。
+> 名稱鎖為 **`closed-world supervised controlled canonicalization`**。
+> **不得**叫自然語言／無標籤／emergent semantic canonicalization。
+
+⚠️ 原本「**若**訓練使用 same/different referent pair 標籤則……」那段條件式文字
+**已刪除** —— direct CE 已鎖，保留條件句會讓稱呼看起來還有選擇餘地。
 
 ---
 
-## 6. 待鎖（下一輪要填死，現在**刻意留白**）
+## 5.1 ⚠️ 同步界線：held-out 的是**組合**，不是**字典**（Codex [187]）
 
-1. **surface family 的定義**：write／read 的 template 與 alias 如何切、
-   held-out family 怎麼選？
-2. **hard-negative 的構造**：「近似字面」的精確定義（編輯距離？共享 token？）——
-   這個定義**實質決定 (b) 的難度**，且我處在會挑好看的位置。
-3. **是否訓練**（決定第 5 節的稱呼）。
-4. **n 與 stratum 比例**、以及 (b) 的 `0/300` 是否 per stratum per replica。
-5. **encoder 規格**（若訓練）：架構／budget／seeds，須訓練前一次鎖死。
+`W`／`R` 的 **alias literal class 可以互不重疊**，
+但 **eval 不得含未見的 atom／alias** —— **每個 eval atom 都必須有 train witness**。
 
-**第 2 項是本設計最容易自欺的地方** —— 把 hard-negative 定得太寬，(b) 就變成送分題；
-定得太窄，(b) 變成不可能。**這個選擇必須事前公開並給理由。**
+> **真正 held-out 的是：renderer composition／template、完整 surface string、
+> 以及 `(entity, attribute)` pair。**
+> **不是**字典 OOD。
+
+若弄反，FAIL 只會證明「模型沒看過這個詞」，**完全不能識別 read-write agreement**。
+
+---
+
+## 6. 待鎖 —— **已全部鎖定**（見 `RWA0_prereg.json` v2）
+
+六項（key schema／renderer 與 alias／hard-negative 構造／data-split／
+phase-0 追加項／encoder 與 compute）已由 Codex [187] **一次鎖定**，
+逐字寫入 `RWA0_prereg.json` v2；舊版保留為 `RWA0_prereg_rev1.json`。
+
+**我原本擔心的「hard-negative 定得太寬或太窄」已不存在** ——
+它現在是**完全由構造決定**的：`(a,b,c,e)`／`(a,e,c,d)`／`(a,c,b,d)`，
+**禁止**用 edit distance、cosine 或模型表現挑選。
+「hard」是**造出來的，不是挑出來的**。
 
 ---
 

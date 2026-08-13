@@ -2,7 +2,7 @@
   "experiment": "RWA-0",
   "title": "closed-world supervised controlled canonicalization：read-write key agreement",
   "spec_source": "Codex [175]／[186]；`RWA0_DESIGN.md` 為設計閘",
-  "status": "v3 — 五項機械定義逐字補全（Codex [188]）；待**窄的** interface recheck；**仍不得**產生 artifact",
+  "status": "v2 — 六項已一次鎖定（Codex [187]）；**仍不得**產生 artifact／寫訓練 code／跑 smoke",
   "naming": {
     "must_be_called": "**closed-world supervised controlled canonicalization**",
     "must_not_be_called": [
@@ -53,9 +53,9 @@
       "anchor": "`(a,b,c,d)`，四者皆異",
       "same_entity_diff_attr": "`(a,b,c,e)`",
       "same_attr_diff_entity": "`(a,e,c,d)`",
+      "e": "由 `D \\ {a,b,c,d}` 依 **artifact RNG** 取**最小被抽 index**",
       "binding_swap": "`(a,c,b,d)` —— **嚴格保留相同 alias multiset，只改 slot binding**",
-      "eval_disjointness": "eval 的 target ＋ 三 negative 共 **1,200 個 key** 必須**兩兩不同**，且**全不在 train 的 key-pair set** 內",
-      "e_removed": "⚠️ 原本「`e` 依 artifact RNG 取最小被抽 index」**已刪除** —— 該短語**不具定義**；`e` 已由 `eval_reservation_and_train_sampling` 的**五元組 permutation 完整決定**"
+      "eval_disjointness": "eval 的 target ＋ 三 negative 共 **1,200 個 key** 必須**兩兩不同**，且**全不在 train 的 key-pair set** 內"
     }
   },
   "primary_gate": {
@@ -104,10 +104,7 @@
     "on_fail": "記 `RWA-0 FAIL` 並依 (a)/(b)/(c) 分類歸因；**不得**改 hard-negative 定義、split 或門檻去救",
     "on_pass": "**不得**升格為自然語言／open-set；**不得**用來補 §4.67 或 `MF0-C` 的 FAIL"
   },
-  "prior_revision": [
-    "RWA0_prereg_rev1.json",
-    "RWA0_prereg_rev2.json"
-  ],
+  "prior_revision": "RWA0_prereg_rev1.json（保留，不覆寫）",
   "key_schema": {
     "atoms": "semantic atom universe `D = {0,…,11}`",
     "key": "一個 key 取**四個彼此不同**的 atom `(x0,x1,x2,x3)`；`entity=(x0,x1)`、`attribute=(x2,x3)`",
@@ -118,17 +115,16 @@
     "aliases": "`W_i = \"w{i}\"`、`R_i = \"r{i}\"`（`i=0..11`）—— **兩族 literal 不重疊**",
     "vocab": "24 個 alias ＋ `memo`／`find`／`E0`／`E1`／`A0`／`A1` ＋ `PAD`",
     "write_train": [
-      "W0 = `memo E0 W[x0] E1 W[x1] A0 W[x2] A1 W[x3]`",
-      "W1 = `memo A1 W[x3] A0 W[x2] E1 W[x1] E0 W[x0]`"
+      "`memo E0 W[x0] E1 W[x1] A0 W[x2] A1 W[x3]`",
+      "其**反序 slot 序**"
     ],
     "read_train": [
-      "R0 = `find A0 R[x2] A1 R[x3] E0 R[x0] E1 R[x1]`",
-      "R1 = `find E1 R[x1] E0 R[x0] A1 R[x3] A0 R[x2]`"
+      "`find A0 R[x2] A1 R[x3] E0 R[x0] E1 R[x1]`",
+      "其**反序 slot 序**"
     ],
     "write_heldout": "`memo E1 W[x1] A0 W[x2] E0 W[x0] A1 W[x3]`",
     "read_heldout": "`find A1 R[x3] E0 R[x0] A0 R[x2] E1 R[x1]`",
-    "why": "eval **沒有新的 atom／alias／token**，卻有**未見的 program、完整 string、與 W/R realization** ——這是 **controlled compositional surface OOD**，**不是**假裝未見字典",
-    "expansion_note": "⚠️「反序 slot 序」已展開為 **exact string**（Codex [188] #1）；held-out 兩條**不變**"
+    "why": "eval **沒有新的 atom／alias／token**，卻有**未見的 program、完整 string、與 W/R realization** ——這是 **controlled compositional surface OOD**，**不是**假裝未見字典"
   },
   "data_split_locked": {
     "train_seed": 2026081400,
@@ -164,36 +160,5 @@
       2026081402,
       2026081403
     ]
-  },
-  "sample_and_loss": {
-    "cells": "四個 cell ＝ `(W0,R0)`、`(W0,R1)`、`(W1,R0)`、`(W1,R1)`",
-    "per_cell": "每 cell **6,000 個 frozen key draw**",
-    "surfaces": "每個 draw **各 emit 一條 W 與一條 R surface** → `4 × 6000 × 2 = 48,000`",
-    "encoder": "**同一個 shared encoder**",
-    "loss": "對**每一條 surface** 的 entity／attribute head **各算一次 CE**；per-surface loss ＝ 兩個 CE 的**算術平均**；batch loss ＝ surface 的**算術平均**",
-    "forbidden": [
-      "pair loss",
-      "agreement loss",
-      "contrastive loss",
-      "任何 auxiliary loss"
-    ]
-  },
-  "eval_reservation_and_train_sampling": {
-    "note": "**防 leakage 的構造，不是依模型挑樣本**（Codex [188] #3）",
-    "enumerate": "列舉所有五元組 `(a,b,c,d,e)`（**五者 distinct**）",
-    "permutation": "以 `eval_seed` 產生**一次固定的 permutation**",
-    "greedy": "依序**貪婪收下**其 target ＋ 三 negative **全未被先前收下者**，取**首 300**",
-    "insufficient": "**若不足 300 → phase-0 FAIL**",
-    "reserved": "其 **1,200 個 key** 即 reserved set",
-    "train_draw": "train 的 24,000 draws **僅能**從 **target key 不在 reserved set** 的四元組，以 `train_seed` 的固定 PRNG **with replacement** 抽取；四 cell **各 6,000**",
-    "greedy_is_not_resample": "⚠️ eval selection 的貪婪過濾**不是** hard-negative 的 reject／resample：**每一個被收下的 anchor 仍無條件產生三種 negative**"
-  },
-  "runtime_abi": {
-    "padding": "所有 surface **right-pad 至長度 10**；**attention 與 mean-pool 均排除 PAD**",
-    "epochs": "**12,000 updates ＝ 對 48,000 個 frozen surface 做 64 個完整 shuffled epoch**（每 epoch 由 `(model_seed, epoch)` 的**固定衍生 seed** 排列），**不是**可變的 data-loader stream",
-    "epoch_arithmetic": "`48,000 / 256 = 187.5` batch／epoch；`64 × 187.5 = 12,000` ✓。**我的實作讀法（請於 recheck 確認）**：把 64 個 permutation **串接**成 `3,072,000` 條 surface 的固定序列，再取 **12,000 個連續的 256-slice**；batch 邊界**可以跨 epoch 邊界**。`12,000 × 256 = 64 × 48,000` 恰好整除。",
-    "optimizer_extra": "AdamW 補 `eps=1e-8`、`amsgrad=false`",
-    "decode_tie": "argmax exact-decode 的 tie **固定取最低 code**",
-    "c_values": "(c) 的 value 定義為可比較的 **deterministic tuple** `(eval_row, slot ∈ {target, same_entity, same_attr, swap})`"
   }
 }
