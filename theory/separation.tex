@@ -334,33 +334,38 @@ referent in \(\Dom_0\) is exact and has cost \(m+1\) on \(q_p\).
 
 \begin{proof}
 Fix an address-oblivious policy and query \(q_p\), and let \(D\) be the
-underlying set of its fixed nonrepeating referent sequence.  First suppose
-\(p\notin D\).  Choose distinct \(t_0,t_1\in\mathcal R\) and compare
+underlying set of its fixed nonrepeating referent sequence
+\((d_1,\ldots,d_s)\).  We use the following prefix fact.  If two states
+agree on \(d_1,\ldots,d_j\), then their executions have identical behavior
+through the first \(j\) possible reads: they either halt at the same earlier
+step with the same transcript, or they both make \(j\) reads with the same
+transcript and, when \(j<s\), make the same decision whether to continue.
+This follows by induction: equal prior \((u,h_t)\) inputs give the same halt
+decision; if both continue, address-obliviousness gives the same next
+referent \(d_{t+1}\), where the states agree.
+
+First suppose \(p\notin D\).  Choose distinct \(t_0,t_1\in\mathcal R\) and compare
 the legal histories
 \[
  H_0=(w_{p,t_0},w_{t_0,0},w_{t_1,1}),
  \qquad
  H_1=(w_{p,t_1},w_{t_0,0},w_{t_1,1}).
 \]
-Every read in \(D\) has the same value in the two induced states.  More
-generally, agreement on every read in a fixed sequence gives identical
-complete transcripts: induction on the read step makes the prior
-\((u,h_t)\) inputs equal, hence gives the same halt decision; if it
-continues, address-obliviousness selects the same next referent and agreement
-makes its next value equal.  Thus the two histories above have identical
-complete transcripts while \(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\), so
-exactness requires \(p\in D\).
+Every read in \(D\) has the same value in the two induced states, so the
+prefix fact at \(j=s\) gives identical complete transcripts.  Since
+\(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\), exactness requires \(p\in D\).
 
 Likewise, every \(t\in\mathcal R\) must occur in \(D\): if it did not,
 the histories \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), would by the preceding
-induction induce the same complete transcript, yet have different answers.  Hence
+prefix fact induce the same complete transcript, yet have different answers.  Hence
 \(D=\Dom_0\).  Let \(d_\star\) be the last referent in the fixed sequence.
 If \(d_\star=t\in\mathcal R\), then on the two histories
 \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), an exact executor cannot halt before
-reading \(t\), because the same induction gives identical transcripts up to
-that final read.  If \(d_\star=p\), use the two histories \(H_0,H_1\) above
-instead: the same induction gives identical preceding transcripts and their
-answers differ.  Thus the policy makes all \(m+1\) reads in the worst case.
+reading \(t\): the prefix fact at \(j=m\) makes any earlier halt occur on
+both histories with the same transcript, despite their different answers.
+If \(d_\star=p\), use the two histories \(H_0,H_1\) above instead; the
+prefix fact at \(j=m\) gives the same conclusion.  Thus the policy makes
+all \(m+1\) reads in the worst case.
 Theorem~\ref{thm:locality} rules out a smaller exact executor.  Conversely,
 an oblivious policy that reads every referent in \(\Dom_0\) is exact with an
 executor that, on \(q_p\), returns \(\bt\) if its read at \(p\) is \(\bt\)
