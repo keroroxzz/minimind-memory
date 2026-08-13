@@ -342,24 +342,31 @@ the legal histories
  \qquad
  H_1=(w_{p,t_1},w_{t_0,0},w_{t_1,1}).
 \]
-Every read in \(D\) has the same value in the two induced states, while
-\(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\).  Thus exactness requires
-\(p\in D\).
+Every read in \(D\) has the same value in the two induced states.  More
+generally, agreement on every read in a fixed sequence gives identical
+complete transcripts: induction on the read step makes the prior
+\((u,h_t)\) inputs equal, hence gives the same halt decision; if it
+continues, address-obliviousness selects the same next referent and agreement
+makes its next value equal.  Thus the two histories above have identical
+complete transcripts while \(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\), so
+exactness requires \(p\in D\).
 
 Likewise, every \(t\in\mathcal R\) must occur in \(D\): if it did not,
-the histories \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), would induce the same
-transcript until the policy halts, yet have different answers.  Hence
+the histories \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), would by the preceding
+induction induce the same complete transcript, yet have different answers.  Hence
 \(D=\Dom_0\).  Let \(d_\star\) be the last referent in the fixed sequence.
 If \(d_\star=t\in\mathcal R\), then on the two histories
 \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), an exact executor cannot halt before
-reading \(t\), because their preceding transcripts are identical.  If
-\(d_\star=p\), use the two histories \(H_0,H_1\) above instead: their
-preceding transcripts are again identical and their answers differ.  Thus
-the policy makes all \(m+1\) reads in the worst case.  Theorem~\ref{thm:locality}
-rules out a smaller exact executor.  Conversely, an oblivious policy that
-reads every referent in \(\Dom_0\) and an executor that selects the value
-named by the read at \(p\) are exact.  The adaptive two-read upper bound is
-Proposition~\ref{prop:twohop}.
+reading \(t\), because the same induction gives identical transcripts up to
+that final read.  If \(d_\star=p\), use the two histories \(H_0,H_1\) above
+instead: the same induction gives identical preceding transcripts and their
+answers differ.  Thus the policy makes all \(m+1\) reads in the worst case.
+Theorem~\ref{thm:locality} rules out a smaller exact executor.  Conversely,
+an oblivious policy that reads every referent in \(\Dom_0\) is exact with an
+executor that, on \(q_p\), returns \(\bt\) if its read at \(p\) is \(\bt\)
+and otherwise returns the observed value at the referent named by that read;
+on \(q_d\), \(d\in\mathcal R\), it returns the observed value at \(d\).
+The adaptive two-read upper bound is Proposition~\ref{prop:twohop}.
 \end{proof}
 
 \begin{remark}[Where the content is]
