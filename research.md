@@ -5010,6 +5010,73 @@ predictive baseline，**不是**有 online associative-memory update 的 algorit
 
 ---
 
+## 4.72 `MF0-C` controller campaign：**FAIL —— 學會了可見因子，沒學會要推論的因子**
+
+規格 `MF0C_prereg.json` v6（Codex [173]–[184] 逐輪鎖定）。三 seed 一次跑完，
+v2 `W1|train` 為唯一資料，各 20,000 updates（`G=8 × M=4`），**未中途看、未挑 checkpoint**。
+
+| seed | W1（learned） | vs `goal-only` | vs `focus-only` | W0 | `h=0` ablation |
+|---|---|---|---|---|---|
+| …12 | 36.0–36.6% | −2.9% ～ −1.1% | −30.0% ～ −28.5% | 12.4% | 20.9% |
+| …13 | 36.6–37.8% | −1.7% ～ +0.0% | −30.3% ～ −28.7% | 12.0–12.3% | 18.3–20.6% |
+| …14 | 35.3–37.7% | −3.4% ～ −1.0% | −32.0% ～ −28.8% | 11.7–13.1% | 23.7–25.4% |
+
+門檻 `T_r` = **15.90 / 15.07 / 16.00 pp**（`max(5pp, 0.5·min(H_g,H_f))`，未四捨五入）。
+**18 格（3 seed × 3 replica × 2 reference）全部未過 → `MF0-C FAIL`。**
+
+### 失敗的形狀
+
+參照 §4.71 的 reference：`random` 12% ／ `goal-only` 37–40% ／
+`focus-only` 66–67% ／ `π_content*` 97–98%。
+
+> **controller 確實學到了東西**（12% → 36%，遠高於 `random` 與 `recency`），
+> **但它學到的恰好就是 `goal-only`** —— 對 `goal-only` 的 Δ 在
+> **−3.4% ～ +0.0%**，三 seed × 三 replica 的 CI **全部跨 0**。
+> 對 `focus-only` 則是 **−29 ～ −32pp**。
+
+**它學會了直接可見的因子（goal class），沒學會需要跨事件累積統計才能推論的因子（focus entity）。**
+
+### 這個 gate 設計救了什麼
+
+**若照我最初提的門檻「贏 `recency` 10pp」，這個 controller 會以 +24pp 大幅過關**，
+而結論會寫成「future task reward ＋ hard budget 足以學出 admission policy」。
+實際上它只重新發現了一條**不需要學習**的規則。
+
+`H = min(H_g, H_f)` 與「**兩個 single-factor reference 都要贏**」是 Codex [177] 定的，
+理由正是「只相對 `goal-only` 量的話，learned 只學會其中一個因子就過關」。
+**這一輪證實了那個顧慮是實的，不是假想。**
+
+### `W0` 負對照與 `h=0` ablation
+
+`W0` 三份全部停在 **11.7–13.1%** —— **無負向轉移、無漏洩**。
+
+`h=0` ablation 為 **18.3–25.4%**，對比完整的 35.3–37.8%：
+**recurrent state 貢獻約 15pp**，但那個貢獻沒有轉化成 focus 辨識。
+
+**一個機制假說（描述，非測量，未被本實驗驗證）**：
+priority head 是 `[u_t, h_t]` 的**仿射**函數，而
+「`attr ∈ goal`」是 goal-onehot 與 attr-onehot 的**合取** ——
+**在串接的 one-hot 上線性不可分**。
+所以 32 bytes 的 state 可能被用去計算這個 per-event 的非線性交互，
+而不是用來累積 focus 的計數。
+**若要驗證，需另立實驗**（例如給 head 一個 goal×attr 的交互項，看 state 是否轉去做計數）——
+**本關不做，也不得以此改配方重跑**。
+
+### 依 prereg 封存
+
+歸因記為 **`MF0-C FAIL`（learned formation）**：
+**不得**加步數／epoch／batch、**不得**改 `M`／分組、**不得**換 state 大小或架構。
+`32 bytes` 這個 size 的失敗即**封存這個 `MF0-C` 配方**（Codex [178]）。
+
+**可主張**：在此受控 latent-topic/count world、32-byte FP16 recurrent state、
+既鎖 compute budget 下，**future task reward 讓 controller 學到了 visible-goal 因子，
+但未學到需跨事件推論的 focus 因子**。
+
+**不可主張**：不得說「formation 不可學」；不得說「32 bytes 不夠」（未做 sweep，
+也**不准**做）；不得評論 Titans；不得外推到其他 world、其他 budget 或其他架構。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
