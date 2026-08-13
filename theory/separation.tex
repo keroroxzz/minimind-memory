@@ -125,7 +125,12 @@ whose referents are pairwise distinct.  It induces
 each \(w_i\) at \(C_w(w_i)\), requiring a new entry, then answers \(q\) by
 \(\mathrm{get}(M_H,C_r(q))\) when \(C_r(q)\in\Ky\), and by \(\bt\) otherwise.
 There is no channel from the executor to \(M_H\) other than this single
-exact \(\mathrm{get}\).
+exact \(\mathrm{get}\).  The reachable semantic-state scope of this execution
+model is
+\[
+  \mathcal S_{\Wr_0}=\{S_H : H \text{ is a legal history over }\Wr_0\}
+  \subseteq\mathcal S.
+\]
 \end{definition}
 
 \begin{definition}[Universal exactness]\label{def:ue}
@@ -199,10 +204,12 @@ address trace cannot convey additional information about \(q\) to \(E\).
 \end{definition}
 
 \begin{theorem}[Adaptive executor-locality criterion]\label{thm:locality}
-Fix \(\tau\), an adaptive \(r\)-read policy \(\pi\), and a task answer
-\(A:\mathcal S\times\Qu_0\to\mathcal Y\).  There exists an exact
-deterministic executor no-bypass relative to \((\tau,\pi)\) if and only if
-for every \(S,S'\in\mathcal S\) and \(q,q'\in\Qu_0\),
+Fix \(\tau\), an adaptive \(r\)-read policy \(\pi\), a state scope
+\(\mathcal X\subseteq\mathcal S\), and a task answer
+\(A:\mathcal X\times\Qu_0\to\mathcal Y\).  There exists a deterministic
+executor that is exact on \(\mathcal X\) and no-bypass relative to
+\((\tau,\pi)\) if and only if for every \(S,S'\in\mathcal X\) and
+\(q,q'\in\Qu_0\),
 \[
  \bigl(\tau(q),\operatorname{tr}_{\pi}(S,\tau(q))\bigr)
  =\bigl(\tau(q'),\operatorname{tr}_{\pi}(S',\tau(q'))\bigr)
@@ -211,17 +218,17 @@ for every \(S,S'\in\mathcal S\) and \(q,q'\in\Qu_0\),
 \end{theorem}
 
 \begin{proof}
-If an exact no-bypass executor exists, equal pairs on the left give it equal
-inputs and hence equal outputs, which exactness identifies with the two task
-answers.  Conversely, under (L), define \(E(t,h)\) to be \(A(S,q)\) for any
-legal pair with
+If an executor exact on \(\mathcal X\) exists, equal pairs on the left give
+it equal inputs and hence equal outputs, which exactness identifies with the
+two task answers.  Conversely, under (L), define \(E(t,h)\) to be \(A(S,q)\)
+for any pair with \(S\in\mathcal X\) and
 \((\tau(q),\operatorname{tr}_{\pi}(S,\tau(q)))=(t,h)\), and assign
 an arbitrary output to pairs that never occur.  Condition (L) makes this
 definition well defined, and the resulting executor is exact by construction.
 \end{proof}
 
 \begin{remark}[A necessary query-side condition]
-If condition (L) holds, then for every fixed \(S\in\mathcal S\),
+If condition (L) holds, then for every fixed \(S\in\mathcal X\),
 \[
  \tau(q)=\tau(q')\quad\Longrightarrow\quad A(S,q)=A(S,q').
 \]
@@ -320,7 +327,8 @@ A \emph{fixed query-witness selector} is a map
 \(\rho:\Dom_0\to\Qu_0\) satisfying
 \(\semq(\rho(d))=d\) for every \(d\in\Dom_0\).  It is part of the
 declared runtime interface, not selected after observing an execution.  Such
-a selector exists under bi-witnessed scope.  It is \emph{faithful} for an
+a selector exists under bi-witnessed scope and is automatically injective,
+since \(\semq\circ\rho=\operatorname{id}_{\Dom_0}\).  It is \emph{faithful} for an
 addressing interface if every legal history is admitted, and for every legal
 history \(H\) and \(d\in\Dom_0\), \(C_r(\rho(d))\in\Ky\) and
 \[
@@ -348,12 +356,13 @@ Suppose \(\rho\) is faithful and the semantic execution
  E\bigl(\tau(q),\operatorname{tr}_{\pi}(S_H,\tau(q))\bigr)
 \]
 equals a target answer \(B(S_H,q)\), for some
-\(B:\mathcal S\times\Qu_0\to\mathcal Y\), on every legal history \(H\) and
-query \(q\).  Then a physical executor can realize the same computation with
-at most \(r\) exact Store reads: whenever \(\pi\) chooses semantic referent
-\(d\), it reads the physical key \(C_r(\rho(d))\), passes the resulting
-value to \(\pi\), and finally applies \(E\).  In particular, \(\SAF\) is a
-sufficient condition for this realization.
+\(B:\mathcal S_{\Wr_0}\times\Qu_0\to\mathcal Y\), on every legal history
+\(H\) and query \(q\).  Then a physical executor can realize the same
+computation with at most \(r\) exact Store reads: whenever \(\pi\) chooses
+semantic referent \(d\), it reads the physical key \(C_r(\rho(d))\), passes
+the resulting value to \(\pi\), and finally applies \(E\).  In particular,
+by Lemma~\ref{lem:anchor}, \(\SAF\) is a convenient sufficient condition for
+faithfulness and hence for this realization.
 \end{theorem}
 
 \begin{proof}
@@ -366,26 +375,31 @@ same next choice and eventually the two executors present the same input to
 
 \begin{corollary}[Anchored composition]\label{cor:composition}
 Fix \(\tau\), \(\pi\), and \(\rho\) as above.  If \(\SAF\) holds and a
-target \(B:\mathcal S\times\Qu_0\to\mathcal Y\) satisfies condition (L),
-with \(A\) replaced by \(B\), then there exists a physical executor using at
-most \(r\) exact Store reads that returns \(B(S_H,q)\) for every legal
-history \(H\) and query \(q\).
+target \(B:\mathcal S_{\Wr_0}\times\Qu_0\to\mathcal Y\) satisfies condition
+(L), with \(A\) replaced by \(B\) and state scope
+\(\mathcal X=\mathcal S_{\Wr_0}\), then there exists a physical executor
+using at most \(r\) exact Store reads that returns \(B(S_H,q)\) for every
+legal history \(H\) and query \(q\).
 \end{corollary}
 
 \begin{proof}
-Theorem~\ref{thm:locality} supplies an exact semantic executor.  By
-Lemma~\ref{lem:anchor}, \(\SAF\) makes \(\rho\) faithful; then apply
+Apply Theorem~\ref{thm:locality} with
+\(\mathcal X=\mathcal S_{\Wr_0}\) to obtain an exact semantic executor.
+By Lemma~\ref{lem:anchor}, \(\SAF\) makes \(\rho\) faithful; then apply
 Theorem~\ref{thm:bridge}.
 \end{proof}
 
 \begin{remark}[The bridge is sufficient, not necessary]
 Theorem~\ref{thm:bridge} fixes the public physical operation for semantic
-referent \(d\) to be the declared key \(C_r(\rho(d))\).  It therefore proves
-a constructive sufficiency statement, not that \(\SAF\) is necessary for
-every adaptive implementation.  For example, an executor that is explicitly
-given an inverse of a private fixed key relabeling can compensate for that
-relabeling even though the nominal \(C_r\) fails write--read agreement.
-Such extra key knowledge is outside the anchored interface here.
+referent \(d\) to be the declared key \(C_r(\rho(d))\).  Its operative
+interface premise is faithfulness (F); \(\SAF\) is only a convenient
+sufficient source of (F), not a necessary condition for anchored
+realization.  This strictness needs no private key knowledge: with one
+referent \(d\), two query witnesses \(q_1,q_2\), and
+\(C_w(w)=C_r(q_1)=k\) but \(C_r(q_2)=k'\neq k\), (C3) and hence \(\SAF\)
+fail, whereas \(\rho(d)=q_1\) is faithful.  An executor explicitly given an
+inverse of a private fixed key relabeling is a separate way to leave the
+anchored interface altogether.
 \end{remark}
 
 \begin{remark}[Pointer values]
@@ -396,7 +410,9 @@ value-to-referent decision is already part of \(\pi(u,h)\).  A separate
 through a designated pointer interpretation; \(\SAF\) neither provides nor
 learns that interpretation.  Moving a pointer representation from a read
 value to a stored key relocates this semantic obligation rather than removing
-it.
+it.  The budget \(r\) bounds Store reads only; it does not bound \(\pi\)'s
+internal computation, including any work that interprets a retrieved value
+as a next referent.
 \end{remark}
 
 \begin{remark}[Responsibility boundary]\label{rem:boundary}
