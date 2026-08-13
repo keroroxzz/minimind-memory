@@ -5144,7 +5144,7 @@ Codex [185] 授權**恰一次**、另立且**不 reopen `MF0-C`** 的診斷。
 
 ---
 
-## 4.74 `RWA-0` read-write agreement：**FAIL —— train 背得完美，未見組合上歸零**
+## 4.74 `RWA-0` read-write agreement：**FAIL —— 固定 joint-OOD probe 上無任何 target 達成 agreement**
 
 規格 `RWA0_prereg.json` v3（Codex [175]–[192] 逐輪鎖定），
 artifact `8ca1d40413aae706`，三 seed 各 12,000 update、**只取 final**、未中途看。
@@ -5157,37 +5157,45 @@ artifact `8ca1d40413aae706`，三 seed 各 12,000 update、**只取 final**、�
 
 **三段 all-or-nothing → 三個 seed 全部 `RWA-0 FAIL`。**
 
-### 這不是實作失敗
+### 措辭收窄（Codex [193] 逐條，**四處都是我的過度歸因**）
 
-`ln(132) = 4.8828` 是「完全沒學到」的 CE 下界；
-實測 final train loss 是 **0.0000–0.0001** ——
-**模型把 48,000 條訓練 surface 背得完美。**
+**① `0.0000–0.0001` 是「最後一個 training mini-batch」的 loss，
+不是 48,000 條 surface 的 exhaustive train loss。**
+我原本寫「背得完美」——**不成立**。既未儲存模型也不重跑，**不能補測**。
 
-> **失敗的是組合泛化，不是訓練。**
-> 每個 alias 都見過（phase-0 已 assert 24/24 有 train witness），
-> 每個 entity／attribute class 都見過（132＋132），
-> **未見的只有 renderer program 的 slot 順序、完整字串、與 `(entity, attribute)` 配對。**
-> 在那個 shift 下，write／read 兩側的 canonicalizer **完全不一致**。
+**② eval 同時 hold out renderer composition **與** `(entity,attribute)` pair。**
+故只可歸因為**此固定 joint-OOD distribution** 的 failure，
+**不可**單稱 composition failure。
 
-### (b) 的 PASS **沒有資訊量** —— 必須明寫
+**③ `(a)=0` 是「沒有任何 target 達成 `K_w=K_r=K*`」。**
+它**不等於**兩側必然彼此不相等 —— 兩側可能同錯、或一對一錯。
+我原本寫「write／read 兩側完全不一致」，**已刪**。
 
-三個 stratum 的 `false_merge` 都是 0，但**模型根本不把任何東西解碼成 `K*`**，
-所以它**也不可能** false-merge 到 `K*`。
+**④ `(b)=0` 在 `(a)` 全失敗之後是 non-diagnostic**（任意錯碼都能得 0），
+**不是**由「任何輸出都不是 `K*`」所證。我原本給的那個理由**未經驗證，已刪**。
 
-> **(b) 在此輪是空洞通過（vacuous）。** §4.65 犯過同型的過度陳述，這裡先自己標明。
+### `(c)` 是 **code-key Store shadow result**，不是 typed-Store 的 end-to-end 證據
 
-### 兩個描述性觀察（非事前登記）
+⚠️ **實作與 prereg 有偏差**：我的 eval code 只把 `(e_rank, a_rank)` 放進 Store，
+**未依 prereg 的 full four-atom `RWAKey` ABI commit**。
+rank 是雙射，**所以不影響 `(a)` 的 FAIL**；
+但 `(c)` **不可**當作實際 typed-Store 的 end-to-end 證據。
 
-- `(c)` 幾乎全部落在 **abstain**（281／299／297），少數 `wrong-existing`（19／1／3）——
-  也就是解碼出的 read key **多半根本不存在於 Store**。
-- `commit` 出現 `reject_conflict` **48／26／29**：同一 anchor 的四個 slot
-  被解碼成**同一個 key**（本應四個互異）—— **解碼結果有塌縮**。
+原始 counts 保留：correct 0/300；`None` **281／299／297**；
+`wrong-existing` 19／1／3；`commit reject_conflict` 48／26／29。
+**唯一允許的評語**：「在此 code-key shadow 下，**多數 target read 未命中**。」
 
-**一個機制假說（描述，未被本實驗驗證）**：train 只有 4 條 program，
-held-out 兩條改變了 slot **順序**；模型可能學成**位置相依**的解碼，
-而不是依 `E0/E1/A0/A1` 標記做綁定。
-**若要驗證需另立實驗**（例如加入更多 slot 順序的 program），
-**本關不做，也不得據此改配方重跑。**
+⚠️ **不得**把 281／299／297 寫成系統已驗證的「安全但無用」——
+我先前那段（連同「不再是假想風險」的說法）**已刪**。
+
+### 唯一允許的總結句（Codex [193] 逐字）
+
+> **在這個封閉、全監督、每個 alias／class 具 train witness 的固定 joint-OOD probe 中，
+> 即使最後一個 training mini-batch 的 CE 接近零，
+> 也沒有任何 target 達成 joint correct write–read agreement。**
+
+**「最有利條件」的說法已撤回** —— 4 個 train program 是**明確的限制**，
+且 joint OOD **不是**一般性的 upper bound。
 
 ### 依 prereg 封存
 
@@ -5204,11 +5212,87 @@ held-out 兩條改變了 slot **順序**；模型可能學成**位置相依**的
 
 ### 這一格在整體盤點裡的位置
 
-§4.69 把讀寫一致標成「**整個系統的樞紐，而且從未被測過**」。
-現在測了，**在最有利的條件下（封閉世界、監督式、train 完美擬合）仍然 FAIL**。
+§4.69 把讀寫一致標成「**整個系統的樞紐，而且從未被測過**」。**現在測了，且 FAIL。**
 
-**「安全但無用」不再是假想的風險** —— `(c)` 的 281／299／297 次 abstain
-就是它的實測形狀：系統誠實地說「我沒有」，而它其實有，只是 key 對不上。
+⚠️ 但**不得**寫成「在最有利的條件下仍然 FAIL」——**該說法已撤回**：
+**4 個 train program 是明確的限制**，且 joint OOD **不是**一般性的 upper bound。
+
+⚠️ 也**不得**用 `(c)` 的 281／299／297 宣稱「安全但無用已被實測」——
+那是 **code-key shadow**，不是 typed-Store 的 end-to-end 證據（見上）。
+「安全但無用」**仍是設計層的推理，不是本輪的實測結論**。
+
+---
+
+## 4.75 橋接／NG 線整體收束（Codex [193] 授權；**不開新關**）
+
+**規則**：每項標 `supported`／`failed-in-scope`／`untested`；
+**不把 component PASS 拼成 end-to-end success**，
+**也不把本輪 FAIL 外推為不可能**。
+
+### A. 已驗證的 contract（`supported`，各帶範圍）
+
+| 項目 | 狀態 | 範圍限制 |
+|---|---|---|
+| exact-membership guard（`contains` 查表，非相似度） | `supported` | §4.57；同題 shadow 相似度幻覺 200/200 |
+| dangling fail-closed（`BR-G3c-D`） | `supported` | §4.64；單一故障、注入即測；主指標是 **injector 呼叫數** |
+| conflict／overwrite 全序契約（`EC-1`） | `supported` | §4.68；**單程序、全序**；不含 crash／torn／concurrent |
+| 描述定址（conjunction／歧義／Hamming） | `supported` | §4.59／§4.65；**規則式**，非 semantic；有限 support |
+| non-text explicit value carrier 可被消費 | `supported` | §4.55／§4.70；**transport ceiling**，見 B |
+
+### B. 已降級或空洞的 PASS（必須帶著讀）
+
+- **latent delivery 不是記憶機制**：§4.16 的 `oracle_inline`（原生文字、同位置）＝
+  100%／**0 參數**，而 `zdelta` 1.13M ＝ 99%。**latent 未勝過等位置文字**，
+  且 carrier **佔序列位置、省不了 context**。已降為 **transport adapter**（§4.70），
+  日後要用須先過 **carrier-necessity gate**。
+- **`NG-O2` 是預期會過的控制組**（§4.70）：五格相同是因為 phase-0 已證明
+  群組內 Core 的可見輸入逐位元相同。
+- **`B0-N` 的 `N-T`／`N-Ø`** 接近規則的重述（§4.65）；
+  **`RWA-0` 的 `(b)`** 在 `(a)` 全失敗後 **non-diagnostic**（§4.74）。
+
+### C. 已封存的 learned claims（`failed-in-scope`）
+
+| 項目 | 狀態 | 一句話 |
+|---|---|---|
+| **query-side selector calibration**（§4.67 `LKE-2R`） | `failed-in-scope` | 抽取 100%，但 confidence 的**尾巴**與可解 query 完全重疊；無 threshold 能同時維持 utility 與 zero-accept |
+| **同實體多屬性 routing**（§4.62／§4.63） | `failed-in-scope` | 訓練分布一出現同名，已量到的 address routing 即被 3-bit attr 策略取代；1:1 強迫也學不回 |
+| **memory formation**（`MF0-C`＋`CI-1`，§4.72／§4.73） | `failed-in-scope` | 學到可見的 goal 因子，未學到需跨事件推論的 focus 因子；顯式給 conjunction 亦無改變 |
+| **read-write joint agreement**（`RWA-0`，§4.74） | `failed-in-scope` | 固定 joint-OOD probe 上**無任何 target** 達成 `K_w=K_r=K*` |
+
+**四者皆為 in-scope failure**：**不得**寫成「不可能」，
+也**不得**用其他項的 PASS 補過。
+
+### D. 從未測過（`untested`）
+
+- **typed-Store 的 end-to-end**（full four-atom `RWAKey`）—— `RWA-0` 的 `(c)` 只是 **code-key shadow**
+- **write-address formation**
+- **crash 復原／torn write／多程序併發**
+- **overwrite／reconsolidation 在 formation 情境下的互動**
+- **開放集實體與屬性、真實自然語言、指涉／改述**
+- **`P0` 以外的 predictive-surprise 家族**（含真正的 Titans-style online update）
+
+### E. 距離目標還缺什麼
+
+目標（`NEXTGEN_DESIGN.md` §1）四個硬條件：
+**自然 query／值不出現在任何文字／同一實體多屬性／任意順序多筆寫入**。
+
+| 條件 | 現況 |
+|---|---|
+| 值不出現在文字（文本丟棄、latent inject、無 placeholder） | **機制可行但無優勢**：與等位置文字同分，且不省 context（B） |
+| 同一實體多屬性 | **`failed-in-scope`**（C）；`NG-O2` 只是把多候選 routing **移出 Core**，未解決 |
+| 任意順序多筆寫入 ＋ 跨時間正確推理 | **formation `failed-in-scope`**；且 `RWA-0` 顯示即使 key 已 typed，**寫讀兩側能否對上仍未成立** |
+| 自然 query | **`untested`** —— 所有實驗均為受控文法 |
+
+> **一句話**：**可判定的那一半（Store）站得住，需要學的那一半（Interface）目前全部倒下。**
+> 而 Store 那一半嚴格說是**工程確認**，不是研究發現。
+
+### F. 兩條事前寫下的「整條線是錯的」證據，現況
+
+1. **若 `recency` 已接近上界 → formation 無可學空間**：
+   `MF0-C` 的 H audit 顯示 `recency ≈ random ≈ 12%`、`π_content* ≈ 97%` ——
+   **空間存在**，所以這一條**未觸發**。
+2. **若讀寫一致在用現成大模型當元件時自然成立 → 介面問題不存在**：
+   **未測**（`PB-0` 未開；且依 [174]，它只能稱 tool-use compliance，不得裁決 emergence）。
 
 ---
 
