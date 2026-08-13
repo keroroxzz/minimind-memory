@@ -1,0 +1,199 @@
+% !TeX program = pdflatex
+% Reasoning/memory separation — a short theory note.
+% 分類紀律（Codex [197]）：每個中心句必須是
+%   Definition | Proposition/Theorem + proof | Imported result + exact assumptions | Conjecture
+% 動機與 related work 可為散文，但**不得**出現未分類的「因此可行／不可能」。
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{hyperref}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{conjecture}{Conjecture}
+\newtheorem{imported}{Imported result}
+\theoremstyle{plain}
+\newtheorem{lemma}{Lemma}
+\newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
+
+\newcommand{\Dom}{\mathcal{D}}
+\newcommand{\Wr}{\mathcal{W}}
+\newcommand{\Qu}{\mathcal{Q}}
+\newcommand{\Ky}{\mathcal{K}}
+\newcommand{\Va}{\mathcal{V}}
+\newcommand{\bt}{\bot}
+
+\title{Reasoning/Memory Separation in Language Models:\\
+a small note on what must be proved}
+\author{(draft --- skeleton; core theorem scope pending interface review)}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We give a minimal formal setting in which the question ``can knowledge be
+separated from a language model into an external, addressable memory?''
+becomes a precise existence question about the \emph{interface}, not about
+the model. We prove one elementary but load-bearing lemma
+(Lemma~\ref{lem:state}) and state --- without yet claiming --- a target
+characterisation in terms of a named property of the addressing interface
+(Definition~\ref{def:cca}). We separate throughout what is proved here, what
+is imported under stated assumptions, and what is conjecture.
+\textbf{Nothing in this note claims that natural-language addressing is
+achievable, nor that it is impossible.}
+\end{abstract}
+
+\section{Motivation (prose)}
+
+A recurring engineering picture is: a small model that \emph{reasons}, plus a
+large external store that \emph{remembers}. The picture is usually argued
+empirically --- retrieval helps, memory modules help. Our concern is
+different and prior: \emph{under what conditions can such a system be correct
+at all?} We are interested in this because a sequence of our own controlled
+experiments failed not at storage but at the interface, and we could not tell
+from those failures whether the interface problem was hard or ill-posed.
+
+This note therefore does not propose a mechanism. It fixes a vocabulary,
+proves the one thing that is genuinely forced, and reduces the remaining
+question to a single named property.
+
+\section{Formal setting}
+
+\begin{definition}[Setting]\label{def:setting}
+Fix finite or countable sets: a \emph{referent domain} $\Dom$, a set of
+\emph{write utterances} $\Wr$, a set of \emph{query utterances} $\Qu$, a
+\emph{key space} $\Ky$, and a \emph{value space} $\Va$. Write and query
+semantics are partial maps
+\[
+  s_w : \Wr \rightharpoonup \Dom, \qquad s_q : \Qu \rightharpoonup \Dom .
+\]
+A \emph{runtime memory} is a partial map $M : \Ky \rightharpoonup \Va$,
+manipulated only through the typed operations
+\[
+  \mathrm{put}(M,k,v), \qquad \mathrm{get}(M,k) \in \Va \cup \{\bt\},
+\]
+where $\mathrm{get}(M,k)=\bt$ exactly when $k \notin \mathrm{dom}(M)$.
+An \emph{addressing interface} is a pair of partial maps
+\[
+  C_w : \Wr \to \Ky \cup \{\bt\}, \qquad C_r : \Qu \to \Ky \cup \{\bt\}.
+\]
+\end{definition}
+
+\noindent\textbf{Deliberately outside the core.} A language model or encoder
+may \emph{implement} $C_w, C_r$, or a value codec; that is not part of the
+statements below. Value formation, latent/KV delivery, and the reasoning
+executor are \emph{separate and unproven} problems and are not modelled here.
+
+\begin{definition}[One-shot key-addressed system]\label{def:system}
+A system is \emph{one-shot key-addressed} if, on query $q$, its output is
+$\mathrm{get}(M, C_r(q))$ when $C_r(q)\neq\bt$ and $\bt$ otherwise, and it has
+no channel to $M$ other than through $\mathrm{get}$ at the single key
+$C_r(q)$ (\emph{no store-bypassing side channel}).
+\end{definition}
+
+\section{What is forced: a state-independence lemma}
+
+\begin{lemma}[State-independence]\label{lem:state}
+Let $F : \Qu \to \Va \cup \{\bt\}$ be any function that does not depend on the
+runtime memory $M$. Suppose there exist legal memories $M_0, M_1$ and a query
+$q$ whose correct answers differ, i.e.\ $A(M_0,q) \neq A(M_1,q)$. Then $F$ is
+not exact-correct on both $M_0$ and $M_1$.
+\end{lemma}
+
+\begin{proof}
+$F(q)$ is a single element of $\Va \cup \{\bt\}$, hence cannot equal two
+distinct values $A(M_0,q)$ and $A(M_1,q)$.
+\end{proof}
+
+\noindent\textbf{Reading (deliberately narrow).} Lemma~\ref{lem:state} shows
+only that exact correctness across legal memories requires \emph{some channel
+by which $M$ influences the output}. It does \emph{not} say that channel must
+be a key--value store, a vector database, or a non-neural guard; nor does it
+say anything about approximate correctness. It is elementary; we state it
+because it is the only step in the usual argument for externalised memory
+that is actually forced.
+
+\section{The property the interface must have}
+
+\begin{definition}[Certified Canonical Addressability, CCA]\label{def:cca}
+An addressing interface $(C_w, C_r)$ has \emph{CCA} with respect to
+$(s_w, s_q)$ if:
+\begin{enumerate}
+  \item[(i)] \emph{Same-referent agreement:} for all $w \in \Wr, q \in \Qu$
+        with $s_w(w) = s_q(q)$ defined, $C_w(w) = C_r(q) \neq \bt$.
+  \item[(ii)] \emph{Live-referent separation (no alias):} for all live
+        referents $d \neq d'$, the keys assigned to $d$ and $d'$ differ.
+  \item[(iii)] \emph{Deterministic typed output:} $C_w, C_r$ are functions
+        into $\Ky \cup \{\bt\}$, with $\Ky$-membership exactly decidable.
+  \item[(iv)] \emph{Certified partiality:} whenever (i)--(iii) cannot be
+        guaranteed for an input, the interface outputs $\bt$.
+\end{enumerate}
+\end{definition}
+
+\noindent\textbf{Why (ii) is not redundant.} Agreement alone is satisfied by
+the degenerate interface that maps \emph{every} utterance to one fixed key.
+Such an interface is perfectly ``consistent'' and useless. Condition (ii) is
+what rules it out. (This is the same failure mode that a read/write agreement
+experiment must guard against with false-merge negatives.)
+
+\paragraph{Target characterisation (scope pending review; \emph{not} claimed here).}
+The intended statement is that, for one-shot key-addressed systems with no
+store-bypassing side channel and zero-error required over \emph{all} legal
+store/value maps, universal ``complete and never mis-delivering'' behaviour
+holds \emph{iff} $(C_w,C_r)$ has CCA. Sufficiency would be by the construction
+$\mathrm{put}(M, C_w(w), v)$ followed by $\mathrm{get}(M, C_r(q))$; necessity
+by an adversarial memory carrying two distinct values. We do not assert this
+until its scope has been reviewed; in particular the quantifier structure over
+legal memories must be pinned down before any ``iff'' is written.
+
+\section{A responsibility boundary (statement; proof pending)}
+
+\begin{corollary}[Guards cannot repair identity errors]\label{cor:boundary}
+Suppose $C_r(q) = k' \neq k^\star$ where $k'$ is \emph{live} (i.e.\
+$k' \in \mathrm{dom}(M)$). Then there exists a legal $M$ for which exact
+membership testing and $\mathrm{get}$ deliver a value that is
+\emph{wrong but genuinely present}.
+\end{corollary}
+
+\noindent Consequently an exact-membership guard can certify \emph{absence}
+only. It cannot detect, and cannot repair, an upstream identity error. This
+delimits what a typed store contributes to safety, without any claim about
+natural language.
+
+\paragraph{On $\bt$.} In a closed world with finite $\Dom$, condition (iv) can
+be decided directly. In an open world, ``the referent is genuinely unknown''
+is \emph{not} automatically supplied by anything above; any such guarantee
+must be introduced as an explicit certificate or coverage assumption. We do
+not prove universal natural-language failure detection and do not assume it.
+
+\section{Imported results (to be filled with exact assumptions)}
+
+\emph{Placeholder --- literature side is being prepared separately.} Each item
+will be stated with the assumptions under which it holds, e.g.\ precision and
+attention assumptions for transformer circuit upper bounds, arbitrary-precision
+activations for Turing-completeness constructions, quantisation premises for
+parameter-capacity counting, and conformal-risk (not semantic-identity)
+guarantees for retrieval systems.
+
+\paragraph{Prohibited inference (recorded to prevent it).} A $\mathsf{TC}^0$
+\emph{upper} bound for fixed-depth transformers combined with
+$\mathsf{NC}^1$-completeness of a word problem does \emph{not} yield an
+unconditional lower bound; the required class separation is not known.
+
+\section{Conjectures}
+
+\begin{conjecture}\label{conj:scale}
+Whether property (i) of Definition~\ref{def:cca} arises at scale from
+unsupervised training is open. We make no claim in either direction.
+\end{conjecture}
+
+\section{What this note does not claim}
+
+It does not claim that a separable system is achievable for natural language;
+that it is impossible; that latent delivery is superior to placing the value
+in context; or that any measured failure of a particular mechanism bears on
+Definition~\ref{def:cca} beyond instantiating it.
+
+\end{document}
