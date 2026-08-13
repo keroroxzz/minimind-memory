@@ -315,7 +315,11 @@ it is wrong in the absent world.
 Proposition~\ref{prop:openworld} is an indistinguishability statement, not a
 claim that open-world language understanding is impossible.  Without an
 observation model and a certificate/coverage assumption, ``open-world
-impossibility'' is not yet a well-posed theorem.
+impossibility'' is not yet a well-posed theorem.  In particular, if the
+visible observation contains an exact \(S^{\bt}(d)\) readout that distinguishes
+the two worlds, Definition~\ref{def:ambiguity} does not apply; this is why
+the proposition does not conflict with
+Theorem~\ref{thm:locality}.
 \end{remark}
 
 \section{Imported results and non-results}\label{sec:imports}
@@ -346,7 +350,7 @@ can recognize every formal language under different assumptions.
 \end{imported}
 
 \begin{imported}[Arbitrary-precision Turing completeness]
-P\'erez, Marinkovi\'c, and Barcel\'o~\citep{perez2019turing} prove Turing
+P\'erez, Marinkovi\'c, and Barcel\'o~\citep{perez2021turing} prove Turing
 completeness for hard-attention Transformer networks with positional
 encodings, rational weights and activations of arbitrary precision, and their
 piecewise-linear sigmoidal activation.  It is therefore not evidence that a
@@ -378,7 +382,10 @@ C-RAG~\citep{kang2024crag} gives conformal generation-risk guarantees for
 retrieval-augmented language models under its bounded-risk and retrieval/model
 quality assumptions.  A generation-risk certificate is not a proof that a
 retrieved key denotes the intended referent, so it does not subsume the
-identity condition in Theorem~\ref{thm:factor}.
+identity condition in Theorem~\ref{thm:factor}.  The two guarantees are
+logically distinct: unless the evaluation loss and coverage assumptions
+separately make referent identity observable, a risk guarantee does not imply
+identity soundness.
 \end{imported}
 
 \begin{remark}[Two prohibited shortcuts]

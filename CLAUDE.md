@@ -44,9 +44,17 @@ conclusions have been retracted:
 | add/sub only | **no** — collapses to `v0 + Σ±rhs` | yes | a sum is one attention layer (TC⁰); 8 layers scored 90% at k=12 |
 | **S₅ permutation composition** | yes | yes (bijections preserve uniformity) | **current** |
 
-Permutation composition is the right instrument: S₅'s word problem is NC¹-complete, so a
-fixed-depth transformer (≈TC⁰) provably cannot solve arbitrary lengths, whereas addition sits
-inside TC⁰ — which is exactly why the add/sub version showed no ceiling.
+Permutation composition is the right instrument: S₅'s word problem is NC¹-complete, whereas
+addition sits inside TC⁰ — which is exactly why the add/sub version showed no ceiling.
+
+**Correction (2026-08-13): the word "provably" that used to stand here was wrong.** This file
+previously read "NC¹-complete, so a fixed-depth transformer (≈TC⁰) *provably* cannot solve
+arbitrary lengths". That inference needs **TC⁰ ≠ NC¹, which is open** — so it is not licensed,
+and `theory/separation.tex` (`rem:shortcuts`) explicitly names it as a prohibited shortcut. What
+*is* licensed: under the log-precision / saturated formalisations a fixed-depth transformer lies
+in TC⁰; S₅'s word problem is NC¹-hard, hence **not known to be in TC⁰**; and the k≈3 ceiling
+below is an **empirical** measurement, which is why it is the instrument of choice. The choice of
+task is unaffected — only the claim of a proof was.
 
 Measured on S₅ composition, vanilla 29M / 8 layers (6k steps, exact-match chance 1/120 = 0.8%,
 per-position chance 20%):
