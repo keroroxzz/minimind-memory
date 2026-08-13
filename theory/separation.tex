@@ -170,17 +170,17 @@ Write
  \mathcal H_r=\bigcup_{t=0}^{r}(\Dom_0\times\overline{\Va})^t
 \]
 for the set of possible read transcripts.  An \emph{adaptive \(r\)-read
-policy} \(\pi\) maps a query \(q\) and every
+policy} \(\pi\) maps a query view \(u\in\mathcal T\) and every
 prior transcript
 \[
  h=((d_1,x_1),\ldots,(d_t,x_t))
  \in(\Dom_0\times\overline{\Va})^t,\qquad t<r,
 \]
-to either \(\mathsf{halt}\) or a next referent \(d\in\Dom_0\).  It may not
-repeat a referent already appearing in \(h\).  On state \(S\), the induced
+to either \(\mathsf{halt}\) or a next referent \(d\in\Dom_0\).  An admissible
+policy may not repeat a referent already appearing in \(h\).  On state \(S\), the induced
 transcript \(\operatorname{tr}_{\pi}(S,q)\) is obtained by recursively reading
 \(x_{t+1}=S^{\bt}(d_{t+1})\), where
-\(d_{t+1}=\pi(q,h_t)\), until it halts or has made \(r\) reads.
+\(d_{t+1}=\pi(\tau(q),h_t)\), until it halts or has made \(r\) reads.
 
 An executor is \emph{no-bypass relative to \((\tau,\pi)\)} if its output has
 the form
@@ -190,7 +190,8 @@ the form
 \]
 for a deterministic function \(E\), with no other access to \(S\).  Thus
 ``no bypass'' is an explicit information-flow restriction, not merely an
-architectural description.
+architectural description.  Because \(\pi\) receives only \(\tau(q)\), its
+address trace cannot convey additional information about \(q\) to \(E\).
 \end{definition}
 
 \begin{theorem}[Adaptive executor-locality criterion]\label{thm:locality}
@@ -216,7 +217,7 @@ definition well defined, and the resulting executor is exact by construction.
 
 \begin{remark}[Oblivious plans and the real access budget]
 An oblivious plan is the special case in which \(\pi\)'s sequence of queried
-referents depends on \(q\) alone.  The earlier ``fixed read set'' condition
+referents depends on \(\tau(q)\) alone.  The earlier ``fixed read set'' condition
 would measure the support of that plan, not the number of physical reads.
 The adaptive formulation is necessary: a two-read policy may first read a
 pointer \(p\) and then read the referent named by its value, whereas an
