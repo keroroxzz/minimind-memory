@@ -28,11 +28,11 @@
 \newcommand{\bt}{\bot}
 \newcommand{\semw}{\sigma_w}
 \newcommand{\semq}{\sigma_q}
-\newcommand{\CCA}{\mathsf{CCA}}
+\newcommand{\SAF}{\mathsf{SAF}}
 \newcommand{\UE}{\mathsf{UE}}
 
-\title{Reasoning/Memory Separation in Language Models:\
-Address Factorization, Not a Claim of Natural-Language Retrieval}
+\title{Exact Memory Interfaces:\
+Address Factorization and Executor Locality}
 \author{Draft theory note}
 \date{}
 
@@ -40,15 +40,18 @@ Address Factorization, Not a Claim of Natural-Language Retrieval}
 \maketitle
 
 \begin{abstract}
-We study a narrow question behind the phrase ``separate reasoning from
-memory'': when can a component that only performs exact key--value operations
-be correct for \emph{every} legal runtime state?  We prove that in a one-shot,
+We study two narrow questions behind the phrase ``separate reasoning from
+memory.''  First, when can a component that only performs exact key--value
+operations be correct for \emph{every} legal runtime state?  In a one-shot,
 key-addressed model, universal zero-error retrieval is equivalent to the
 existence of a common injective address factorization of write and query
-interfaces.  We also prove an observation-indistinguishability statement for
-open-world abstention.  These are representation results relative to a fixed
-task semantics; they neither show that natural-language canonicalization can
-be learned nor show that it cannot.
+interfaces.  Second, we characterize exactly what a claimed bounded-read
+``reasoning'' module entails: the task answer must be invariant to all state
+changes outside its declared read set.  We also prove an
+observation-indistinguishability statement for open-world abstention.  These
+are representation results relative to a fixed task semantics; they neither
+show that natural-language canonicalization can be learned nor show that it
+cannot.
 \end{abstract}
 
 \section{Motivation (prose)}
@@ -89,8 +92,9 @@ The covered referents are
 \]
 We assume \emph{bi-witnessed scope}: every \(d\in\Dom_0\) has at least one
 write witness in \(\Wr_0\) and one query witness in \(\Qu_0\).  A semantic
-state is a finite partial map \(S:\Dom_0\rightharpoonup\Va\), and the task
-answer is the externally specified function
+state is a finite partial map \(S:\Dom_0\rightharpoonup\Va\); let
+\(\mathcal S\) denote the set of all such states.  The task answer is the
+externally specified function
 \[
  A(S,q)=
  \begin{cases}
@@ -125,8 +129,10 @@ exact \(\mathrm{get}\).
 The interface has \emph{universal exactness}, denoted \(\UE\), on
 \((\Wr_0,\Qu_0)\) if, for every legal history \(H\), every write is admitted
 as a new entry and every \(q\in\Qu_0\) is answered exactly as \(A(S_H,q)\).
-The quantifier ranges over all finite legal semantic states and hence over
-all assignments of values in \(\Va\); it is not an average-case claim.
+The quantifier is over all finite legal histories in the stated semantic
+scope, not an average-case distribution.  If the scope supplies alternative
+writes for every value assignment, this specializes to universal correctness
+over those assignments as well.
 \end{definition}
 
 \section{What is forced by state variation}
@@ -150,11 +156,65 @@ key--value store, vector database, guard, neural mechanism, or approximate
 notion of correctness.  Its role is load-bearing but elementary.
 \end{remark}
 
-\section{Canonical addressability and the factorization theorem}
+\section{What a reasoning--knowledge split can formally mean}
 
-\begin{definition}[Certified Canonical Addressability]\label{def:cca}
-An interface \((C_w,C_r)\) has \emph{Certified Canonical Addressability}
-(\(\CCA\)) on \((\Wr_0,\Qu_0)\) when all four conditions hold:
+The slogan has content only after the executor's information interface is
+fixed.  Let \(\overline{\Va}=\Va\cup\{\bt\}\), and let
+\(S^{\bt}(d)=S(d)\) if \(d\in\operatorname{dom}S\) and \(\bt\) otherwise.
+
+\begin{definition}[State-independent \(r\)-read decomposition]
+  \label{def:locality}
+Fix an output set \(\mathcal Y\), a query view \(\tau:\Qu_0\to\mathcal T\),
+and an integer \(r\geq0\).  A task answer
+\(A:\mathcal S\times\Qu_0\to\mathcal Y\) has a
+\emph{state-independent \(r\)-read decomposition} if there are a map
+\(R:\Qu_0\to\bigcup_{m=0}^{r}\Dom_0^m\), whose entries are distinct, and an
+executor
+\[
+ E:\mathcal T\times\bigcup_{m=0}^{r}\overline{\Va}^{m}\to\mathcal Y
+\]
+such that for every legal state \(S\in\mathcal S\) and query \(q\), writing
+\(R(q)=(d_1,\ldots,d_m)\),
+\[
+ A(S,q)=E\bigl(\tau(q),(S^{\bt}(d_1),\ldots,S^{\bt}(d_m))\bigr).
+\]
+The read plan \(R(q)\) and query view \(\tau(q)\) are functions of the task
+query, not of the hidden runtime state or of the implementation's output.
+\end{definition}
+
+\begin{theorem}[Executor locality criterion]\label{thm:locality}
+Consider a no-bypass deterministic system whose executor, on query \(q\),
+receives only \(\tau(q)\) and the ordered values
+\((S^{\bt}(d):d\in R(q))\), where \(\lvert R(q)\rvert\leq r\).  It is
+exact on every legal state if and only if \(A\) has the state-independent
+\(r\)-read decomposition of Definition~\ref{def:locality} with the system's
+read plan and query view.
+\end{theorem}
+
+\begin{proof}
+If the system is exact, take its deterministic executor as \(E\).  Two
+states agreeing on every member of \(R(q)\) give it identical inputs, hence
+the same output; exactness makes that output \(A(S,q)\), proving the stated
+factorization.  Conversely, an executor implementing the displayed \(E\)
+is exact by the defining equality.
+\end{proof}
+
+\begin{remark}[Where the content is]
+The theorem is non-vacuous only when \(r\), \(R\), and \(\tau\) are declared
+independently of the implementation and \(r\) is a real access constraint.
+Otherwise an implementation can supply its whole current state to \(E\) and
+conceal all work there.  Thus it formalizes a conditional interface claim,
+not an assertion that ``reasoning'' and ``knowledge'' are independently
+learnable or orthogonal.  With exact access to each \(d\in R(q)\),
+Theorem~\ref{thm:factor} supplies the memory-side condition; the executor
+side remains the separately specified map \(E\).
+\end{remark}
+
+\section{Semantic address factorization}
+
+\begin{definition}[Semantic Address Factorization]\label{def:saf}
+An interface \((C_w,C_r)\) has \emph{Semantic Address Factorization}
+(\(\SAF\)) on \((\Wr_0,\Qu_0)\) when all four conditions hold:
 \begin{enumerate}
   \item[(C1)] \emph{Typed determinacy:} the interface has one deterministic
   output in \(\Ky\cup\{\bt\}\) for each input; membership in \(\Ky\) is
@@ -168,8 +228,8 @@ An interface \((C_w,C_r)\) has \emph{Certified Canonical Addressability}
 \end{enumerate}
 \end{definition}
 
-\begin{proposition}[CCA induces a naming map]\label{prop:naming}
-Under the bi-witnessed-scope assumption, \(\CCA\) holds if and only if there
+\begin{proposition}[SAF induces a naming map]\label{prop:naming}
+Under the bi-witnessed-scope assumption, \(\SAF\) holds if and only if there
 exists an injective map \(\kappa:\Dom_0\hookrightarrow\Ky\) such that
 \[
  C_w(w)=\kappa(d)\quad\text{whenever }\semw(w)=(d,v),
@@ -187,7 +247,7 @@ immediately, while (C1) is part of the interface model.
 
 \begin{theorem}[Universal-store address factorization]\label{thm:factor}
 In the setting of Definitions~\ref{def:task}--\ref{def:execution}, an
-interface has \(\UE\) if and only if it has \(\CCA\) on the covered scope.
+interface has \(\UE\) if and only if it has \(\SAF\) on the covered scope.
 \end{theorem}
 
 \begin{proof}
@@ -197,9 +257,9 @@ write must be admitted and the query must return a value in \(\Va\).  The
 same one-write history has exactly one live key.  Therefore a write witness
 and query witness for the same \(d\) must yield the same key, or the query
 would return \(\bt\) rather than its written value.  Finally choose distinct
-referents \(d,d'\), witnesses for each, and distinct \(v,v'\in\Va\).  If the
-two addresses coincided, the second legal write would conflict with the first
-at one physical key, contradicting universal admission.  Hence (C1)--(C4)
+referents \(d,d'\) and witnesses for each.  If the two addresses coincided,
+the second legal write would conflict with the first at one physical key,
+contradicting universal admission.  Hence (C1)--(C4)
 hold.
 
 Conversely, Proposition~\ref{prop:naming} gives an injective \(\kappa\).
@@ -213,15 +273,15 @@ output is therefore \(A(S_H,q)\).
 \begin{remark}[Responsibility boundary]\label{rem:boundary}
 The necessity proof supplies the precise limit of an exact membership guard.
 If an upstream query interface emits the live address \(\kappa(d')\) for
-\(d'\neq d\), choose a legal state with distinct \(S(d)\) and \(S(d')\).
-Exact \(\mathrm{get}\) then returns a genuinely present but wrong value.
+\(d'\neq d\), then in any legal state in which both referents have unequal
+values, exact \(\mathrm{get}\) returns a genuinely present but wrong value.
 Membership can certify that an address exists; it cannot certify that it is
 the intended referent or repair an identity error upstream.
 \end{remark}
 
 \section{Certified abstention is an additional assumption}
 
-CCA concerns a fixed covered scope.  It does not make the phrase ``genuinely
+SAF concerns a fixed covered scope.  It does not make the phrase ``genuinely
 unknown'' mathematical.  To make a fail-closed claim outside that scope, a
 task must provide certificate relations
 \(\mathsf{Cert}_w\subseteq\Wr\times\Ky\) and
@@ -266,26 +326,32 @@ about the expressivity or trainability addressed by these works.
 
 \begin{imported}[Log-precision transformer upper bound]
 Merrill and Sabharwal~\citep{merrill2022parallelism} show that a Transformer
-whose arithmetic precision is logarithmic in input length and whose
-feed-forward subnetworks are computable in linear space can be simulated by a
-constant-depth logspace-uniform threshold-circuit family.  Thus the stated
-formal model lies in uniform \(\mathsf{TC}^0\).  This is not an upper bound for
-arbitrary real-precision or recurrent/looped implementations.
+operating on \(\Sigma^n\) with fixed depth \(d\), \(c\log n\)-bit precision
+at every intermediate operation, and the paper's bounded-precision component
+functions is simulated by a logspace-uniform threshold-circuit family of
+depth \(3+(9+2d_{\oplus})d\).  Their Definition~6 entails that the component
+functions are computable in \(O(\log n)\) space; hence this stated model lies
+in uniform \(\mathsf{TC}^0\).  This is not an upper bound for arbitrary
+real-precision or recurrent/looped implementations.
 \end{imported}
 
 \begin{imported}[Saturated-attention upper bound]
-For saturated (average-hard) attention with floating-point values and the
-size-preservation assumptions stated in their model, Merrill, Sabharwal, and
-Smith~\citep{merrill2021saturated} give a \(\mathsf{TC}^0\) upper bound on the
-recognized languages.  The result is model-specific; its rational-value
-variant can be much more powerful under different assumptions.
+Merrill, Sabharwal, and Smith~\citep{merrill2021saturated} define
+\(\mathsf{AHAT}(F)\) as finite-depth, finite-head Transformers over their
+floating-point datatype \(F\), with saturated attention and
+size-preserving embedding, score, and feed-forward functions.  Their
+Theorem~5 is \(\mathsf{AHAT}(F)\subseteq\mathsf{TC}^0\) (non-uniform).
+The result is model-specific: their rational-valued, size-preserving variant
+can recognize every formal language under different assumptions.
 \end{imported}
 
 \begin{imported}[Arbitrary-precision Turing completeness]
 P\'erez, Marinkovi\'c, and Barcel\'o~\citep{perez2019turing} prove Turing
-completeness for a Transformer construction using rational activations of
-arbitrary precision.  It is therefore not evidence that a finite-precision,
-fixed-depth deployed language model has unbounded practical memory.
+completeness for hard-attention Transformer networks with positional
+encodings, rational weights and activations of arbitrary precision, and their
+piecewise-linear sigmoidal activation.  It is therefore not evidence that a
+finite-precision, fixed-depth deployed language model has unbounded practical
+memory.
 \end{imported}
 
 \begin{imported}[Serial computation from chain of thought]
@@ -303,7 +369,7 @@ extend that architectural line~\citep{graves2016dnc}.  In language modelling,
 kNN-LM~\citep{khandelwal2020knnlm}, RAG~\citep{lewis2020rag}, and Memorizing
 Transformers~\citep{wu2022memorizing} report empirical gains from external or
 non-parametric memory.  These are architectural or empirical results; none
-proves universal semantic identity preservation, \(\CCA\), or zero
+proves universal semantic identity preservation, \(\SAF\), or zero
 misdelivery over all stores.
 \end{imported}
 
@@ -328,7 +394,7 @@ is not a lower bound on factual capacity.
 \section{Conjecture and limits}
 
 \begin{conjecture}[Scale and addressability]\label{conj:scale}
-Whether unsupervised training at scale produces CCA-like write--read agreement
+Whether unsupervised training at scale produces SAF-like write--read agreement
 on nontrivial natural-language scopes is open.  This note makes no claim in
 either direction.
 \end{conjecture}
@@ -336,7 +402,7 @@ either direction.
 The note does not claim that natural-language canonicalization is achievable
 or impossible, that latent delivery is superior to textual context, that a
 value codec or reasoning executor can be learned, or that a measured failure
-of a particular neural mechanism refutes CCA.  It characterizes the exact
+of a particular neural mechanism refutes SAF.  It characterizes the exact
 address interface required by one restricted store contract.
 
 \bibliographystyle{plainnat}
