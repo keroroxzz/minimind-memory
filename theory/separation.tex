@@ -139,18 +139,20 @@ The interface has \emph{universal exactness}, denoted \(\UE\), on
 as a new entry and every \(q\in\Qu_0\) is answered exactly as
 \(\Alkup(S_H,q)\).
 The quantifier is over all finite legal histories in the stated semantic
-scope, not an average-case distribution.  If the scope supplies alternative
-writes for every value assignment, this specializes to universal correctness
-over those assignments as well.
+scope, not an average-case distribution.  When
+\(\mathcal S_{\Wr_0}=\mathcal S\) (for example, if the scope supplies
+alternative writes for every value assignment), this is universal correctness
+over all finite semantic states.
 \end{definition}
 
 \section{What is forced by state variation}
 
 \begin{lemma}[State-independence]\label{lem:state}
 Let \(F:\Qu\to\Va\cup\{\bt\}\) be any function that does not depend on the
-runtime semantic state \(S\).  If there exist legal \(S_0,S_1\) and \(q\)
-such that \(\Alkup(S_0,q)\neq\Alkup(S_1,q)\), then \(F\) is not exact-correct on both
-states.
+runtime semantic state \(S\).  If there exist
+\(S_0,S_1\in\mathcal S_{\Wr_0}\) and \(q\) such that
+\(\Alkup(S_0,q)\neq\Alkup(S_1,q)\), then \(F\) is not exact-correct on
+both states.
 \end{lemma}
 
 \begin{proof}
@@ -159,8 +161,8 @@ equal two distinct task-supplied answers.
 \end{proof}
 
 \begin{remark}
-Lemma~\ref{lem:state} says only that exact correctness across varying legal
-states needs \emph{some} runtime-state channel.  It does not prescribe a
+Lemma~\ref{lem:state} says only that exact correctness across varying
+reachable states needs \emph{some} runtime-state channel.  It does not prescribe a
 key--value store, vector database, guard, neural mechanism, or approximate
 notion of correctness.  Its role is load-bearing but elementary.
 \end{remark}
@@ -248,6 +250,64 @@ pointer \(p\) and then read the referent named by its value, whereas an
 oblivious plan for the same task may need to include every possible target.
 Here \(r\) always counts actual point reads along a runtime path.
 \end{remark}
+
+\begin{proposition}[A nontrivial two-hop target]\label{prop:twohop}
+There is a finite instance of the preceding model with a target
+\(B:\mathcal S_{\Wr_0}\times\Qu_0\to\mathcal Y\) for which an exact
+no-bypass executor exists with \(r=2\), but no exact no-bypass executor
+exists with \(r=1\), for any adaptive one-read policy using the same query
+view.
+\end{proposition}
+
+\begin{proof}
+Let \(\mathcal R\) be a finite set with \(\lvert\mathcal R\rvert\geq2\),
+let \(\Dom_0=\{p\}\sqcup\mathcal R\),
+\(\Va=\mathcal R\sqcup\{0,1\}\), and
+\(\mathcal Y=\Va\cup\{\bt\}\).  For every \(d\in\Dom_0\), take a query
+\(q_d\), set \(\Qu_0=\{q_d:d\in\Dom_0\}\), let \(\semq(q_d)=d\), and
+set \(\tau(q_d)=d\).  Let \(\Wr_0\) consist of \(w_{p,t}\) with
+\(\semw(w_{p,t})=(p,t)\) for each
+\(t\in\mathcal R\), and \(w_{t,b}\) with
+\(\semw(w_{t,b})=(t,b)\) for each \(t\in\mathcal R\) and
+\(b\in\{0,1\}\).  Define
+\[
+ B(S,q_d)=S^{\bt}(d)\quad(d\in\mathcal R),
+ \qquad
+ B(S,q_p)=
+ \begin{cases}
+   S^{\bt}(t), & S^{\bt}(p)=t\in\mathcal R,\\
+   \bt, & \text{otherwise.}
+ \end{cases}
+\]
+
+For \(r=2\), let \(\pi\) first read \(d\) on query view \(d\in\mathcal R\)
+and halt thereafter.  On query view \(p\), it first reads \(p\), then reads
+\(t\) exactly when the first value is \(t\in\mathcal R\), and otherwise
+halts.  An executor returns the sole value for a direct query, the second
+value after the trace \(((p,t),(t,x))\), and \(\bt\) after \(((p,\bt))\).
+It is exact on \(\mathcal S_{\Wr_0}\), so condition (L) holds there by
+Theorem~\ref{thm:locality}.
+
+For the lower bound, consider \(q_p\).  Every one-read policy chooses a
+fixed first action on the common initial input \((p,\varepsilon)\).  If it
+halts, fix any \(t\in\mathcal R\); the two histories
+\(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), give it the same empty transcript but
+different answers.  Otherwise it chooses a
+referent \(d\).  If \(d=p\), fix \(t\in\mathcal R\) and compare the legal histories
+\(H_b=(w_{p,t},w_{t,b})\) for \(b=0,1\): they return the same read value
+\(t\) but have different answers.  If \(d\in\mathcal R\), choose
+\(t\in\mathcal R\setminus\{d\}\) and use the same two histories: the
+first read is \(\bt\) in both while the answers differ.  Thus (L) fails for
+every one-read policy, and Theorem~\ref{thm:locality} rules out an exact
+one-read executor.
+
+Finally, take a key space admitting an injective
+\(\kappa:\Dom_0\hookrightarrow\Ky\), set \(C_w(w)=\kappa(d)\) whenever
+\(\semw(w)=(d,v)\), and set \(C_r(q_d)=\kappa(d)\).  This gives \(\SAF\),
+and \(\rho(d)=q_d\) is a fixed query-witness selector, so the two semantic
+reads above also have the physical realization of
+Corollary~\ref{cor:composition}.
+\end{proof}
 
 \begin{remark}[Where the content is]
 Theorem~\ref{thm:locality} is deliberately a realizability criterion, not a
