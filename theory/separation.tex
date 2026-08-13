@@ -61,8 +61,7 @@ forced, and reduce the remainder to a single named property of the interface.
 
 \begin{definition}[Task specification]\label{def:task}
 A \emph{task} fixes, publicly and in advance: a referent domain $\Dom$, write
-utterances $\Wr$, query utterances $\Qu$, a key space $\Ky$, a value space
-$\Va$ with $|\Va|\ge 2$, partial semantics
+utterances $\Wr$, query utterances $\Qu$, a key space $\Ky$, a value space $\Va$, partial semantics
 $s_w:\Wr\rightharpoonup\Dom$, $s_q:\Qu\rightharpoonup\Dom$, and an
 \emph{injective public naming map} $\iota:\Dom\hookrightarrow\Ky$.
 \end{definition}
@@ -173,18 +172,27 @@ otherwise the theorem below degenerates into renaming.
 
 \section{Address-factorization theorem}
 
-\begin{definition}[Universal soundness and completeness]\label{def:usc}
-Fix a task specification. A one-shot key-addressed system is \emph{universally
-sound and complete} if for every finite semantic state $S$, every admissible
-history of atomic $\mathrm{put}/\mathrm{get}$ consistent with $M_S$, and every
-in-scope $q$ with $s_q(q)$ defined, the system outputs exactly $A(S,q)$.
+\begin{definition}[Universal soundness and completeness, public-schema stores]\label{def:usc}
+Fix a task specification. Legal stores are \emph{public-schema} stores: the
+store presented to the system is $M_S$ of Definition~\ref{def:state}, i.e.\
+populated through $\iota$ and therefore shareable with, and auditable by, any
+other system using the same schema. A one-shot key-addressed system is
+\emph{universally sound and complete} if for every finite semantic state $S$,
+every admissible history of atomic $\mathrm{put}/\mathrm{get}$ whose resulting
+state equals $M_S$, and every in-scope $q$ with $s_q(q)$ defined, the system
+outputs exactly $A(S,q)$.
 \end{definition}
 
+\noindent The history clause is stated for completeness but is \emph{not
+load-bearing}: under the public-schema reading only the resulting state
+matters. We say so rather than let it look like it carries content.
+
 \begin{theorem}[Universal-store address factorization]\label{thm:main}
-Under Assumptions~\ref{as:sound}--\ref{as:cov}, a one-shot key-addressed
-system over a fixed public schema, with no store-bypassing channel, is
-universally sound and complete \emph{iff} its interface has CCA
-(Definition~\ref{def:cca}).
+Assume $|\Va|\ge 2$ (used only in Case~1 below) and
+Assumptions~\ref{as:sound}--\ref{as:cov}. A one-shot key-addressed system
+over \emph{public-schema} legal stores (Definition~\ref{def:usc}), with no
+store-bypassing channel, is universally sound and complete \emph{iff} its
+interface has CCA (Definition~\ref{def:cca}).
 \end{theorem}
 
 \begin{proof}
@@ -223,15 +231,38 @@ certify that a present key is \emph{the intended referent}, and it cannot
 repair an upstream identity error.
 \end{remark}
 
-\begin{remark}[Private stores: agreement up to relabeling]\label{rem:relabel}
-Theorem~\ref{thm:main} is stated for a \emph{fixed public schema}: legal
-stores are defined through $\iota$, which is what makes memory shareable and
-auditable across systems. If instead the store is private and populated only
-by this system's own writes, then any fixed injection $\pi$ with
-$\cw=\cr=\pi\circ\iota$ also yields universal correctness, and CCA can be
-weakened to \emph{agreement up to a fixed injection}. The public-schema
-reading is the one that supports interoperability; we record the weaker
-private-store variant explicitly rather than leave the distinction implicit.
+\begin{definition}[Private store]\label{def:private}
+A store is \emph{private} if it is initially empty and its contents arise
+only from this system's own $\mathrm{put}$ operations; no other party reads
+or writes it, and no external schema constrains where values reside.
+\end{definition}
+
+\begin{theorem}[Private stores: agreement up to relabeling]\label{thm:private}
+Over private stores, a one-shot key-addressed system is universally sound and
+complete \emph{iff} there is an injection $\pi:\iota(\Dom)\to\Ky$ with
+$\cw(w)=\pi(\iota(s_w(w)))$ and $\cr(q)=\pi(\iota(s_q(q)))$ on certified
+in-scope inputs. In particular CCA is \emph{sufficient but not necessary}.
+\end{theorem}
+
+\begin{proof}
+($\Leftarrow$) Writing $S(d)$ at $\pi(\iota(d))$ and reading
+$\pi(\iota(s_q(q)))$ returns $S(s_q(q))$, and $\bt$ exactly when $d\notin
+\mathrm{dom}(S)$, since $\pi\circ\iota$ is injective.
+($\Rightarrow$) Define $\pi$ on $\iota(d)$ as the key at which the system
+writes $d$. If $\pi$ were not injective, two distinct referents would share a
+key; taking $S$ with distinct values at both (using $|\Va|\ge2$) makes one
+query mis-deliver. If the read map disagreed with the write map at some
+covered input, that referent's query would read an unwritten or wrong key,
+giving Case~2 or Case~1 of Theorem~\ref{thm:main}.
+\end{proof}
+
+\begin{remark}[What the pair of theorems says]\label{rem:pair}
+Theorems~\ref{thm:main} and~\ref{thm:private} isolate where canonical
+addressing is actually forced: \emph{not} by addressing per se, but by the
+requirement that the store be a \emph{public, shareable, auditable} object.
+For a private memory, any self-consistent private encoding suffices. Claims
+about swappable or auditable memory therefore carry a formal cost, and that
+cost is exactly CCA.
 \end{remark}
 
 \paragraph{Scope.} Theorem~\ref{thm:main} is a representation/refinement
@@ -253,9 +284,21 @@ external-memory results, are adjacent but do \emph{not} establish CCA or
 universal non-mis-delivery.
 
 \paragraph{Prohibited inference (recorded to prevent it).} A
-$\mathsf{TC}^0$ \emph{upper} bound for fixed-depth transformers combined with
+$\mathsf{TC}^0$ \emph{upper} bound for transformers combined with
 $\mathsf{NC}^1$-completeness of a word problem does \emph{not} give an
 unconditional lower bound: the required class separation is not known.
+
+\emph{Verified detail (checked against arXiv:2207.00729).} The upper bound is
+that transformers \emph{whose arithmetic precision is logarithmic in the
+number of input tokens}, and \emph{whose feedforward nets are computable in
+space linear in their input}, can be simulated by constant-depth
+logspace-uniform threshold circuits. The lower bounds offered there are
+\emph{conditional} --- e.g.\ contingent on $\mathsf{L}\neq\mathsf{P}$ ---
+and no unconditional separation from $\mathsf{NC}^1$ is claimed. Any use of
+this result in the present note must carry both assumptions explicitly; in
+particular the log-precision premise is not innocuous, since it is what
+excludes the arbitrary-precision constructions used in Turing-completeness
+arguments.
 
 \section{Conjectures}
 
