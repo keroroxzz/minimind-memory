@@ -1,0 +1,85 @@
+{
+  "experiment": "RWA-0",
+  "title": "closed-world supervised controlled canonicalization：read-write key agreement",
+  "spec_source": "Codex [175]／[186]；`RWA0_DESIGN.md` 為設計閘",
+  "status": "spec-lock draft — **未實作、未生成資料、未訓練**；待 interface-only review",
+
+  "naming": {
+    "must_be_called": "**closed-world supervised controlled canonicalization**",
+    "must_not_be_called": ["自然語言 canonicalization", "無標籤／emergent semantic canonicalization",
+                            "semantic retrieval", "open-set identity"],
+    "why": "訓練用 oracle `K*` 的交叉熵，**是監督式**；把它叫成自然湧現會是實質的錯誤陳述"
+  },
+
+  "why_this_form": {
+    "output": "write／read **各自**輸出離散的 typed product key `K = (entity_code, attribute_code)`",
+    "training": "以 oracle `K*` 的**交叉熵**訓練",
+    "hard_rule": "**任何不能 exact-decode 出 `K` 的輸出，一律不得送進 Store**",
+    "rationale": "這比 pairwise cosine／threshold **更誠實**，且**避免重開已 FAIL 的 learned confidence selector**（§4.67）"
+  },
+
+  "split": {
+    "note": "⚠️ Codex [186] 指出一個易混淆處，若弄錯，FAIL 會變成只是在測字典 OOD",
+    "must_not_overlap": ["write／read 的 **renderer family**", "**完整 surface string**"],
+    "must_have_train_coverage": "**每個 eval 的原子語義／alias mapping 都必須有 train witness**",
+    "held_out": ["renderer composition／template family", "未見的 `(entity, attr)` 組合"],
+    "why": "若把 eval 的 alias atom 本身全留到未見，FAIL 只是在測**字典 OOD**，**不再能識別 read-write agreement**"
+  },
+
+  "hard_negatives": {
+    "note": "**鎖方法，不鎖鬆散的相似度分數**（Codex [186]）",
+    "per_anchor": "每個 positive anchor **必定生成**（不可 reject／resample）三個 negative：",
+    "strata": {
+      "same_entity_diff_attr": "同 entity、異 attribute",
+      "same_attr_diff_entity": "同 attribute、異 entity",
+      "role_binding_swap": "**與 positive 有相同的 renderer-visible semantic-atom multiset**，僅以**一個事前定義的 role attachment／order 規則**換出不同的 `K*`"
+    },
+    "forbidden_selection": ["edit distance", "embedding cosine", "依模型表現挑選 hard 例"],
+    "data_layer_assertions": [
+      "逐題 assert 三個 negative 的 `K* != K_anchor`",
+      "逐題 assert binding-swap 與 anchor 的 **semantic-atom multiset 相等**"
+    ]
+  },
+
+  "primary_gate": {
+    "per_seed": "**300 個 held-out positive anchor／seed**；三個 seed **各自**全過，**禁止 pooled 補過**",
+    "a_agreement": "`K_w = K_r = K*` —— **300/300**",
+    "b_no_false_merge": "三個 stratum **各自** `false_merge = 0/300`",
+    "c_end_to_end": {
+      "setup": "每個 anchor 將 **target 與三種 negative** 都以 **distinct value** commit 進 Store；read surface 驅動 **exact Store read**",
+      "correct_target_read": "**300/300**",
+      "wrong_existing_delivery": "**0/300**",
+      "false_abstain": "**0/300**"
+    },
+    "store_revalidation": "**key 型別已變** → Store 的 membership／conflict／commit ABI **必須以新 key 重驗**，**不得**借用 §4.57／§4.64／§4.68 的舊 PASS"
+  },
+
+  "phase0_before_training": [
+    "列出**每一個 eval atom 的 train witness**",
+    "所有**完整字串**與 **renderer-program** 的 train–eval 交集為 **0**",
+    "**renderer injectivity**（同一 `K*` 的不同 render 不得碰撞到別的 `K*`）",
+    "凍結 artifact checksum",
+    "逐題 assert 三個 negative 的 `K* != K_anchor` 與 binding-swap 的 multiset 相等"
+  ],
+
+  "scope": {
+    "is_not": ["自然語言／指涉已解", "open-set", "§4.67 selector 的替代（那是 FAIL，不得補過）",
+                "`MF0-C` formation 的替代（那是 FAIL，不得補過）"],
+    "claim_limit": "PASS 只可稱「在此 closed-world、受控 renderer 家族、監督式訓練下，write／read 對同一 referent 產生同一 typed key，且不 false-merge」"
+  },
+
+  "not_yet_locked": [
+    "encoder 規格（架構／參數量）",
+    "optimizer 與 train budget",
+    "seeds",
+    "train／eval 的 size",
+    "key schema 的確切編碼（`entity_code`／`attribute_code` 的基數）",
+    "renderer family 的確切文法與 alias 清單"
+  ],
+
+  "stopping_rule": {
+    "order": ["**interface-only review（本輪）**", "鎖上列六項", "phase-0（不訓練）", "一次三-seed run"],
+    "on_fail": "記 `RWA-0 FAIL` 並依 (a)/(b)/(c) 分類歸因；**不得**改 hard-negative 定義、split 或門檻去救",
+    "on_pass": "**不得**升格為自然語言／open-set；**不得**用來補 §4.67 或 `MF0-C` 的 FAIL"
+  }
+}
