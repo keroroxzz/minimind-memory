@@ -255,6 +255,27 @@ coarse query view cannot be repaired by making more memory reads.  It says
 nothing, however, about how the resulting factor depends on \(S\).
 \end{remark}
 
+\begin{remark}[A navigation-style representation limit]
+The locality criterion can diagnose an external-memory navigation interface
+without treating that memory as an instance of \(\SAF\).  Suppose a navigation
+task must choose an action from a declared query view and the content reads
+admitted by \(\pi\).  If two environments expose the same
+\(\bigl(\tau(q),\operatorname{tr}_{\pi}(S,\tau(q))\bigr)\)--as can occur
+when the representation exposes the same unordered visual-feature multiset
+but not connectivity--yet their different connectivity requires different
+actions, then (L) fails.  Theorem~\ref{thm:locality} therefore rules out an exact
+deterministic no-bypass executor for that declared observation interface.
+This is not an instance of Proposition~\ref{prop:openworld}: both
+environments require an action rather than one requiring abstention.
+
+The conclusion is only an interface-insufficiency statement, not a claim
+that a navigation system is learnable or unlearnable.  In particular, whether
+a real feature extractor produces such indistinguishable transcripts is an
+empirical question.  A continuous or similarity-addressed environment memory
+also need not have exact keys or decidable membership, so the \(\SAF\) and
+one-shot Store theorems do not apply merely by calling it a memory.
+\end{remark}
+
 \begin{remark}[Oblivious plans and the real access budget]
 The earlier ``fixed read set'' condition would measure the support of an
 oblivious plan, not the number of physical reads.
