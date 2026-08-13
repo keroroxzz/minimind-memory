@@ -19,6 +19,7 @@
 \newtheorem{lemma}{Lemma}
 \newtheorem{proposition}{Proposition}
 \newtheorem{theorem}{Theorem}
+\newtheorem{corollary}{Corollary}
 
 \newcommand{\Dom}{\mathcal{D}}
 \newcommand{\Wr}{\mathcal{W}}
@@ -30,6 +31,7 @@
 \newcommand{\semq}{\sigma_q}
 \newcommand{\SAF}{\mathsf{SAF}}
 \newcommand{\UE}{\mathsf{UE}}
+\newcommand{\Alkup}{A_{\mathrm{lookup}}}
 
 \title{Exact Memory Interfaces:\
 Address Factorization and Executor Locality}
@@ -48,11 +50,11 @@ existence of a common injective address factorization of write and query
 interfaces.  Second, we characterize exactly what a claimed bounded-read
 ``reasoning'' module entails: the task answer must be invariant on every
 class of states that yields the same declared read transcript.  We also prove
-an
-observation-indistinguishability statement for open-world abstention.  These
-are representation results relative to a fixed task semantics; they neither
-show that natural-language canonicalization can be learned nor show that it
-cannot.
+that a faithful, predeclared query witness turns this semantic execution into
+physical Store reads.  Finally, we prove an observation-indistinguishability
+statement for open-world abstention.  These are representation results
+relative to a fixed task semantics; they neither show that natural-language
+canonicalization can be learned nor show that it cannot.
 \end{abstract}
 
 \section{Motivation (prose)}
@@ -94,10 +96,10 @@ The covered referents are
 We assume \emph{bi-witnessed scope}: every \(d\in\Dom_0\) has at least one
 write witness in \(\Wr_0\) and one query witness in \(\Qu_0\).  A semantic
 state is a finite partial map \(S:\Dom_0\rightharpoonup\Va\); let
-\(\mathcal S\) denote the set of all such states.  The task answer is the
-externally specified function
+\(\mathcal S\) denote the set of all such states.  The one-point
+\emph{lookup answer} is the externally specified function
 \[
- A(S,q)=
+ \Alkup(S,q)=
  \begin{cases}
    S(\semq(q)), & \semq(q)\in\operatorname{dom}S,\\
    \bt, & \text{otherwise.}
@@ -129,7 +131,8 @@ exact \(\mathrm{get}\).
 \begin{definition}[Universal exactness]\label{def:ue}
 The interface has \emph{universal exactness}, denoted \(\UE\), on
 \((\Wr_0,\Qu_0)\) if, for every legal history \(H\), every write is admitted
-as a new entry and every \(q\in\Qu_0\) is answered exactly as \(A(S_H,q)\).
+as a new entry and every \(q\in\Qu_0\) is answered exactly as
+\(\Alkup(S_H,q)\).
 The quantifier is over all finite legal histories in the stated semantic
 scope, not an average-case distribution.  If the scope supplies alternative
 writes for every value assignment, this specializes to universal correctness
@@ -141,7 +144,7 @@ over those assignments as well.
 \begin{lemma}[State-independence]\label{lem:state}
 Let \(F:\Qu\to\Va\cup\{\bt\}\) be any function that does not depend on the
 runtime semantic state \(S\).  If there exist legal \(S_0,S_1\) and \(q\)
-such that \(A(S_0,q)\neq A(S_1,q)\), then \(F\) is not exact-correct on both
+such that \(\Alkup(S_0,q)\neq\Alkup(S_1,q)\), then \(F\) is not exact-correct on both
 states.
 \end{lemma}
 
@@ -309,8 +312,92 @@ Every legal history writes distinct referents to distinct keys
 \(\kappa(d)\), so all writes are admitted and the resulting store contains
 exactly \(S_H(d)\) at \(\kappa(d)\).  A covered query for \(d\) reads that key
 when \(d\in\operatorname{dom}S_H\), and reads an absent key otherwise.  Its
-output is therefore \(A(S_H,q)\).
+output is therefore \(\Alkup(S_H,q)\).
 \end{proof}
+
+\begin{definition}[Anchored physical point reads]\label{def:anchor}
+A \emph{fixed query-witness selector} is a map
+\(\rho:\Dom_0\to\Qu_0\) satisfying
+\(\semq(\rho(d))=d\) for every \(d\in\Dom_0\).  It is part of the
+declared runtime interface, not selected after observing an execution.  Such
+a selector exists under bi-witnessed scope.  It is \emph{faithful} for an
+addressing interface if every legal history is admitted, and for every legal
+history \(H\) and \(d\in\Dom_0\), \(C_r(\rho(d))\in\Ky\) and
+\[
+ \mathrm{get}\bigl(M_H,C_r(\rho(d))\bigr)=S_H^{\bt}(d). \tag{F}
+\]
+\end{definition}
+
+\begin{lemma}[SAF supplies a faithful anchor]\label{lem:anchor}
+If \(\SAF\) holds, every fixed query-witness selector is faithful.
+\end{lemma}
+
+\begin{proof}
+By Proposition~\ref{prop:naming}, \(C_r(\rho(d))=\kappa(d)\).  The legal
+history writes exactly the live semantic values at the pairwise distinct keys
+\(\kappa(d)\).  Hence this exact read returns \(S_H(d)\) when defined and
+\(\bt\) otherwise.
+\end{proof}
+
+\begin{theorem}[Physical realization of adaptive semantic reads]
+  \label{thm:bridge}
+Fix \(\tau\), an adaptive \(r\)-read policy \(\pi\), a fixed
+query-witness selector \(\rho\), and a deterministic executor \(E\).
+Suppose \(\rho\) is faithful and the semantic execution
+\[
+ E\bigl(\tau(q),\operatorname{tr}_{\pi}(S_H,\tau(q))\bigr)
+\]
+equals a target answer \(B(S_H,q)\), for some
+\(B:\mathcal S\times\Qu_0\to\mathcal Y\), on every legal history \(H\) and
+query \(q\).  Then a physical executor can realize the same computation with
+at most \(r\) exact Store reads: whenever \(\pi\) chooses semantic referent
+\(d\), it reads the physical key \(C_r(\rho(d))\), passes the resulting
+value to \(\pi\), and finally applies \(E\).  In particular, \(\SAF\) is a
+sufficient condition for this realization.
+\end{theorem}
+
+\begin{proof}
+Induct on the read step.  Faithfulness (F) makes the physical value at every
+chosen \(d\) equal to \(S_H^{\bt}(d)\).  Thus the physical and semantic
+transcripts are equal at each step, so the deterministic policy makes the
+same next choice and eventually the two executors present the same input to
+\(E\).  The assumed semantic correctness gives the result.
+\end{proof}
+
+\begin{corollary}[Anchored composition]\label{cor:composition}
+Fix \(\tau\), \(\pi\), and \(\rho\) as above.  If \(\SAF\) holds and a
+target \(B:\mathcal S\times\Qu_0\to\mathcal Y\) satisfies condition (L),
+with \(A\) replaced by \(B\), then there exists a physical executor using at
+most \(r\) exact Store reads that returns \(B(S_H,q)\) for every legal
+history \(H\) and query \(q\).
+\end{corollary}
+
+\begin{proof}
+Theorem~\ref{thm:locality} supplies an exact semantic executor.  By
+Lemma~\ref{lem:anchor}, \(\SAF\) makes \(\rho\) faithful; then apply
+Theorem~\ref{thm:bridge}.
+\end{proof}
+
+\begin{remark}[The bridge is sufficient, not necessary]
+Theorem~\ref{thm:bridge} fixes the public physical operation for semantic
+referent \(d\) to be the declared key \(C_r(\rho(d))\).  It therefore proves
+a constructive sufficiency statement, not that \(\SAF\) is necessary for
+every adaptive implementation.  For example, an executor that is explicitly
+given an inverse of a private fixed key relabeling can compensate for that
+relabeling even though the nominal \(C_r\) fails write--read agreement.
+Such extra key knowledge is outside the anchored interface here.
+\end{remark}
+
+\begin{remark}[Pointer values]
+No separate map \(\nu:\Va\rightharpoonup\Dom_0\) is needed to realize a
+\emph{given} policy \(\pi\): if a value is to determine a next referent, the
+value-to-referent decision is already part of \(\pi(u,h)\).  A separate
+\(\nu\) is needed only for a more structured claim that the policy factors
+through a designated pointer interpretation; \(\SAF\) neither provides nor
+learns that interpretation.  Moving a pointer representation from a read
+value to a stored key relocates this semantic obligation rather than removing
+it.
+\end{remark}
 
 \begin{remark}[Responsibility boundary]\label{rem:boundary}
 The necessity proof supplies the precise limit of an exact membership guard.
