@@ -39,5 +39,24 @@
     ]
   },
   "violations": [],
-  "pass": true
+  "pass": true,
+  "audit": {
+    "truncation_rule": "所有 fingerprint 皆為 **SHA-256 的前 16 個 hex 字元**；full SHA 另存於本節",
+    "P0_corpus_sha256_full": "a4b73fa74b11ff1778c9771f3e01b5a790b7de896fdba050acb7a235cf310d6a",
+    "MF0C_artifact_sha256_full": "9bc1848c9c84c4a17d9b1fcfcca3f266d2bc89f057bc64e7345773c63432a821",
+    "canonical_digest_algorithm": "sha256(str(goal) || concat_over_t bytes((entity_t, attr_t)))[:16]",
+    "canonical_digest_schema": "(goal:int, 有序的 64 個 (entity:int, attr:int))",
+    "n_unique_P0": 100000,
+    "n_unique_MF0C": 4300,
+    "code_manifest_sha": "43a50ff79c91a436eacb3f23e940154a5d91ada2b45f8cd975414af02610a888",
+    "trainer_manifest_sha": "e5bf4afd83d874b3b2bac177b66f59655ca5ce8be5c5466c25a1a0cb809a68f9",
+    "prereg_sha": "2108107933ef02fe9684bf8f01a198ae840607580f6b2164c01dedae83d36ad3"
+  },
+  "P0_final_checkpoint": {
+    "path": "mf0c_p0.pth",
+    "sha": "8891d8c126ef2f1e",
+    "updates": 20000,
+    "final_train_loss": 2.6297340393066406,
+    "note": "**如實記錄於 final update 之後**；不得作為訓練前 requirement 或 checkpoint-selection 條件"
+  }
 }

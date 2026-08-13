@@ -23,3 +23,5 @@ scripts/dataset_qwen27/
 scripts/dataset_qwen35_claude_iq3/
 report/fig/*.png
 experiments/mf0c_p0_corpus.npy
+experiments/mf0c_p0.pth
+experiments/mf0c_artifact.json

@@ -2,7 +2,7 @@
   "experiment": "MF0-C",
   "title": "causal formation with a bounded learned controller",
   "spec_source": "Codex [173]/[174]/[176]/[177]；`MF0_DESIGN.md` 為設計閘",
-  "status": "v3 — interface **通過**（Codex [179]）；目前僅授權 artifact phase",
+  "status": "v4 — controller compute 已鎖；目前授權範圍 B（P0 一次訓練）",
   "why_not_MF0": {
     "point": "**這不是 `MF-0` 的一個 world，是不同的研究問題**（Codex [177]）",
     "detail": "`π_content*` 需要 prefix 的 entity counts，而 `MF-0` 的 gate 只拿得到 `W=4` 個 raw event。把 count vector **外接**給 learner，等於**手工把 focus 判據交給它**，而那不在 `W=4` 內。",
@@ -132,13 +132,15 @@
     "**exact-stream digest 交集為空**：對 `(goal, 64 個 canonical (entity,attr) 的有序 stream)` 算 canonical digest，assert `P0 corpus` 與 `MF0-C train/eval` 的 digest 集合**交集為空**，並另報各集合大小。⚠️ 只讓 episode-id 名稱不同**不夠** —— 這條堵的是「不同 ID 但其實同一 episode」的漏口（不保證分布獨立，但堵住重疊）"
   ],
   "authorization": {
-    "granted": "**範圍 A（Codex [179]）**：corpus builder／manifest／assertions ＋ 生成 100,000-stream `P0` corpus ＋ 填 corpus fingerprint ＋ phase-0",
+    "granted": "**範圍 B（Codex [180]）**：補 manifest audit metadata（**不改 corpus**）＋ 實作並**跑一次** `P0` training，只取 final update 20,000 的 checkpoint",
     "forbidden_now": [
-      "寫或訓練 controller",
-      "訓練 `P0`",
-      "計算 `H`"
+      "在此階段計算 `H`",
+      "寫 controller training code",
+      "碰 `W1` primary 成績",
+      "看 train loss 後改 config／重跑／挑 checkpoint"
     ],
-    "next": "artifact phase 過後送簡短 report → 才授權**固定一次**的 `P0` final-step training → 記錄 final checkpoint fingerprint → 才能做**不訓練**的 H audit"
+    "report_after": "只回報 fingerprint、固定的 train loss、assertion／manifest audit",
+    "next": "H audit → 只有它過，才補完 sampling-law checklist → 才授權三 seed controller run"
   },
   "artifact_phase": {
     "status": "PASS（Codex [179] 範圍 A）",
@@ -168,7 +170,39 @@
     },
     "manifest": "experiments/mf0c_manifest.json"
   },
-  "not_yet_locked": [
-    "**controller 的訓練預算**（session 數／update 數／optimizer／batch）—— artifact 裡的 `train=2000 sessions` 是我為了產生 artifact 而**暫定**的，**必須在訓練授權前鎖定**，否則它會變成一個看到結果才調的自由度"
-  ]
+  "controller_compute_lock": {
+    "conditional": "**conditional on `H` pass**；現在即寫入 prereg（Codex [180]）",
+    "train_data": "controller **唯一可用**的是 `W1|train` 的 **2,000 frozen sessions**",
+    "W0_train": "**不進任何 optimizer**；訓練完的**同一 policy** 另在 `W0|eval` 作 negative-transfer／leakage check",
+    "primary_reading": "仍是 **`W1` eval**",
+    "seeds": [
+      2026081312,
+      2026081313,
+      2026081314
+    ],
+    "budget": "每 seed **20,000 updates × batch 32 = 640,000** sampled session rollouts",
+    "index_schedule": "以 seed `2026081311` 從 `[0,1999]` **uniform-with-replacement** 產生並存 hash，**三個 seed 共用** —— 不得把 data redraw 混進 seed",
+    "optimizer": "AdamW(lr=3e-4, betas=(0.9,0.999), **weight_decay=0**)",
+    "clip": "global-grad-norm **1.0**",
+    "forbidden": [
+      "LR schedule",
+      "entropy bonus",
+      "reward／advantage normalization"
+    ],
+    "baseline": "僅**既鎖的 fixed leave-one-out baseline**",
+    "checkpoint": "**final update 是唯一 checkpoint**",
+    "claim_limit": "**不宣稱 20k 是最佳**，只是一次固定 compute budget。FAIL **只封存此 `MF0-C` 配方**，**不得**加步數／epoch／batch 再試"
+  },
+  "remaining_interface_blocker": {
+    "what": "原本的「fixed-temperature weighted reservoir」目前**只是名稱**，必須寫成**可執行的單一 sampling law**",
+    "must_specify": [
+      "`τ` 的數值",
+      "arrival 時採樣／eviction 的**機率與 log-prob**",
+      "LOO baseline 的 **exact formula**",
+      "action-RNG 的 seed rule",
+      "GRU／affine 的**初始化規則**"
+    ],
+    "when": "**controller 訓練前**唯一剩餘的 interface blocker；**不得**等 `H` 或看 `P0` 之後才選",
+    "note": "補寫這一項**不會**重開已鎖的 compute budget"
+  }
 }
