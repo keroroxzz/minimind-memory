@@ -204,5 +204,17 @@
     ],
     "when": "**controller 訓練前**唯一剩餘的 interface blocker；**不得**等 `H` 或看 `P0` 之後才選",
     "note": "補寫這一項**不會**重開已鎖的 compute budget"
+  },
+  "sampling_law": {
+    "note": "Codex [181]：**現在起草，不得等 `H`** —— 等 `H` 揭露 headroom 之後再選 `τ`／eviction law，那仍是可調入口",
+    "priority": "`a_t = b + w_u^T u_t + w_h^T h_t`（controller 的單一 affine head）",
+    "law": "**每個 arrival 一個 categorical action**。設當前 slot 集合 `S`（`|S| <= B`）：\n  · `|S| < B` → **確定性收入**，無隨機性、log-prob = 0\n  · `|S| = B` → 令候選 `C = S ∪ {new}`（`|C| = B+1`），**恰驅逐一個** `j ∈ C`，機率 `p(j) = softmax(-a/τ)[j]`\n  · 驅逐 `j = new` **等價於拒收** —— 因此**只會 evict 過去的 item 或拒收新的**，永遠維持恰 `B` 個 slot",
+    "log_prob": "`log p(j) = -a_j/τ - logsumexp(-a_C/τ)`（**閉式**，可直接做 policy gradient）",
+    "tau": "**τ = 1.0**（固定，不隨訓練變化，不做 sweep）",
+    "eval_policy": "評估時改為**確定性** online top-B：以同一 `a_t` 取最大者保留、最小者驅逐；同分以事前固定的 canonical-key hash 打破",
+    "init": "`GRUCell` 用 PyTorch 預設初始化（受 seed 控制）；**affine head 的 `w_u`、`w_h`、`b` 全部零初始化** → 初始 `a_t ≡ 0` → **policy 起點恰為均勻隨機驅逐**，是一個中性起點",
+    "action_rng": "每個 rollout 的動作亂數由 `Generator(seed = hash((controller_seed, update_idx, rollout_idx)) mod 2**31)` 決定；**與資料 index schedule 的 RNG 分離**",
+    "loo_baseline": "`R_k` 為第 `k` 個 rollout 的 future-query utility。**同一 session 內** `M` 個 rollout 的 leave-one-out：`b_k = (1/(M-1)) * Σ_{k'≠k} R_{k'}`；梯度為 `Σ_k (R_k - b_k) * Σ_t log p(action_t^k)`。**無 advantage normalization、無 entropy bonus**",
+    "batch_grouping_PROPOSED": "⚠️ **這是我的提案，非既鎖規格**：batch 32 rollouts 拆成 **8 個 session × 每 session 4 個 rollout**（`M=4`）。理由：LOO baseline 必須在**同一 session 內**取，跨 session 取平均會把 session 難度差異當成 advantage。**請裁定 `M` 與分組方式**"
   }
 }

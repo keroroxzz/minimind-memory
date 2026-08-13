@@ -25,3 +25,4 @@ report/fig/*.png
 experiments/mf0c_p0_corpus.npy
 experiments/mf0c_p0.pth
 experiments/mf0c_artifact.json
+experiments/mf0c_eval_replicas.json

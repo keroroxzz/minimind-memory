@@ -99,12 +99,12 @@ def build_mf0c(seed, n_sess, world):
     return out, digs
 
 
-def sha_file(p):
+def sha_file(p, full=False):
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for b in iter(lambda: f.read(1 << 20), b""):
             h.update(b)
-    return h.hexdigest()[:16]
+    return h.hexdigest() if full else h.hexdigest()[:16]
 
 
 def main():

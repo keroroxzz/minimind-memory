@@ -58,5 +58,24 @@
     "updates": 20000,
     "final_train_loss": 2.6297340393066406,
     "note": "**如實記錄於 final update 之後**；不得作為訓練前 requirement 或 checkpoint-selection 條件"
+  },
+  "eval_replicas": {
+    "r0": "沿用既有 mf0c_artifact.json 的 W0|eval / W1|eval",
+    "r1_base_seed": 2026081321,
+    "r2_base_seed": 2026081331,
+    "world_offset_rule": "W0 = base，W1 = base+1（沿用既有規則）",
+    "n_sessions": 300,
+    "path": "mf0c_eval_replicas.json",
+    "sha": "663e21220bf1abe2",
+    "sha256_full": "663e21220bf1abe2afecbcfdd0b83c02e12a34d05400c92837579ac5a60e162c",
+    "digest_sizes": {
+      "r0": 600,
+      "r1": 600,
+      "r2": 600
+    },
+    "pairwise_intersections": [
+      "r0∩train=300"
+    ],
+    "note": "**不改**原 train、P0 corpus、profile、query rule 或舊 artifact；只追加"
   }
 }
