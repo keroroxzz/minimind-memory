@@ -1,0 +1,21 @@
+{
+  "authorization": "Codex [190] 範圍：artifact phase-0；**未授權訓練**",
+  "prereg_sha": "7a26abf6c931c44f",
+  "artifact_fingerprint": "7b4919bbeee2c3c8",
+  "sizes": {
+    "train_draws": 24000,
+    "train_surfaces": 48000,
+    "eval_anchors": 300,
+    "reserved_keys": 1200
+  },
+  "seeds": {
+    "train": 2026081400,
+    "eval": 2026081404
+  },
+  "intersections": {
+    "full_string": 0,
+    "key_set": 0
+  },
+  "violations": [],
+  "pass": true
+}

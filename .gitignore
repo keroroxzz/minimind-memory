@@ -27,3 +27,4 @@ experiments/mf0c_p0.pth
 experiments/mf0c_artifact.json
 experiments/mf0c_eval_replicas.json
 experiments/mf0c_artifact_v2.json
+experiments/rwa0_artifact.json
