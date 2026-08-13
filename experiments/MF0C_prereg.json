@@ -2,7 +2,7 @@
   "experiment": "MF0-C",
   "title": "causal formation with a bounded learned controller",
   "spec_source": "Codex [173]/[174]/[176]/[177]；`MF0_DESIGN.md` 為設計閘",
-  "status": "v4 — controller compute 已鎖；目前授權範圍 B（P0 一次訓練）",
+  "status": "v5 — v2 artifact 修復中；sampling law 已補；`H` 仍不得跑",
   "why_not_MF0": {
     "point": "**這不是 `MF-0` 的一個 world，是不同的研究問題**（Codex [177]）",
     "detail": "`π_content*` 需要 prefix 的 entity counts，而 `MF-0` 的 gate 只拿得到 `W=4` 個 raw event。把 count vector **外接**給 learner，等於**手工把 focus 判據交給它**，而那不在 `W=4` 內。",
@@ -181,7 +181,7 @@
       2026081314
     ],
     "budget": "每 seed **20,000 updates × batch 32 = 640,000** sampled session rollouts",
-    "index_schedule": "以 seed `2026081311` 從 `[0,1999]` **uniform-with-replacement** 產生並存 hash，**三個 seed 共用** —— 不得把 data redraw 混進 seed",
+    "index_schedule": "以 **v2 namespace／seed `2026081391`** 從 `[0,1999]` uniform-with-replacement 產生並存 hash，**三個 seed 共用**。⚠️ 改用 `…1391` 是為了避免再以 `…1311` 造成審計混淆",
     "optimizer": "AdamW(lr=3e-4, betas=(0.9,0.999), **weight_decay=0**)",
     "clip": "global-grad-norm **1.0**",
     "forbidden": [
@@ -213,8 +213,22 @@
     "tau": "**τ = 1.0**（固定，不隨訓練變化，不做 sweep）",
     "eval_policy": "評估時改為**確定性** online top-B：以同一 `a_t` 取最大者保留、最小者驅逐；同分以事前固定的 canonical-key hash 打破",
     "init": "`GRUCell` 用 PyTorch 預設初始化（受 seed 控制）；**affine head 的 `w_u`、`w_h`、`b` 全部零初始化** → 初始 `a_t ≡ 0` → **policy 起點恰為均勻隨機驅逐**，是一個中性起點",
-    "action_rng": "每個 rollout 的動作亂數由 `Generator(seed = hash((controller_seed, update_idx, rollout_idx)) mod 2**31)` 決定；**與資料 index schedule 的 RNG 分離**",
+    "action_rng": "**不得**用 Python `hash()`（跨 process 不穩定）。鎖為 `BLAKE2b(\"MF0C-action-v1\" || controller_seed || update || group || replica)` 截斷成 uint64，再**獨立**初始化 Generator",
     "loo_baseline": "`R_k` 為第 `k` 個 rollout 的 future-query utility。**同一 session 內** `M` 個 rollout 的 leave-one-out：`b_k = (1/(M-1)) * Σ_{k'≠k} R_{k'}`；梯度為 `Σ_k (R_k - b_k) * Σ_t log p(action_t^k)`。**無 advantage normalization、無 entropy bonus**",
-    "batch_grouping_PROPOSED": "⚠️ **這是我的提案，非既鎖規格**：batch 32 rollouts 拆成 **8 個 session × 每 session 4 個 rollout**（`M=4`）。理由：LOO baseline 必須在**同一 session 內**取，跨 session 取平均會把 session 難度差異當成 advantage。**請裁定 `M` 與分組方式**"
+    "arrival_score": "⚠️ resident 的 `a_i` 是**到達時算出、隨 slot 保存**的 arrival score。**後續的 eviction 與 eval top-B 一律不得用當前 `h` 重算舊 record** —— 重算會讓已離開視窗的事件被新狀態重新評分，那不是線上 admission policy",
+    "tie_break": "平手一律以**已鎖的 canonical-key hash** 打破",
+    "stop_gradient": "REINFORCE 的 `R` 與 LOO 的 `b` **均 stop-gradient**",
+    "batch_grouping": "**已鎖（Codex [182]）**：每 update 恰 `G=8` 個由**共用 index schedule** 抽出的 session，每個 session `M=4` 條**獨立** action rollout。故每 seed 為 `20,000 × 8 = 160,000` session draws、`640,000` rollout trajectories。**不得**跨 session 算 baseline、**不得**改 `M`／分組",
+    "loss": "`-mean_{g,k} [ stopgrad(R_{gk} - b_{gk}) * Σ_t log p(J_{gkt}) ]`"
+  },
+  "artifact_v2": {
+    "why": "舊 `mf0c_artifact.json` 存在 **train→eval event-stream leakage**（`W1|train ∩ r0|W0 = 300`），故對 **H audit、W0 leakage check、所有 controller 結論皆 INVALID**",
+    "old_files": "**位元不動**，另存 append-only invalidation report",
+    "v2": "重生**兩個 train world**（base `2026081340`：`W0=…40`、`W1=…41`）；`P0`、`r0/r1/r2` eval **都保持原檔**",
+    "reason_keep_r0": "這既不混用汙染的 train，也不因事後挑 eval 而少一份 replica",
+    "scope": "**所有 `H`／controller 僅可讀 v2**",
+    "assertion": "必須實際 assert 並記錄**完整交集矩陣**：`P0`、`W0/W1 train`、`r0/r1/r2` 各自的 `W0/W1` —— **任兩個跨 partition 集合皆為 0**（`W0 train` 雖不進 optimizer，**也要查**）",
+    "namespace_note": "這裡的『全域互斥』指 **event-stream generator artifacts**；controller-init／index／action RNG 是**另列 namespace**，數字碰巧相同**不構成**資料獨立性證據",
+    "P0_unaffected": "`P0` corpus／checkpoint **不受影響**，**不得**重跑或更改"
   }
 }

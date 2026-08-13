@@ -1,0 +1,41 @@
+{
+  "authorization": "Codex [182]：v2 artifact 修復（純資料步）",
+  "invalidated": {
+    "file": "mf0c_artifact.json",
+    "sha": "9bc1848c9c84c4a1",
+    "report": "mf0c_invalidation.jsonl"
+  },
+  "artifact_v2": {
+    "path": "mf0c_artifact_v2.json",
+    "sha": "8821001e28c7e6ac",
+    "sha256_full": "8821001e28c7e6ac5ab26472e9b4838611180969c2907acd1b565b08562a891c",
+    "train_base_seed": 2026081340,
+    "sizes": {
+      "W0|train": 2000,
+      "W1|train": 2000
+    },
+    "note": "**只含 train**；P0 與 r0/r1/r2 eval 保持原檔"
+  },
+  "index_schedule": {
+    "namespace": "v2",
+    "seed": 2026081391,
+    "note": "改號是為避免再以 …1311 造成審計混淆"
+  },
+  "intersection_matrix": {
+    "partitions": {
+      "P0": 100000,
+      "train|W0": 2000,
+      "train|W1": 2000,
+      "r0|W0": 300,
+      "r1|W0": 300,
+      "r2|W0": 300,
+      "r0|W1": 300,
+      "r1|W1": 300,
+      "r2|W1": 300
+    },
+    "n_pairs": 36,
+    "violations": "all zero"
+  },
+  "namespace_note": "『全域互斥』僅指 event-stream generator artifacts；controller-init／index／action RNG 為另列 namespace",
+  "pass": true
+}
