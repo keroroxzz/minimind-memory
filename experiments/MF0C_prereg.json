@@ -2,7 +2,7 @@
   "experiment": "MF0-C",
   "title": "causal formation with a bounded learned controller",
   "spec_source": "Codex [173]/[174]/[176]/[177]；`MF0_DESIGN.md` 為設計閘",
-  "status": "v5 — v2 artifact 修復中；sampling law 已補；`H` 仍不得跑",
+  "status": "v6 — H gate PASS；**已授權**一次三-seed controller campaign",
   "why_not_MF0": {
     "point": "**這不是 `MF-0` 的一個 world，是不同的研究問題**（Codex [177]）",
     "detail": "`π_content*` 需要 prefix 的 entity counts，而 `MF-0` 的 gate 只拿得到 `W=4` 個 raw event。把 count vector **外接**給 learner，等於**手工把 focus 判據交給它**，而那不在 `W=4` 內。",
@@ -74,9 +74,8 @@
   "primary_gate": {
     "per_seed": true,
     "criteria": [
-      "`U(learned) − U(goal_only) >= max(5pp, 0.5H)`，paired bootstrap 95% CI 下限 `> 0`",
-      "`U(learned) − U(focus_only) >= max(5pp, 0.5H)`，paired bootstrap 95% CI 下限 `> 0`",
-      "對 `frozen predictive-surprisal` 的 paired CI 下限 `> 0`"
+      "`U(learned) − U(goal_only) >= T_r`，paired bootstrap 95% CI 下限 `> 0`",
+      "`U(learned) − U(focus_only) >= T_r`，paired bootstrap 95% CI 下限 `> 0`"
     ],
     "no_pooling": "三個 seed **各自**都要過；**不得** pooled",
     "also_report": [
@@ -84,7 +83,16 @@
       "dropped-record correct abstain",
       "真正 absent-key 的 0 delivery",
       "`h=0` state-ablation 的落差"
-    ]
+    ],
+    "removed_criterion": "原第三條「須勝 `frozen predictive-surprisal`」**已於 Codex [181] 於 `H` 之前刪除**，僅作 descriptive report。此處是**更正殘留舊文字**，**不是**看到 `P0` 輸掉才放寬 —— 刪除時點早於 H audit",
+    "granularity": "**每個 controller seed × 每個 `W1` replica** 各自判；**不得** pooling（900 episode 合併補過亦不可）",
+    "T_r": {
+      "formula": "`T_r = max(5pp, 0.5 * min(H_g,r , H_f,r))`（用未四捨五入值）",
+      "r0": "15.8958pp",
+      "r1": "15.0729pp",
+      "r2": "16.0000pp"
+    },
+    "on_any_fail": "任一 seed／replica／reference FAIL 即 **`MF0-C FAIL`**"
   },
   "frozen_predictive_surprisal": {
     "name": "frozen **canonical** predictive-surprisal",
@@ -132,15 +140,14 @@
     "**exact-stream digest 交集為空**：對 `(goal, 64 個 canonical (entity,attr) 的有序 stream)` 算 canonical digest，assert `P0 corpus` 與 `MF0-C train/eval` 的 digest 集合**交集為空**，並另報各集合大小。⚠️ 只讓 episode-id 名稱不同**不夠** —— 這條堵的是「不同 ID 但其實同一 episode」的漏口（不保證分布獨立，但堵住重疊）"
   ],
   "authorization": {
-    "granted": "**範圍 B（Codex [180]）**：補 manifest audit metadata（**不改 corpus**）＋ 實作並**跑一次** `P0` training，只取 final update 20,000 的 checkpoint",
-    "forbidden_now": [
-      "在此階段計算 `H`",
-      "寫 controller training code",
-      "碰 `W1` primary 成績",
-      "看 train loss 後改 config／重跑／挑 checkpoint"
+    "granted": "**三-seed controller campaign（Codex [184]）**：以 v2 `W1|train` 為唯一資料，一次跑完 `2026081312/13/14`，各 final update 20,000",
+    "forbidden": [
+      "先做縮短訓練看曲線",
+      "中途依 train/eval 調參",
+      "挑 checkpoint",
+      "增步數"
     ],
-    "report_after": "只回報 fingerprint、固定的 train loss、assertion／manifest audit",
-    "next": "H audit → 只有它過，才補完 sampling-law checklist → 才授權三 seed controller run"
+    "W0_report": "每個 final policy 另跑同三份 `W0` eval 作 negative-transfer report；**W0 不要求贏**，但任何穩定正向優勢**先按 leakage／implementation failure 查核**"
   },
   "artifact_phase": {
     "status": "PASS（Codex [179] 範圍 A）",
@@ -230,5 +237,8 @@
     "assertion": "必須實際 assert 並記錄**完整交集矩陣**：`P0`、`W0/W1 train`、`r0/r1/r2` 各自的 `W0/W1` —— **任兩個跨 partition 集合皆為 0**（`W0 train` 雖不進 optimizer，**也要查**）",
     "namespace_note": "這裡的『全域互斥』指 **event-stream generator artifacts**；controller-init／index／action RNG 是**另列 namespace**，數字碰巧相同**不構成**資料獨立性證據",
     "P0_unaffected": "`P0` corpus／checkpoint **不受影響**，**不得**重跑或更改"
+  },
+  "descriptive_report": {
+    "P0": "在 `W1` **可偵測地劣於 random**（r1／r2 的 CI 上界 `< 0`）；在 `W0` 無系統優勢。它反駁的是「near-null NLL ⇒ random ranking」這個**推論**，**不**評論 Titans 或一般 predictive surprise"
   }
 }
