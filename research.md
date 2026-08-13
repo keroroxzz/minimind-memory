@@ -5199,12 +5199,13 @@ rank 是雙射，**所以不影響 `(a)` 的 FAIL**；
 
 ### 依 prereg 封存
 
-歸因記為 **`RWA-0` (a)-failure：held-out renderer composition 下的 read-write agreement**。
+歸因記為 **`RWA-0` (a)-failure：固定 joint-OOD（renderer composition ＋ `(entity,attribute)` pair）**。
 **不得**改 hard-negative 定義、split、門檻或 program 集合去救。
 
-**可主張**：在此 closed-world、24 個 alias、監督式 direct-CE、
-且**訓練集被完美擬合**的條件下，
-**write 與 read 兩側對未見 renderer composition 不產生同一個 typed key**。
+**可主張**：**僅限**上方「唯一允許的總結句」那一段。
+⚠️ 原本此處另有一段以「訓練集被完美擬合」為前提的敘述，
+與前段的收窄①（那只是**最後一個 mini-batch** 的 loss）**直接衝突**，**整段已刪**。
+**最後 batch 的 loss 不得再作為全 train 擬合的證據。**
 
 **不可主張**：不得說 read-write agreement 不可能；
 不得說更多 program／更大模型不行（**未做也不准 sweep**）；
@@ -5256,7 +5257,7 @@ rank 是雙射，**所以不影響 `(a)` 的 FAIL**；
 |---|---|---|
 | **query-side selector calibration**（§4.67 `LKE-2R`） | `failed-in-scope` | 抽取 100%，但 confidence 的**尾巴**與可解 query 完全重疊；無 threshold 能同時維持 utility 與 zero-accept |
 | **同實體多屬性 routing**（§4.62／§4.63） | `failed-in-scope` | 訓練分布一出現同名，已量到的 address routing 即被 3-bit attr 策略取代；1:1 強迫也學不回 |
-| **memory formation**（`MF0-C`＋`CI-1`，§4.72／§4.73） | `failed-in-scope` | 學到可見的 goal 因子，未學到需跨事件推論的 focus 因子；顯式給 conjunction 亦無改變 |
+| **memory formation**（`MF0-C`＋`CI-1`，§4.72／§4.73） | `failed-in-scope` | 學到可見的 goal 因子，未學到需跨事件推論的 focus 因子；**顯式給 conjunction 未帶來對 focus 因子的 primary utility recovery**（`CI-1` 確有描述性的 state-dependence 改變） |
 | **read-write joint agreement**（`RWA-0`，§4.74） | `failed-in-scope` | 固定 joint-OOD probe 上**無任何 target** 達成 `K_w=K_r=K*` |
 
 **四者皆為 in-scope failure**：**不得**寫成「不可能」，
@@ -5280,11 +5281,12 @@ rank 是雙射，**所以不影響 `(a)` 的 FAIL**；
 |---|---|
 | 值不出現在文字（文本丟棄、latent inject、無 placeholder） | **機制可行但無優勢**：與等位置文字同分，且不省 context（B） |
 | 同一實體多屬性 | **`failed-in-scope`**（C）；`NG-O2` 只是把多候選 routing **移出 Core**，未解決 |
-| 任意順序多筆寫入 ＋ 跨時間正確推理 | **formation `failed-in-scope`**；且 `RWA-0` 顯示即使 key 已 typed，**寫讀兩側能否對上仍未成立** |
+| 任意順序多筆寫入 ＋ 跨時間正確推理 | **formation `failed-in-scope`**；且**在 `RWA-0` 的 typed-code proxy／固定 joint-OOD 下，joint write–read agreement 未成立** |
 | 自然 query | **`untested`** —— 所有實驗均為受控文法 |
 
-> **一句話**：**可判定的那一半（Store）站得住，需要學的那一半（Interface）目前全部倒下。**
-> 而 Store 那一半嚴格說是**工程確認**，不是研究發現。
+> **一句話**：**可判定的 Store contract 在其測試範圍內站得住；
+> 在本輪已測、需要從 task loss 學出的 Interface claims 沒有一項 PASS。**
+> Store 那一半嚴格說仍是**工程確認**，不是研究發現。
 
 ### F. 兩條事前寫下的「整條線是錯的」證據，現況
 
