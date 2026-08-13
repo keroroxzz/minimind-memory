@@ -5077,6 +5077,64 @@ priority head 是 `[u_t, h_t]` 的**仿射**函數，而
 
 ---
 
+## 4.73 `CI-1` 機制診斷：**假說未獲支持**；但 `h=0` 對照把故事切成兩半
+
+Codex [185] 授權**恰一次**、另立且**不 reopen `MF0-C`** 的診斷。
+兩臂唯一差異是給既有 `u=(goal, e, attr)` 一個**冗餘的 derived bit**
+（由既有輸入**完全決定**、維度皆 **32**、邊際皆 **1/3**）：
+
+    `+` : q = 1[cat(attr) == goal]              ← 真的 conjunction
+    `-` : q = 1[cat(attr) == (goal+1) mod 3]    ← 錯位的 decoy
+
+其餘（`h ∈ FP16^16`、sampling law、v2 資料、三 seed、`20k×32`、final checkpoint、
+全部 gate）**不變**。這是**顯式提供 conjunction 的 inductive-bias intervention，
+不是資訊增加** —— **永遠不可**稱 natural／emergent formation。
+
+### 主判定：**未獲支持**
+
+| 事前條件 | 結果 |
+|---|---|
+| 1. `+` 臂 18 格全過 | **False** |
+| 2. `-` 臂至少一格 FAIL | True |
+| 3. 每格 `U(+) − U(−) >= T_r` | **False** |
+| 4. `+` 臂的 `h=0` 仍不過 focus gate | **False** |
+
+**兩臂在效用上沒有差別**：`U(+) − U(−)` 落在 **−2.8% ～ +0.6%**，
+而門檻是 15–16pp。兩臂都 ≈ `goal-only`（35.8–39.2%）。
+**給真的 conjunction 與給錯位的 decoy，結果相同。**
+
+### 但 `h=0` 對照（**描述性，非事前登記的檢定**）把故事切成兩半
+
+| 臂 | `h0 − full` |
+|---|---|
+| **`+`**（真 conjunction） | **−2.9% ～ +1.8%** —— recurrent state **幾乎無貢獻** |
+| **`-`**（decoy） | **−1.4% ～ −13.5%** —— state **有貢獻** |
+| （`MF0-C`，無 bit） | 約 **−15pp** |
+
+> **假說的前提獲得支持**：把 goal×attr 的 conjunction **明確交出去**之後，
+> 那 32 bytes 就**不再被需要**；不交，state 就被拿去算它。
+>
+> **但假說預測的後果被否證**：被釋放的 state **沒有**轉去學 focus。
+> `+` 臂的效用與 `-` 臂、與原始 `MF0-C` **完全一樣**。
+
+**所以瓶頸不是「容量被佔用」。** 把容量還給它，它也沒有去學那個需要跨事件累積的因子。
+
+⚠️ 這個 `h=0` 對照**不是**事前登記的檢定，**只可作描述**；
+**不得**用它翻轉主判定，也**不得**據此再開新配方（Codex [185]：無論結果均封存 formation 這條配方）。
+
+### 依 prereg 封存
+
+`MF0-C` 的 formation 配方 **seal**。**不得**加步數／feature／width／變體。
+
+**可主張**：在此受控 world、32-byte state、既鎖 budget 下，
+**顯式提供 conjunction 不會讓 controller 學到需跨事件推論的因子**；
+且 state 之前確實被用於該 per-event 非線性（描述性證據）。
+
+**不可主張**：不得說 formation 不可學；不得說 32 bytes 不夠（未做也不准 sweep）；
+不得評論 Titans；不得外推其他 world／budget／架構。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |
