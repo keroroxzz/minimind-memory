@@ -194,11 +194,15 @@ and query view \(u\), the induced transcript
 \(d_{t+1}=\pi(u,h_t)\), until it halts or has made \(r\) reads.
 
 For a state scope \(\mathcal X\subseteq\mathcal S\), an admissible policy
-is \emph{oblivious on \(\mathcal X\)} if, for every \(u\in\mathcal T\),
-there is one finite nonrepeating referent sequence such that the referent
-sequence of \(\operatorname{tr}_{\pi}(S,u)\) is that sequence for every
-\(S\in\mathcal X\).  Thus both the next referent and the decision to halt
-are independent of retrieved values on the declared state scope.
+is \emph{address-oblivious on \(\mathcal X\)} if, for every
+\(u\in\mathcal T\), there is one finite nonrepeating referent sequence such
+that the referent sequence of \(\operatorname{tr}_{\pi}(S,u)\) is a prefix
+of it for every \(S\in\mathcal X\).  Such a policy may use retrieved values
+to halt early, but not to choose the next referent conditional on continuing.
+It is \emph{oblivious on \(\mathcal X\)} if that prefix has the same length
+for every \(S\in\mathcal X\).  Thus an oblivious policy makes neither its
+next-referent nor its halting decision depend on retrieved values on the
+declared state scope.
 
 An executor is \emph{no-bypass relative to \((\tau,\pi)\)} if its output has
 the form
@@ -317,21 +321,20 @@ reads above also have the physical realization of
 Corollary~\ref{cor:composition}.
 \end{proof}
 
-\begin{corollary}[Unbounded adaptive--oblivious point-read gap]
+\begin{corollary}[Unbounded address-adaptivity point-read gap]
   \label{cor:gap}
 For every integer \(m\geq2\), the instance of
 Proposition~\ref{prop:twohop} with \(\lvert\mathcal R\rvert=m\) has an
 exact adaptive two-read executor, while every exact no-bypass executor whose
-policy is oblivious on \(\mathcal S_{\Wr_0}\) relative to the same \(\tau\)
-uses at least \(m+1\)
-semantic point reads on query \(q_p\).
+policy is address-oblivious on \(\mathcal S_{\Wr_0}\) relative to the same
+\(\tau\) has worst-case cost at least \(m+1\) semantic point reads on
+query \(q_p\).  This bound is tight: an oblivious executor that reads every
+referent in \(\Dom_0\) is exact and has cost \(m+1\) on \(q_p\).
 \end{corollary}
 
 \begin{proof}
-Fix an oblivious policy and query \(q_p\).  Since both its referent sequence
-and its halting time depend only on \(\tau(q_p)=p\), it has a fixed
-nonrepeating read sequence, with underlying set \(D\subseteq\Dom_0\).
-First suppose
+Fix an address-oblivious policy and query \(q_p\), and let \(D\) be the
+underlying set of its fixed nonrepeating referent sequence.  First suppose
 \(p\notin D\).  Choose distinct \(t_0,t_1\in\mathcal R\) and compare
 the legal histories
 \[
@@ -343,13 +346,20 @@ Every read in \(D\) has the same value in the two induced states, while
 \(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\).  Thus exactness requires
 \(p\in D\).
 
-If the policy uses at most \(m\) reads, then
-\(D\setminus\{p\}\) omits some \(t\in\mathcal R\).  The histories
-\(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), have the same complete read
-transcript: the read at \(p\) returns \(t\), and every other referent in
-\(D\) is absent.  Their answers are different, so condition (L) fails.
-Theorem~\ref{thm:locality} rules out such an executor.  The adaptive
-two-read upper bound is Proposition~\ref{prop:twohop}.
+Likewise, every \(t\in\mathcal R\) must occur in \(D\): if it did not,
+the histories \(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), would induce the same
+transcript until the policy halts, yet have different answers.  Hence
+\(D=\Dom_0\).  Let \(d_\star\) be the last referent in the fixed sequence.
+If \(d_\star=t\in\mathcal R\), then on the two histories
+\(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), an exact executor cannot halt before
+reading \(t\), because their preceding transcripts are identical.  If
+\(d_\star=p\), use the two histories \(H_0,H_1\) above instead: their
+preceding transcripts are again identical and their answers differ.  Thus
+the policy makes all \(m+1\) reads in the worst case.  Theorem~\ref{thm:locality}
+rules out a smaller exact executor.  Conversely, an oblivious policy that
+reads every referent in \(\Dom_0\) and an executor that selects the value
+named by the read at \(p\) are exact.  The adaptive two-read upper bound is
+Proposition~\ref{prop:twohop}.
 \end{proof}
 
 \begin{remark}[Where the content is]
