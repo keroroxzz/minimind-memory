@@ -1,20 +1,23 @@
 % !TeX program = pdflatex
-% Reasoning/memory separation — a short theory note.
-% 分類紀律（Codex [197]/[198]）：每個中心句必須是
-%   Definition | Proposition/Theorem + proof | Imported result + exact assumptions | Conjecture
+% Reasoning/memory separation --- a short theory note.
+% Classification discipline: every central claim is one of
+% Definition | Proposition/Theorem + proof | Imported result + assumptions |
+% Conjecture.  Prose motivates; it does not establish feasibility or
+% impossibility.
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
+\usepackage[numbers]{natbib}
 \usepackage{hyperref}
 
 \theoremstyle{definition}
 \newtheorem{definition}{Definition}
-\newtheorem{assumption}{Assumption}
 \newtheorem{conjecture}{Conjecture}
-\theoremstyle{remark}
+\newtheorem{imported}{Imported result}
 \newtheorem{remark}{Remark}
 \theoremstyle{plain}
 \newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
 \newtheorem{theorem}{Theorem}
 
 \newcommand{\Dom}{\mathcal{D}}
@@ -23,296 +26,320 @@
 \newcommand{\Ky}{\mathcal{K}}
 \newcommand{\Va}{\mathcal{V}}
 \newcommand{\bt}{\bot}
-\newcommand{\cw}{C_w}
-\newcommand{\cr}{C_r}
+\newcommand{\semw}{\sigma_w}
+\newcommand{\semq}{\sigma_q}
+\newcommand{\CCA}{\mathsf{CCA}}
+\newcommand{\UE}{\mathsf{UE}}
 
-\title{Reasoning/Memory Separation in Language Models:\\
-an address-factorization theorem for a restricted interface}
-\author{(draft)}
+\title{Reasoning/Memory Separation in Language Models:\
+Address Factorization, Not a Claim of Natural-Language Retrieval}
+\author{Draft theory note}
 \date{}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-We give a minimal formal setting in which ``can knowledge be separated from a
-language model into an external, addressable memory?'' becomes a precise
-question about the \emph{addressing interface} rather than about the model.
-We prove (i) an elementary state-independence lemma, and (ii) an
-address-factorization theorem: for one-shot key-addressed systems over a
-\emph{fixed public schema}, with no store-bypassing channel and zero error
-required over all finite semantic states, universal completeness and
-non-mis-delivery hold \emph{iff} the interface realises the schema's naming
-map on certified inputs. The theorem is a representation result for that
-restricted class. It does \emph{not} claim that the schema, the value codec,
-or natural-language addressing can be learned, and it makes no claim about
-approximate correctness.
+We study a narrow question behind the phrase ``separate reasoning from
+memory'': when can a component that only performs exact key--value operations
+be correct for \emph{every} legal runtime state?  We prove that in a one-shot,
+key-addressed model, universal zero-error retrieval is equivalent to the
+existence of a common injective address factorization of write and query
+interfaces.  We also prove an observation-indistinguishability statement for
+open-world abstention.  These are representation results relative to a fixed
+task semantics; they neither show that natural-language canonicalization can
+be learned nor show that it cannot.
 \end{abstract}
 
 \section{Motivation (prose)}
 
-A recurring engineering picture is: a small model that reasons, plus an
-external store that remembers. The picture is normally defended empirically.
-Our question is prior: \emph{under what conditions can such a system be
-correct at all?} We fix a vocabulary, prove the one step that is genuinely
-forced, and reduce the remainder to a single named property of the interface.
+A recurring engineering picture is a language model that \emph{reasons} and a
+separate runtime store that \emph{remembers}.  Retrieval systems demonstrate
+useful external memory empirically, but this does not by itself state when
+such a composition is correct.  The narrow issue considered here is upstream
+of neural architecture: write and read inputs must refer to the same runtime
+location, and distinct live referents must not collide.
 
-\section{Task specification and semantics}
+The note deliberately treats the language model as a possible implementation
+of an interface, not as an axiom in a theorem.  Value formation, latent/KV
+delivery, retention policy, and a reasoning executor are separate problems.
+The present results therefore establish a necessary-and-sufficient condition
+only for a restricted key-addressed retrieval contract.
 
-\begin{definition}[Task specification]\label{def:task}
-A \emph{task} fixes, publicly and in advance: a referent domain $\Dom$, write
-utterances $\Wr$, query utterances $\Qu$, a key space $\Ky$, a value space $\Va$, partial semantics
-$s_w:\Wr\rightharpoonup\Dom$, $s_q:\Qu\rightharpoonup\Dom$, and an
-\emph{injective public naming map} $\iota:\Dom\hookrightarrow\Ky$.
-\end{definition}
+\section{A minimal key-addressed setting}
 
-\noindent$\iota$ is a schema (an oracle specification), \emph{not} a learned
-canonicaliser. What is at issue below is whether an interface \emph{realises}
-$\iota$.
-
-\begin{definition}[Semantic state and legal store]\label{def:state}
-A \emph{semantic state} is a finite partial map $S:\Dom\rightharpoonup\Va$.
-Its \emph{legal store} is the partial map $M_S:\Ky\rightharpoonup\Va$ with
-$M_S(\iota(d))=S(d)$ for $d\in\mathrm{dom}(S)$ and undefined elsewhere.
-Memory is manipulated only by the typed operations $\mathrm{put}(M,k,v)$ and
-$\mathrm{get}(M,k)\in\Va\cup\{\bt\}$, where $\mathrm{get}(M,k)=\bt$ exactly
-when $k\notin\mathrm{dom}(M)$.
-\end{definition}
-
-\begin{definition}[Task answer]\label{def:answer}
-For a semantic state $S$ and query $q$,
+\begin{definition}[Task and semantic state]\label{def:task}
+Fix finite or countable sets: a referent domain \(\Dom\), write utterances
+\(\Wr\), query utterances \(\Qu\), a key space \(\Ky\), and a value space
+\(\Va\) with \(\lvert\Va\rvert\geq 2\).  The task supplies partial semantic
+maps
 \[
-A(S,q)=\begin{cases} S(s_q(q)) & s_q(q)\in\mathrm{dom}(S),\\
-\bt & \text{otherwise.}\end{cases}
+  \semw:\Wr\rightharpoonup\Dom\times\Va,
+  \qquad
+  \semq:\Qu\rightharpoonup\Dom .
+\]
+Let \(\Wr_0\subseteq\operatorname{dom}\semw\) and
+\(\Qu_0\subseteq\operatorname{dom}\semq\) be the scope at issue.  Write
+\(\semw(w)=(d,v)\) when \(w\) asserts value \(v\) for referent \(d\), and
+write \(\semq(q)=d\) when \(q\) asks for \(d\).
+
+The covered referents are
+\[
+  \Dom_0=\pi_{\Dom}(\semw(\Wr_0))=\semq(\Qu_0).
+\]
+We assume \emph{bi-witnessed scope}: every \(d\in\Dom_0\) has at least one
+write witness in \(\Wr_0\) and one query witness in \(\Qu_0\).  A semantic
+state is a finite partial map \(S:\Dom_0\rightharpoonup\Va\), and the task
+answer is the externally specified function
+\[
+ A(S,q)=
+ \begin{cases}
+   S(\semq(q)), & \semq(q)\in\operatorname{dom}S,\\
+   \bt, & \text{otherwise.}
+ \end{cases}
 \]
 \end{definition}
 
-\noindent $A$ is given by the task semantics alone; it does not mention any
-interface. This is what keeps Lemma~\ref{lem:state} non-circular.
+\begin{definition}[One-shot key-addressed execution]\label{def:execution}
+An addressing interface is a pair of deterministic typed maps
+\[
+ C_w:\Wr\to\Ky\cup\{\bt\},\qquad
+ C_r:\Qu\to\Ky\cup\{\bt\}.
+\]
+A runtime store is a partial map \(M:\Ky\rightharpoonup\Va\), with exact
+\(\mathrm{get}(M,k)=\bt\) exactly when \(k\notin\operatorname{dom}M\).
+For \(k\in\Ky\), \(\mathrm{put}(M,k,v)\) creates a new entry if \(k\) is
+absent and otherwise returns \(\mathsf{conflict}\); it never silently
+overwrites a distinct value.
 
-\begin{definition}[Addressing interface]\label{def:interface}
-An \emph{addressing interface} is a pair of total maps
-$\cw:\Wr\to\Ky\cup\{\bt\}$ and $\cr:\Qu\to\Ky\cup\{\bt\}$.
+A legal history \(H=(w_1,\ldots,w_n)\) consists of utterances in \(\Wr_0\)
+whose referents are pairwise distinct.  It induces
+\(S_H(d_i)=v_i\) for \(\semw(w_i)=(d_i,v_i)\).  A one-shot execution writes
+each \(w_i\) at \(C_w(w_i)\), requiring a new entry, then answers \(q\) by
+\(\mathrm{get}(M_H,C_r(q))\) when \(C_r(q)\in\Ky\), and by \(\bt\) otherwise.
+There is no channel from the executor to \(M_H\) other than this single
+exact \(\mathrm{get}\).
 \end{definition}
 
-\begin{definition}[Certificate relation]\label{def:cert}
-The task additionally fixes externally given, decidable relations
-$\mathsf{cert}_w\subseteq\Wr\times\Ky$ and
-$\mathsf{cert}_r\subseteq\Qu\times\Ky$. An interface is \emph{certified} if
-$\cw(w)=k\neq\bt$ only when $\mathsf{cert}_w(w,k)$ holds, and likewise for
-$\cr$; when no certified key exists the interface outputs $\bt$.
+\begin{definition}[Universal exactness]\label{def:ue}
+The interface has \emph{universal exactness}, denoted \(\UE\), on
+\((\Wr_0,\Qu_0)\) if, for every legal history \(H\), every write is admitted
+as a new entry and every \(q\in\Qu_0\) is answered exactly as \(A(S_H,q)\).
+The quantifier ranges over all finite legal semantic states and hence over
+all assignments of values in \(\Va\); it is not an average-case claim.
 \end{definition}
 
-\begin{assumption}[Certificate soundness]\label{as:sound}
-$\mathsf{cert}_w(w,k)\Rightarrow k=\iota(s_w(w))$, and
-$\mathsf{cert}_r(q,k)\Rightarrow k=\iota(s_q(q))$, whenever the semantics are
-defined.
-\end{assumption}
-
-\begin{assumption}[In-scope coverage]\label{as:cov}
-For every in-scope $w$ (resp.\ $q$) with $s_w(w)$ (resp.\ $s_q(q)$) defined,
-some $k$ with $\mathsf{cert}_w(w,k)$ (resp.\ $\mathsf{cert}_r(q,k)$) exists.
-\end{assumption}
-
-\noindent Assumptions~\ref{as:sound}--\ref{as:cov} are \emph{premises}, not
-results. In an open world nothing above supplies them; ``the referent is
-genuinely unknown'' is not established by this note.
-
-\begin{definition}[One-shot key-addressed system]\label{def:system}
-A system is \emph{one-shot key-addressed} if on write $w$ with value $v$ it
-performs $\mathrm{put}(M,\cw(w),v)$ (a no-op if $\cw(w)=\bt$), on query $q$ it
-outputs $\mathrm{get}(M,\cr(q))$ if $\cr(q)\neq\bt$ and $\bt$ otherwise, and
-it has \emph{no channel to $M$} other than that single $\mathrm{get}$
-(\emph{no store-bypassing side channel}).
-\end{definition}
-
-\section{What is forced}
+\section{What is forced by state variation}
 
 \begin{lemma}[State-independence]\label{lem:state}
-Let $F:\Qu\to\Va\cup\{\bt\}$ be any function that does not depend on the
-runtime memory. If there are semantic states $S_0,S_1$ and a query $q$ with
-$A(S_0,q)\neq A(S_1,q)$, then $F$ is not exact-correct on both.
+Let \(F:\Qu\to\Va\cup\{\bt\}\) be any function that does not depend on the
+runtime semantic state \(S\).  If there exist legal \(S_0,S_1\) and \(q\)
+such that \(A(S_0,q)\neq A(S_1,q)\), then \(F\) is not exact-correct on both
+states.
 \end{lemma}
 
 \begin{proof}
-$F(q)$ is a single element of $\Va\cup\{\bt\}$ and cannot equal two distinct
-values.
+The value \(F(q)\) is fixed, whereas exact correctness would require it to
+equal two distinct task-supplied answers.
 \end{proof}
 
-\begin{remark}[Reading, deliberately narrow]
-Lemma~\ref{lem:state} shows only that exact correctness across semantic states
-requires \emph{some} channel through which the runtime state influences the
-output. It does \emph{not} entail that the channel be a key--value store, a
-vector database, or a non-neural guard, and it says nothing about approximate
-correctness. It is elementary; we state it because it is the only step of the
-usual argument for externalised memory that is actually forced.
+\begin{remark}
+Lemma~\ref{lem:state} says only that exact correctness across varying legal
+states needs \emph{some} runtime-state channel.  It does not prescribe a
+key--value store, vector database, guard, neural mechanism, or approximate
+notion of correctness.  Its role is load-bearing but elementary.
 \end{remark}
 
-\section{Certified canonical addressability}
+\section{Canonical addressability and the factorization theorem}
 
-\begin{definition}[CCA]\label{def:cca}
-A certified interface $(\cw,\cr)$ has \emph{Certified Canonical
-Addressability} with respect to $\iota$ if, on every in-scope certified input,
+\begin{definition}[Certified Canonical Addressability]\label{def:cca}
+An interface \((C_w,C_r)\) has \emph{Certified Canonical Addressability}
+(\(\CCA\)) on \((\Wr_0,\Qu_0)\) when all four conditions hold:
+\begin{enumerate}
+  \item[(C1)] \emph{Typed determinacy:} the interface has one deterministic
+  output in \(\Ky\cup\{\bt\}\) for each input; membership in \(\Ky\) is
+  exactly decidable.
+  \item[(C2)] \emph{Covered positive inputs:} for every \(w\in\Wr_0\) and
+  \(q\in\Qu_0\), \(C_w(w),C_r(q)\in\Ky\), not \(\bt\).
+  \item[(C3)] \emph{Write--read agreement:} if
+  \(\semw(w)=(d,v)\) and \(\semq(q)=d\), then \(C_w(w)=C_r(q)\).
+  \item[(C4)] \emph{Live-referent separation:} if two covered write or query
+  inputs denote distinct referents, their outputs are distinct keys.
+\end{enumerate}
+\end{definition}
+
+\begin{proposition}[CCA induces a naming map]\label{prop:naming}
+Under the bi-witnessed-scope assumption, \(\CCA\) holds if and only if there
+exists an injective map \(\kappa:\Dom_0\hookrightarrow\Ky\) such that
 \[
-\cw(w)=\iota(s_w(w)),\qquad \cr(q)=\iota(s_q(q)),
+ C_w(w)=\kappa(d)\quad\text{whenever }\semw(w)=(d,v),
+ \qquad
+ C_r(q)=\kappa(d)\quad\text{whenever }\semq(q)=d .
 \]
-and $\bt$ is output exactly when no certified key exists.
-\end{definition}
+\end{proposition}
 
-\begin{remark}[Two readable consequences]\label{rem:readable}
-CCA implies (i) \emph{same-referent agreement}: if $s_w(w)=s_q(q)$ then
-$\cw(w)=\cr(q)\neq\bt$; and (ii) \emph{live-referent separation}: distinct
-referents receive distinct keys. Clause (ii) is not redundant --- agreement
-alone is satisfied by the degenerate interface mapping every utterance to one
-fixed key, which is perfectly consistent and useless.
-\end{remark}
+\begin{proof}
+For the forward direction, define \(\kappa(d)\) using any write witness for
+\(d\).  (C3) makes the choice of write witness and every query witness agree,
+and (C4) makes \(\kappa\) injective.  The reverse direction gives (C2)--(C4)
+immediately, while (C1) is part of the interface model.
+\end{proof}
 
-\noindent We do \emph{not} let the interface decide which key is canonical;
-otherwise the theorem below degenerates into renaming.
-
-\section{Address-factorization theorem}
-
-\begin{definition}[Universal soundness and completeness, public-schema stores]\label{def:usc}
-Fix a task specification. Legal stores are \emph{public-schema} stores: the
-store presented to the system is $M_S$ of Definition~\ref{def:state}, i.e.\
-populated through $\iota$ and therefore shareable with, and auditable by, any
-other system using the same schema. A one-shot key-addressed system is
-\emph{universally sound and complete} if for every finite semantic state $S$,
-every admissible history of atomic $\mathrm{put}/\mathrm{get}$ whose resulting
-state equals $M_S$, and every in-scope $q$ with $s_q(q)$ defined, the system
-outputs exactly $A(S,q)$.
-\end{definition}
-
-\noindent The history clause is stated for completeness but is \emph{not
-load-bearing}: under the public-schema reading only the resulting state
-matters. We say so rather than let it look like it carries content.
-
-\begin{theorem}[Universal-store address factorization]\label{thm:main}
-Assume $|\Va|\ge 2$ (used only in Case~1 below) and
-Assumptions~\ref{as:sound}--\ref{as:cov}. A one-shot key-addressed system
-over \emph{public-schema} legal stores (Definition~\ref{def:usc}), with no
-store-bypassing channel, is universally sound and complete \emph{iff} its
-interface has CCA (Definition~\ref{def:cca}).
+\begin{theorem}[Universal-store address factorization]\label{thm:factor}
+In the setting of Definitions~\ref{def:task}--\ref{def:execution}, an
+interface has \(\UE\) if and only if it has \(\CCA\) on the covered scope.
 \end{theorem}
 
 \begin{proof}
-($\Leftarrow$) Assume CCA. Let $S$ be any semantic state and $q$ in scope.
-If $s_q(q)\in\mathrm{dom}(S)$ then by Assumption~\ref{as:cov} a certified key
-exists, and by CCA $\cr(q)=\iota(s_q(q))$, so the system outputs
-$M_S(\iota(s_q(q)))=S(s_q(q))=A(S,q)$. If $s_q(q)\notin\mathrm{dom}(S)$ then
-$\iota(s_q(q))\notin\mathrm{dom}(M_S)$, so $\mathrm{get}$ returns $\bt=A(S,q)$.
+Assume first \(\UE\).  A one-write history followed by a query witness for
+the written referent shows that neither interface may output \(\bt\): the
+write must be admitted and the query must return a value in \(\Va\).  The
+same one-write history has exactly one live key.  Therefore a write witness
+and query witness for the same \(d\) must yield the same key, or the query
+would return \(\bt\) rather than its written value.  Finally choose distinct
+referents \(d,d'\), witnesses for each, and distinct \(v,v'\in\Va\).  If the
+two addresses coincided, the second legal write would conflict with the first
+at one physical key, contradicting universal admission.  Hence (C1)--(C4)
+hold.
 
-($\Rightarrow$) Suppose CCA fails, i.e.\ there is an in-scope input on which
-the interface disagrees with $\iota$. Write $d$ for its referent.
-
-\emph{Case 1: $\cr(q)=\iota(d')$ with $d'\neq d$.} Since $|\Va|\ge2$ choose
-$v\neq v'$ and take $S$ with $\mathrm{dom}(S)=\{d,d'\}$, $S(d)=v$,
-$S(d')=v'$. The system outputs $M_S(\iota(d'))=v'\neq v=A(S,q)$: a
-mis-delivery of a value that is genuinely present.
-
-\emph{Case 2: $\cr(q)\notin\iota(\Dom)$, or $\cr(q)=\bt$ for a covered $q$.}
-Take any $S$ with $d\in\mathrm{dom}(S)$. Then the system outputs $\bt$ while
-$A(S,q)=S(d)\neq\bt$: incompleteness.
-
-\emph{Case 3: $\cw(w)\neq\iota(s_w(w))$ for a covered $w$.} The written value
-is absent from $\iota(s_w(w))$, so a later query for $s_w(w)$ reduces to
-Case~2; and if $\cw(w)=\iota(d'')$ for some $d''\neq s_w(w)$, a query for
-$d''$ reduces to Case~1.
-
-In each case universal soundness and completeness fails.
+Conversely, Proposition~\ref{prop:naming} gives an injective \(\kappa\).
+Every legal history writes distinct referents to distinct keys
+\(\kappa(d)\), so all writes are admitted and the resulting store contains
+exactly \(S_H(d)\) at \(\kappa(d)\).  A covered query for \(d\) reads that key
+when \(d\in\operatorname{dom}S_H\), and reads an absent key otherwise.  Its
+output is therefore \(A(S_H,q)\).
 \end{proof}
 
 \begin{remark}[Responsibility boundary]\label{rem:boundary}
-Case~1 of the proof is the operative one for safety. If a query for $d$ is
-routed to a \emph{live} key of $d'\neq d$, exact membership testing and
-$\mathrm{get}$ both behave correctly and still return the wrong value. Hence
-an exact-membership guard can certify that a \emph{key} is absent; it cannot
-certify that a present key is \emph{the intended referent}, and it cannot
-repair an upstream identity error.
+The necessity proof supplies the precise limit of an exact membership guard.
+If an upstream query interface emits the live address \(\kappa(d')\) for
+\(d'\neq d\), choose a legal state with distinct \(S(d)\) and \(S(d')\).
+Exact \(\mathrm{get}\) then returns a genuinely present but wrong value.
+Membership can certify that an address exists; it cannot certify that it is
+the intended referent or repair an identity error upstream.
 \end{remark}
 
-\begin{definition}[Private store]\label{def:private}
-A store is \emph{private} if it is initially empty and its contents arise
-only from this system's own $\mathrm{put}$ operations; no other party reads
-or writes it, and no external schema constrains where values reside.
+\section{Certified abstention is an additional assumption}
+
+CCA concerns a fixed covered scope.  It does not make the phrase ``genuinely
+unknown'' mathematical.  To make a fail-closed claim outside that scope, a
+task must provide certificate relations
+\(\mathsf{Cert}_w\subseteq\Wr\times\Ky\) and
+\(\mathsf{Cert}_r\subseteq\Qu\times\Ky\), together with a soundness
+assumption relative to the semantic maps and the \(\kappa\) of
+Proposition~\ref{prop:naming}.  A certified partial interface may emit a key
+only with a valid certificate and emits \(\bt\) when no certificate exists.
+In a finite closed world this can be supplied by enumeration.  It is not
+supplied automatically by an embedding, a confidence score, or this theorem.
+
+\begin{definition}[Observational ambiguity]\label{def:ambiguity}
+Let \(x\) contain every input visible to an abstention policy.  An open-world
+specification is \emph{observationally ambiguous} at \(x\) if it admits two
+legal worlds with the same \(x\), one requiring answer \(\bt\) and one
+requiring a live key \(k\in\Ky\).
 \end{definition}
 
-\begin{theorem}[Private stores: agreement up to relabeling]\label{thm:private}
-Over private stores, a one-shot key-addressed system is universally sound and
-complete \emph{iff} there is an injection $\pi:\iota(\Dom)\to\Ky$ with
-$\cw(w)=\pi(\iota(s_w(w)))$ and $\cr(q)=\pi(\iota(s_q(q)))$ on certified
-in-scope inputs. In particular CCA is \emph{sufficient but not necessary}.
-\end{theorem}
+\begin{proposition}[No free open-world abstention]\label{prop:openworld}
+No deterministic policy of the visible observation \(x\) can be both exact
+in every world of an observationally ambiguous specification and complete on
+its live-key world.
+\end{proposition}
 
 \begin{proof}
-($\Leftarrow$) Writing $S(d)$ at $\pi(\iota(d))$ and reading
-$\pi(\iota(s_q(q)))$ returns $S(s_q(q))$, and $\bt$ exactly when $d\notin
-\mathrm{dom}(S)$, since $\pi\circ\iota$ is injective.
-($\Rightarrow$) Define $\pi$ on $\iota(d)$ as the key at which the system
-writes $d$. If $\pi$ were not injective, two distinct referents would share a
-key; taking $S$ with distinct values at both (using $|\Va|\ge2$) makes one
-query mis-deliver. If the read map disagreed with the write map at some
-covered input, that referent's query would read an unwritten or wrong key,
-giving Case~2 or Case~1 of Theorem~\ref{thm:main}.
+The policy has the same output on the identical observation \(x\).  If it
+outputs \(\bt\), it is incomplete in the live-key world; if it outputs a key,
+it is wrong in the absent world.
 \end{proof}
 
-\begin{remark}[What the pair of theorems says]\label{rem:pair}
-Theorems~\ref{thm:main} and~\ref{thm:private} isolate where canonical
-addressing is actually forced: \emph{not} by addressing per se, but by the
-requirement that the store be a \emph{public, shareable, auditable} object.
-For a private memory, any self-consistent private encoding suffices. Claims
-about swappable or auditable memory therefore carry a formal cost, and that
-cost is exactly CCA.
+\begin{remark}
+Proposition~\ref{prop:openworld} is an indistinguishability statement, not a
+claim that open-world language understanding is impossible.  Without an
+observation model and a certificate/coverage assumption, ``open-world
+impossibility'' is not yet a well-posed theorem.
 \end{remark}
 
-\paragraph{Scope.} Theorem~\ref{thm:main} is a representation/refinement
-result for a restricted class: fixed public schema, one-shot key-addressed,
-no bypass, zero error. It proves interface correctness \emph{relative to a
-schema}. It does \emph{not} prove that the schema or natural-language
-semantics can be learned, that a value codec can be learned, or that a
-reasoning executor can consume latent values.
+\section{Imported results and non-results}\label{sec:imports}
 
-\section{Imported results (to be filled with exact assumptions)}
+This section records adjacent results with their assumptions.  None proves
+Theorem~\ref{thm:factor}; conversely, Theorem~\ref{thm:factor} makes no claim
+about the expressivity or trainability addressed by these works.
 
-\emph{Placeholder.} Each item will be stated with the assumptions under which
-it holds: precision and attention assumptions for transformer circuit upper
-bounds; arbitrary-precision activations for Turing-completeness
-constructions; quantisation premises for parameter-capacity counting;
-conformal-risk (not semantic-identity) guarantees for retrieval systems.
-Architectures such as differentiable read/write memories, and empirical
-external-memory results, are adjacent but do \emph{not} establish CCA or
-universal non-mis-delivery.
+\begin{imported}[Log-precision transformer upper bound]
+Merrill and Sabharwal~\citep{merrill2022parallelism} show that a Transformer
+whose arithmetic precision is logarithmic in input length and whose
+feed-forward subnetworks are computable in linear space can be simulated by a
+constant-depth logspace-uniform threshold-circuit family.  Thus the stated
+formal model lies in uniform \(\mathsf{TC}^0\).  This is not an upper bound for
+arbitrary real-precision or recurrent/looped implementations.
+\end{imported}
 
-\paragraph{Prohibited inference (recorded to prevent it).} A
-$\mathsf{TC}^0$ \emph{upper} bound for transformers combined with
-$\mathsf{NC}^1$-completeness of a word problem does \emph{not} give an
-unconditional lower bound: the required class separation is not known.
+\begin{imported}[Saturated-attention upper bound]
+For saturated (average-hard) attention with floating-point values and the
+size-preservation assumptions stated in their model, Merrill, Sabharwal, and
+Smith~\citep{merrill2021saturated} give a \(\mathsf{TC}^0\) upper bound on the
+recognized languages.  The result is model-specific; its rational-value
+variant can be much more powerful under different assumptions.
+\end{imported}
 
-\emph{Verified detail (checked against arXiv:2207.00729).} The upper bound is
-that transformers \emph{whose arithmetic precision is logarithmic in the
-number of input tokens}, and \emph{whose feedforward nets are computable in
-space linear in their input}, can be simulated by constant-depth
-logspace-uniform threshold circuits. The lower bounds offered there are
-\emph{conditional} --- e.g.\ contingent on $\mathsf{L}\neq\mathsf{P}$ ---
-and no unconditional separation from $\mathsf{NC}^1$ is claimed. Any use of
-this result in the present note must carry both assumptions explicitly; in
-particular the log-precision premise is not innocuous, since it is what
-excludes the arbitrary-precision constructions used in Turing-completeness
-arguments.
+\begin{imported}[Arbitrary-precision Turing completeness]
+P\'erez, Marinkovi\'c, and Barcel\'o~\citep{perez2019turing} prove Turing
+completeness for a Transformer construction using rational activations of
+arbitrary precision.  It is therefore not evidence that a finite-precision,
+fixed-depth deployed language model has unbounded practical memory.
+\end{imported}
 
-\section{Conjectures}
+\begin{imported}[Serial computation from chain of thought]
+Li, Liu, Zhou, and Ma~\citep{li2024cot} show that with \(T\) generated
+chain-of-thought steps, constant-depth Transformers of constant-bit precision
+and \(O(\log n)\) embedding size can solve every problem computable by Boolean
+circuits of size \(T\), under their decoder-only formal model.  This concerns
+serial expressivity, not semantic address agreement.
+\end{imported}
 
-\begin{conjecture}\label{conj:scale}
-Whether the same-referent agreement consequence of CCA
-(Remark~\ref{rem:readable}(i)) arises at scale from unsupervised training is
-open. We claim nothing in either direction.
+\begin{imported}[External-memory architectures and empirical retrieval]
+Neural Turing Machines introduce differentiable attentional reads and writes
+to external memory~\citep{graves2014ntm}; Differentiable Neural Computers
+extend that architectural line~\citep{graves2016dnc}.  In language modelling,
+kNN-LM~\citep{khandelwal2020knnlm}, RAG~\citep{lewis2020rag}, and Memorizing
+Transformers~\citep{wu2022memorizing} report empirical gains from external or
+non-parametric memory.  These are architectural or empirical results; none
+proves universal semantic identity preservation, \(\CCA\), or zero
+misdelivery over all stores.
+\end{imported}
+
+\begin{imported}[Risk guarantees for RAG]
+C-RAG~\citep{kang2024crag} gives conformal generation-risk guarantees for
+retrieval-augmented language models under its bounded-risk and retrieval/model
+quality assumptions.  A generation-risk certificate is not a proof that a
+retrieved key denotes the intended referent, so it does not subsume the
+identity condition in Theorem~\ref{thm:factor}.
+\end{imported}
+
+\begin{remark}[Two prohibited shortcuts]
+Barrington's theorem characterizes nonuniform \(\mathsf{NC}^1\) by bounded
+width polynomial-size branching programs~\citep{barrington1989}.  It does
+not license an unconditional Transformer lower bound when juxtaposed with a
+\(\mathsf{TC}^0\) upper bound: the requisite complexity-class separation is
+not known.  Likewise, ``\(b\) bits per parameter'' only counts finite
+parameter encodings; without a task encoding and precision assumptions, it
+is not a lower bound on factual capacity.
+\end{remark}
+
+\section{Conjecture and limits}
+
+\begin{conjecture}[Scale and addressability]\label{conj:scale}
+Whether unsupervised training at scale produces CCA-like write--read agreement
+on nontrivial natural-language scopes is open.  This note makes no claim in
+either direction.
 \end{conjecture}
 
-\section{What this note does not claim}
+The note does not claim that natural-language canonicalization is achievable
+or impossible, that latent delivery is superior to textual context, that a
+value codec or reasoning executor can be learned, or that a measured failure
+of a particular neural mechanism refutes CCA.  It characterizes the exact
+address interface required by one restricted store contract.
 
-That a separable system is achievable for natural language; that it is
-impossible; that latent delivery is superior to placing the value in context;
-or that any measured failure of a particular mechanism bears on
-Definition~\ref{def:cca} beyond instantiating it.
+\bibliographystyle{plainnat}
+\bibliography{refs}
 
 \end{document}
