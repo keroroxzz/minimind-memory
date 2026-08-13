@@ -177,15 +177,16 @@ prior transcript
  \in(\Dom_0\times\overline{\Va})^t,\qquad t<r,
 \]
 to either \(\mathsf{halt}\) or a next referent \(d\in\Dom_0\).  An admissible
-policy may not repeat a referent already appearing in \(h\).  On state \(S\), the induced
-transcript \(\operatorname{tr}_{\pi}(S,q)\) is obtained by recursively reading
+policy may not repeat a referent already appearing in \(h\).  On state \(S\)
+and query view \(u\), the induced transcript
+\(\operatorname{tr}_{\pi}(S,u)\) is obtained by recursively reading
 \(x_{t+1}=S^{\bt}(d_{t+1})\), where
-\(d_{t+1}=\pi(\tau(q),h_t)\), until it halts or has made \(r\) reads.
+\(d_{t+1}=\pi(u,h_t)\), until it halts or has made \(r\) reads.
 
 An executor is \emph{no-bypass relative to \((\tau,\pi)\)} if its output has
 the form
 \[
- E\bigl(\tau(q),\operatorname{tr}_{\pi}(S,q)\bigr),
+ E\bigl(\tau(q),\operatorname{tr}_{\pi}(S,\tau(q))\bigr),
  \qquad E:\mathcal T\times\mathcal H_r\to\mathcal Y,
 \]
 for a deterministic function \(E\), with no other access to \(S\).  Thus
@@ -200,8 +201,8 @@ Fix \(\tau\), an adaptive \(r\)-read policy \(\pi\), and a task answer
 deterministic executor no-bypass relative to \((\tau,\pi)\) if and only if
 for every \(S,S'\in\mathcal S\) and \(q,q'\in\Qu_0\),
 \[
- \bigl(\tau(q),\operatorname{tr}_{\pi}(S,q)\bigr)
- =\bigl(\tau(q'),\operatorname{tr}_{\pi}(S',q')\bigr)
+ \bigl(\tau(q),\operatorname{tr}_{\pi}(S,\tau(q))\bigr)
+ =\bigl(\tau(q'),\operatorname{tr}_{\pi}(S',\tau(q'))\bigr)
  \quad\Longrightarrow\quad A(S,q)=A(S',q'). \tag{L}
 \]
 \end{theorem}
@@ -210,10 +211,23 @@ for every \(S,S'\in\mathcal S\) and \(q,q'\in\Qu_0\),
 If an exact no-bypass executor exists, equal pairs on the left give it equal
 inputs and hence equal outputs, which exactness identifies with the two task
 answers.  Conversely, under (L), define \(E(t,h)\) to be \(A(S,q)\) for any
-legal pair with \((\tau(q),\operatorname{tr}_{\pi}(S,q))=(t,h)\), and assign
+legal pair with
+\((\tau(q),\operatorname{tr}_{\pi}(S,\tau(q)))=(t,h)\), and assign
 an arbitrary output to pairs that never occur.  Condition (L) makes this
 definition well defined, and the resulting executor is exact by construction.
 \end{proof}
+
+\begin{remark}[A necessary query-side condition]
+If condition (L) holds, then for every fixed \(S\in\mathcal S\),
+\[
+ \tau(q)=\tau(q')\quad\Longrightarrow\quad A(S,q)=A(S,q').
+\]
+Indeed, equal query views induce equal transcripts by induction on the
+deterministic policy.  Equivalently, for each state \(S\), the map
+\(A(S,\cdot)\) factors through \(\tau\).  This is independent of \(r\): a
+coarse query view cannot be repaired by making more memory reads.  It says
+nothing, however, about how the resulting factor depends on \(S\).
+\end{remark}
 
 \begin{remark}[Oblivious plans and the real access budget]
 An oblivious plan is the special case in which \(\pi\)'s sequence of queried

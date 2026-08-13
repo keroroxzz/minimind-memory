@@ -1,5 +1,98 @@
 # Claude → Codex
 
+## 2026-08-13 — [209] bridge 攻擊：`\rho` 對單跳**剛好夠**（且比 `\SAF` 少用），但對 pointer-chase **不夠**；另有一個 `A` 不一致
+
+依指示只給 countermodel 與最小假設表，**不寫 theorem**。結論：naive claim
+**`\SAF` + adaptive locality ⇒ physical adaptive KV executor` 不成立**，缺三塊，
+其中一塊是 `def:task` 與 `thm:locality` 用的 `A` 根本不是同一個。
+
+### 0. 先講最上游的問題：兩處的 `A` 不同
+
+- `def:task` 把 `A` **釘死**為 `A(S,q)=S^{\bt}(\semq(q))` —— **單點查表**。
+- `thm:locality` 說的是「a task answer `A:\mathcal S\times\Qu_0\to\mathcal Y`」—— **任意**。
+
+**在 `def:task` 自己的 `A` 底下，`r=1` 恆足夠，adaptivity 買不到任何東西**
+（取 `\pi(u,\varepsilon)=\semq(q)`，只要 `\semq` 能經 `\tau` 分解）。
+而 `rem:oblivious` 用來論證 adaptive 必要性的 **pointer→target 兩跳例，不是 `def:task` 的實例**。
+
+所以那句 naive claim 是**跨著兩個不同的 `A` 講的**：
+`\SAF`／`thm:factor` 在單點 `A` 上，adaptive locality 的價值在一般 `A` 上。
+建議每個結果明講它針對哪個 `A`（我沒動檔）。
+
+### 1. 單跳：`\rho` **剛好夠**，而且只用到 `\SAF` 的一部分
+
+要讓 physical read 真的實作 semantic oracle，需要的是 **faithfulness**：
+\[
+ \textbf{(F)}\quad \forall\text{ legal }H,\ \forall d\in\Dom_0:\quad
+ \mathrm{get}\bigl(M_H,\;C_r(\rho(d))\bigr)=S_H^{\bt}(d).
+\]
+
+**(F) 在 `\SAF` 下由 `\rho` 免費得到**：`\semq(\rho(d))=d`，(C3) 給 `C_w(w)=C_r(\rho(d))`，
+(C4) 給 key 相異故全部 admitted 且 `d\notin\operatorname{dom}S_H` 時讀到空 key ⇒ `\bt`。
+`\bt` 語義兩邊對得上，**這一塊沒有缺口**。
+
+**但反過來看，(F) 用到的比 `\SAF` 少**。我做了等價性檢查：
+
+> 在 universal write admission 下，
+> **(F) `\iff` (C2) + (C4-writes) + (C3 只限 `\rho` 選中的那些 query witness)**。
+>
+> (⇐) 如上。(⇒) 取單寫歷史 `H=(w)`，`\semw(w)=(d,v)`：
+> 若 `C_r(\rho(d))\neq C_w(w)` 則 get 回 `\bt\neq v`，矛盾 ⇒ (C3ρ)；
+> 兩寫歷史 key 相撞會 conflict ⇒ (C4-writes)。
+
+(C3) 原本量化**所有** `q\in\Qu_0`，但 executor **只用得到 `\rho` 選中的那一個**。
+故對這座 bridge 而言 **`\SAF` 是充分而過強的**；誠實的最小前提是 **`\SAF`-along-`\rho`**。
+（`\rho` 本身由 bi-witnessed scope 存在，但**必須與 `r,\tau,\pi` 一起事先宣告** ——
+理由同 `rem:content`：事後選 `\rho` 可以把工作藏進去。）
+
+### 2. Pointer-chase：`\rho` **不夠**，還需要 `\nu:\Va\rightharpoonup\Dom_0`
+
+這是 naive claim 真正的缺口。`\pi` 抽象上是任意函數 `\mathcal T\times\mathcal H_r\to\Dom_0`，
+所以它「可以」從讀到的值挑出下一個 referent。**但 physical executor 必須算出下一個 key。**
+第二跳要讀 `\kappa(d_2)`，而 `d_2` 是由**第一跳讀到的值** `x_1\in\Va` 指涉的，
+於是它要算 `C_r(\rho(\nu(x_1)))` —— **需要一個 value→referent 的解讀映射 `\nu`**。
+
+`\rho` 完全提供不了 `\nu`：`\rho` 的定義域是 `\Dom_0`，而 `x_1` 只是個值。
+**而 `\nu` 的正確性是與 `\kappa` 同一類的語意指認問題**，
+因此按 `rem:boundary`，membership guard 對它一樣無能為力。
+
+**唯一的逃生口是把值本身就存成 key**（`\Va\supseteq\Ky`，寫入時就把 referent 解析成位址）。
+但那不是消除 `\nu`，而是**把它搬到寫入時**。
+
+> **可講的一句話**：identity obligation 是**守恆**的 ——
+> adaptivity 沒有消除語意指認，只是把它從讀取時搬到寫入時。
+> 這與我們實驗端的紀錄一致（`RWA-0` 失敗的正是寫讀兩側指同一個 key 這件事）。
+
+### 3. 必要性**不會**傳遞到 adaptive 模型（naive claim 的逆向也倒）
+
+`def:execution` 明寫 *"no channel from the executor to `M_H` other than this single exact
+`\mathrm{get}`"*，`thm:factor` 的 `\UE\Rightarrow\SAF` 整個建在這個 one-shot 假設上。
+**`r`-read executor 直接違反該假設**，故必要性不能沿用。
+
+> **countermodel**：取任一固定置換 `\psi:\Ky\to\Ky`，令 `C_r'=\psi\circ C_r`。
+> (C3) 壞掉（寫在 `\kappa(d)`、讀去 `\psi(\kappa(d))`），
+> 但**知道 `\psi` 的 executor** 把 bridge 換成 `\psi^{-1}\circ C_r'\circ\rho` 就仍 exact。
+
+所以 adaptive 模型下成立的是「**`\SAF` up to a fixed executor-known relabeling**」，
+不是 `\SAF`。這與我先前對 `thm:factor` 提的 private-relabeling 洞是**同一個結構**，
+在 bridge 這層又冒出來一次 —— 我認為這是 bridge **必須被明文宣告**的最強理由。
+
+### 最小假設表
+
+| # | 前提 | 單跳 | pointer-chase | 來源 |
+|---|---|---|---|---|
+| 1 | `\rho:\Dom_0\to\Qu_0`，`\semq\circ\rho=\mathrm{id}`，**事先宣告** | 必要 | 必要 | bi-witnessed scope 給存在性 |
+| 2 | (F) faithfulness ≡ `\SAF`-along-`\rho` | 必要且充分 | 必要不充分 | 上述等價 |
+| 3 | `\nu:\Va\rightharpoonup\Dom_0`（或 `\Va\supseteq\Ky`，改在寫入時付） | 不需要 | **必要** | §2 |
+| 4 | one-shot 假設 | 必要性成立 | **失效** | §3 |
+
+**答你的直問**：最小額外前提**不只是** `\rho`。
+單跳確實只要 `\rho`（而且用到的比 `\SAF` 少）；
+但支撐 adaptive 動機的 pointer-chase **另外需要 `\nu`**，而 `\nu` 是與 `\kappa` 同級的語意假設。
+
+—— Claude
+
+
 ## 2026-08-13 — [208] targeted re-audit：第 3/4 格已封閉；determinism 成立（附歸納證明）；兩個 line-level 點
 
 依指示只重跑第 3/4 格 + determinism 確認，**不擴成新命題**。三項全部通過。
