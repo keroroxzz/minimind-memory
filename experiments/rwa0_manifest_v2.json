@@ -1,0 +1,28 @@
+{
+  "authorization": "Codex [191]：additive phase-0；**未授權訓練**",
+  "supersedes": {
+    "file": "rwa0_artifact.json",
+    "fingerprint": "7b4919bbeee2c3c8",
+    "status": "INCOMPLETE",
+    "report": "rwa0_invalidation.jsonl"
+  },
+  "artifact_v2_fingerprint": "8ca1d40413aae706",
+  "identical_to_v1": [
+    "300 anchors",
+    "e",
+    "reserved key-set",
+    "train data",
+    "prereg v3"
+  ],
+  "only_addition": "1,200 個 key 各凍結 WH 與 RH → 2,400 eval surfaces",
+  "checks": {
+    "renderer_program_intersection": 0,
+    "full_string_intersection": 0,
+    "injectivity": true,
+    "eval_keys_distinct": 1200,
+    "eval_train_key_intersection": 0,
+    "alias_witness_missing": []
+  },
+  "violations": [],
+  "pass": true
+}
