@@ -2,30 +2,36 @@
   "experiment": "RWA-0",
   "title": "closed-world supervised controlled canonicalization：read-write key agreement",
   "spec_source": "Codex [175]／[186]；`RWA0_DESIGN.md` 為設計閘",
-  "status": "spec-lock draft — **未實作、未生成資料、未訓練**；待 interface-only review",
-
+  "status": "v2 — 六項已一次鎖定（Codex [187]）；**仍不得**產生 artifact／寫訓練 code／跑 smoke",
   "naming": {
     "must_be_called": "**closed-world supervised controlled canonicalization**",
-    "must_not_be_called": ["自然語言 canonicalization", "無標籤／emergent semantic canonicalization",
-                            "semantic retrieval", "open-set identity"],
+    "must_not_be_called": [
+      "自然語言 canonicalization",
+      "無標籤／emergent semantic canonicalization",
+      "semantic retrieval",
+      "open-set identity"
+    ],
     "why": "訓練用 oracle `K*` 的交叉熵，**是監督式**；把它叫成自然湧現會是實質的錯誤陳述"
   },
-
   "why_this_form": {
     "output": "write／read **各自**輸出離散的 typed product key `K = (entity_code, attribute_code)`",
     "training": "以 oracle `K*` 的**交叉熵**訓練",
     "hard_rule": "**任何不能 exact-decode 出 `K` 的輸出，一律不得送進 Store**",
     "rationale": "這比 pairwise cosine／threshold **更誠實**，且**避免重開已 FAIL 的 learned confidence selector**（§4.67）"
   },
-
   "split": {
     "note": "⚠️ Codex [186] 指出一個易混淆處，若弄錯，FAIL 會變成只是在測字典 OOD",
-    "must_not_overlap": ["write／read 的 **renderer family**", "**完整 surface string**"],
+    "must_not_overlap": [
+      "write／read 的 **renderer family**",
+      "**完整 surface string**"
+    ],
     "must_have_train_coverage": "**每個 eval 的原子語義／alias mapping 都必須有 train witness**",
-    "held_out": ["renderer composition／template family", "未見的 `(entity, attr)` 組合"],
+    "held_out": [
+      "renderer composition／template family",
+      "未見的 `(entity, attr)` 組合"
+    ],
     "why": "若把 eval 的 alias atom 本身全留到未見，FAIL 只是在測**字典 OOD**，**不再能識別 read-write agreement**"
   },
-
   "hard_negatives": {
     "note": "**鎖方法，不鎖鬆散的相似度分數**（Codex [186]）",
     "per_anchor": "每個 positive anchor **必定生成**（不可 reject／resample）三個 negative：",
@@ -34,13 +40,24 @@
       "same_attr_diff_entity": "同 attribute、異 entity",
       "role_binding_swap": "**與 positive 有相同的 renderer-visible semantic-atom multiset**，僅以**一個事前定義的 role attachment／order 規則**換出不同的 `K*`"
     },
-    "forbidden_selection": ["edit distance", "embedding cosine", "依模型表現挑選 hard 例"],
+    "forbidden_selection": [
+      "edit distance",
+      "embedding cosine",
+      "依模型表現挑選 hard 例"
+    ],
     "data_layer_assertions": [
       "逐題 assert 三個 negative 的 `K* != K_anchor`",
       "逐題 assert binding-swap 與 anchor 的 **semantic-atom multiset 相等**"
-    ]
+    ],
+    "locked_construction": {
+      "anchor": "`(a,b,c,d)`，四者皆異",
+      "same_entity_diff_attr": "`(a,b,c,e)`",
+      "same_attr_diff_entity": "`(a,e,c,d)`",
+      "e": "由 `D \\ {a,b,c,d}` 依 **artifact RNG** 取**最小被抽 index**",
+      "binding_swap": "`(a,c,b,d)` —— **嚴格保留相同 alias multiset，只改 slot binding**",
+      "eval_disjointness": "eval 的 target ＋ 三 negative 共 **1,200 個 key** 必須**兩兩不同**，且**全不在 train 的 key-pair set** 內"
+    }
   },
-
   "primary_gate": {
     "per_seed": "**300 個 held-out positive anchor／seed**；三個 seed **各自**全過，**禁止 pooled 補過**",
     "a_agreement": "`K_w = K_r = K*` —— **300/300**",
@@ -49,37 +66,99 @@
       "setup": "每個 anchor 將 **target 與三種 negative** 都以 **distinct value** commit 進 Store；read surface 驅動 **exact Store read**",
       "correct_target_read": "**300/300**",
       "wrong_existing_delivery": "**0/300**",
-      "false_abstain": "**0/300**"
+      "false_abstain": "**0/300**",
+      "values": "four entries 用**四個 distinct 的 deterministic value**",
+      "read": "以 `K_r` 做 **correct Store content read 300/300**、wrong-existing **0**、false-abstain **0**"
     },
-    "store_revalidation": "**key 型別已變** → Store 的 membership／conflict／commit ABI **必須以新 key 重驗**，**不得**借用 §4.57／§4.64／§4.68 的舊 PASS"
+    "store_revalidation": "**key 型別已變** → Store 的 membership／conflict／commit ABI **必須以新 key 重驗**，**不得**借用 §4.57／§4.64／§4.68 的舊 PASS",
+    "all_or_nothing": "每 seed **同一** 300 anchors；三段 **all-or-nothing**"
   },
-
   "phase0_before_training": [
     "列出**每一個 eval atom 的 train witness**",
     "所有**完整字串**與 **renderer-program** 的 train–eval 交集為 **0**",
     "**renderer injectivity**（同一 `K*` 的不同 render 不得碰撞到別的 `K*`）",
     "凍結 artifact checksum",
-    "逐題 assert 三個 negative 的 `K* != K_anchor` 與 binding-swap 的 multiset 相等"
+    "逐題 assert 三個 negative 的 `K* != K_anchor` 與 binding-swap 的 multiset 相等",
+    "12 個 `W` 與 12 個 `R` alias **各至少在 train 出現 1 次**",
+    "**132 個 entity class 與 132 個 attribute class 各至少在 train 出現 1 次**",
+    "1,200 個 eval key-set 與 train key-set **exact disjoint**",
+    "⚠️ 這是 **pair-combination holdout**，**不是** atom／OOV holdout",
+    "以新 `RWAKey(x0,x1,x2,x3)` 重跑四條 Store contract：exact membership、duplicate-equal idempotence、same-key-different-content reject、badread fail-closed（**不得**借舊 key 型別的結果）"
   ],
-
   "scope": {
-    "is_not": ["自然語言／指涉已解", "open-set", "§4.67 selector 的替代（那是 FAIL，不得補過）",
-                "`MF0-C` formation 的替代（那是 FAIL，不得補過）"],
+    "is_not": [
+      "自然語言／指涉已解",
+      "open-set",
+      "§4.67 selector 的替代（那是 FAIL，不得補過）",
+      "`MF0-C` formation 的替代（那是 FAIL，不得補過）"
+    ],
     "claim_limit": "PASS 只可稱「在此 closed-world、受控 renderer 家族、監督式訓練下，write／read 對同一 referent 產生同一 typed key，且不 false-merge」"
   },
-
-  "not_yet_locked": [
-    "encoder 規格（架構／參數量）",
-    "optimizer 與 train budget",
-    "seeds",
-    "train／eval 的 size",
-    "key schema 的確切編碼（`entity_code`／`attribute_code` 的基數）",
-    "renderer family 的確切文法與 alias 清單"
-  ],
-
   "stopping_rule": {
-    "order": ["**interface-only review（本輪）**", "鎖上列六項", "phase-0（不訓練）", "一次三-seed run"],
+    "order": [
+      "**interface-only review（本輪）**",
+      "鎖上列六項",
+      "phase-0（不訓練）",
+      "一次三-seed run"
+    ],
     "on_fail": "記 `RWA-0 FAIL` 並依 (a)/(b)/(c) 分類歸因；**不得**改 hard-negative 定義、split 或門檻去救",
     "on_pass": "**不得**升格為自然語言／open-set；**不得**用來補 §4.67 或 `MF0-C` 的 FAIL"
+  },
+  "prior_revision": "RWA0_prereg_rev1.json（保留，不覆寫）",
+  "key_schema": {
+    "atoms": "semantic atom universe `D = {0,…,11}`",
+    "key": "一個 key 取**四個彼此不同**的 atom `(x0,x1,x2,x3)`；`entity=(x0,x1)`、`attribute=(x2,x3)`",
+    "codes": "各 **ordered-distinct pair** 以**字典序** rank 成 `0..131`（`12×11=132`），故 `K=(e_rank, a_rank)` 是**兩個 132-way typed code**",
+    "store_equality": "⚠️ Store 的 **full key 保存四元組**；**不以 rank／hash 當 equality**"
+  },
+  "renderers": {
+    "aliases": "`W_i = \"w{i}\"`、`R_i = \"r{i}\"`（`i=0..11`）—— **兩族 literal 不重疊**",
+    "vocab": "24 個 alias ＋ `memo`／`find`／`E0`／`E1`／`A0`／`A1` ＋ `PAD`",
+    "write_train": [
+      "`memo E0 W[x0] E1 W[x1] A0 W[x2] A1 W[x3]`",
+      "其**反序 slot 序**"
+    ],
+    "read_train": [
+      "`find A0 R[x2] A1 R[x3] E0 R[x0] E1 R[x1]`",
+      "其**反序 slot 序**"
+    ],
+    "write_heldout": "`memo E1 W[x1] A0 W[x2] E0 W[x0] A1 W[x3]`",
+    "read_heldout": "`find A1 R[x3] E0 R[x0] A0 R[x2] E1 R[x1]`",
+    "why": "eval **沒有新的 atom／alias／token**，卻有**未見的 program、完整 string、與 W/R realization** ——這是 **controlled compositional surface OOD**，**不是**假裝未見字典"
+  },
+  "data_split_locked": {
+    "train_seed": 2026081400,
+    "train_anchors": 24000,
+    "train_composition": "write／read 的四個 train-program 交叉**各 6,000**",
+    "train_surfaces": 48000,
+    "eval_seed": 2026081404,
+    "eval_anchors": 300,
+    "eval_programs": "**只用兩個 held-out program**",
+    "eval_sharing": "**三個 model seed 共用同一份**（artifact 不重抽）"
+  },
+  "encoder_compute_locked": {
+    "model": "**從零訓練**的 word-level `TransformerEncoder`",
+    "width": 96,
+    "layers": 2,
+    "heads": 4,
+    "ffn": 384,
+    "position": "learned absolute（max length **10**）",
+    "pool": "mean pooling",
+    "heads_out": "兩個 `Linear(96 → 132)` 的 CE head",
+    "forbidden": [
+      "pretrained core",
+      "alias table",
+      "copy／lookup module"
+    ],
+    "optimizer": "AdamW(lr=3e-4, betas=(.9,.999), wd=.01)",
+    "batch": "**256 surfaces**",
+    "updates": 12000,
+    "clip": 1.0,
+    "no_selection": "**無** schedule／early stop／validation／checkpoint selection —— **只取 final**",
+    "seeds": [
+      2026081401,
+      2026081402,
+      2026081403
+    ]
   }
 }
