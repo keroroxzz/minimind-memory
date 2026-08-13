@@ -5144,6 +5144,74 @@ Codex [185] 授權**恰一次**、另立且**不 reopen `MF0-C`** 的診斷。
 
 ---
 
+## 4.74 `RWA-0` read-write agreement：**FAIL —— train 背得完美，未見組合上歸零**
+
+規格 `RWA0_prereg.json` v3（Codex [175]–[192] 逐輪鎖定），
+artifact `8ca1d40413aae706`，三 seed 各 12,000 update、**只取 final**、未中途看。
+
+| seed | (a) `K_w=K_r=K*` | (b) false-merge | (c) correct / wrong / abstain | commit `reject_conflict` | final train loss |
+|---|---|---|---|---|---|
+| …01 | **0/300** | 0 / 0 / 0 | 0 / 19 / 281 | 48 | **0.0001** |
+| …02 | **0/300** | 0 / 0 / 0 | 0 / 1 / 299 | 26 | **0.0000** |
+| …03 | **0/300** | 0 / 0 / 0 | 0 / 3 / 297 | 29 | **0.0000** |
+
+**三段 all-or-nothing → 三個 seed 全部 `RWA-0 FAIL`。**
+
+### 這不是實作失敗
+
+`ln(132) = 4.8828` 是「完全沒學到」的 CE 下界；
+實測 final train loss 是 **0.0000–0.0001** ——
+**模型把 48,000 條訓練 surface 背得完美。**
+
+> **失敗的是組合泛化，不是訓練。**
+> 每個 alias 都見過（phase-0 已 assert 24/24 有 train witness），
+> 每個 entity／attribute class 都見過（132＋132），
+> **未見的只有 renderer program 的 slot 順序、完整字串、與 `(entity, attribute)` 配對。**
+> 在那個 shift 下，write／read 兩側的 canonicalizer **完全不一致**。
+
+### (b) 的 PASS **沒有資訊量** —— 必須明寫
+
+三個 stratum 的 `false_merge` 都是 0，但**模型根本不把任何東西解碼成 `K*`**，
+所以它**也不可能** false-merge 到 `K*`。
+
+> **(b) 在此輪是空洞通過（vacuous）。** §4.65 犯過同型的過度陳述，這裡先自己標明。
+
+### 兩個描述性觀察（非事前登記）
+
+- `(c)` 幾乎全部落在 **abstain**（281／299／297），少數 `wrong-existing`（19／1／3）——
+  也就是解碼出的 read key **多半根本不存在於 Store**。
+- `commit` 出現 `reject_conflict` **48／26／29**：同一 anchor 的四個 slot
+  被解碼成**同一個 key**（本應四個互異）—— **解碼結果有塌縮**。
+
+**一個機制假說（描述，未被本實驗驗證）**：train 只有 4 條 program，
+held-out 兩條改變了 slot **順序**；模型可能學成**位置相依**的解碼，
+而不是依 `E0/E1/A0/A1` 標記做綁定。
+**若要驗證需另立實驗**（例如加入更多 slot 順序的 program），
+**本關不做，也不得據此改配方重跑。**
+
+### 依 prereg 封存
+
+歸因記為 **`RWA-0` (a)-failure：held-out renderer composition 下的 read-write agreement**。
+**不得**改 hard-negative 定義、split、門檻或 program 集合去救。
+
+**可主張**：在此 closed-world、24 個 alias、監督式 direct-CE、
+且**訓練集被完美擬合**的條件下，
+**write 與 read 兩側對未見 renderer composition 不產生同一個 typed key**。
+
+**不可主張**：不得說 read-write agreement 不可能；
+不得說更多 program／更大模型不行（**未做也不准 sweep**）；
+不得外推到自然語言或 open-set。
+
+### 這一格在整體盤點裡的位置
+
+§4.69 把讀寫一致標成「**整個系統的樞紐，而且從未被測過**」。
+現在測了，**在最有利的條件下（封閉世界、監督式、train 完美擬合）仍然 FAIL**。
+
+**「安全但無用」不再是假想的風險** —— `(c)` 的 281／299／297 次 abstain
+就是它的實測形狀：系統誠實地說「我沒有」，而它其實有，只是 key 對不上。
+
+---
+
 ## 5. 七條可靠度（成功的定義）
 
 | # | 可靠度 | 判準 | 現況 |

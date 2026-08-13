@@ -1,0 +1,80 @@
+{
+  "artifact": "8ca1d40413aae706",
+  "seeds": {
+    "2026081401": {
+      "a_ok": 0,
+      "b": {
+        "same_entity": 0,
+        "same_attr": 0,
+        "swap": 0
+      },
+      "c_correct": 0,
+      "c_wrong_existing": 19,
+      "c_abstain": 281,
+      "commit_status": {
+        "new": 1152,
+        "duplicate": 0,
+        "reject_conflict": 48
+      },
+      "first_fail": {
+        "row": 0,
+        "a": false,
+        "read": "None"
+      },
+      "n": 300,
+      "final_train_loss": 5.084602162241936e-05
+    },
+    "2026081402": {
+      "a_ok": 0,
+      "b": {
+        "same_entity": 0,
+        "same_attr": 0,
+        "swap": 0
+      },
+      "c_correct": 0,
+      "c_wrong_existing": 1,
+      "c_abstain": 299,
+      "commit_status": {
+        "new": 1174,
+        "duplicate": 0,
+        "reject_conflict": 26
+      },
+      "first_fail": {
+        "row": 0,
+        "a": false,
+        "read": "None"
+      },
+      "n": 300,
+      "final_train_loss": 4.8393143515568227e-05
+    },
+    "2026081403": {
+      "a_ok": 0,
+      "b": {
+        "same_entity": 0,
+        "same_attr": 0,
+        "swap": 0
+      },
+      "c_correct": 0,
+      "c_wrong_existing": 3,
+      "c_abstain": 297,
+      "commit_status": {
+        "new": 1171,
+        "duplicate": 0,
+        "reject_conflict": 29
+      },
+      "first_fail": {
+        "row": 0,
+        "a": false,
+        "read": "None"
+      },
+      "n": 300,
+      "final_train_loss": 4.4901455112267286e-05
+    }
+  },
+  "fails": [
+    "2026081401",
+    "2026081402",
+    "2026081403"
+  ],
+  "pass": false
+}
