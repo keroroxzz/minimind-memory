@@ -49,12 +49,15 @@ key-addressed model, universal zero-error retrieval is equivalent to the
 existence of a common injective address factorization of write and query
 interfaces.  Second, we characterize exactly what a claimed bounded-read
 ``reasoning'' module entails: the task answer must be invariant on every
-class of states that yields the same declared read transcript.  We also prove
-that a faithful, predeclared query witness turns this semantic execution into
-physical Store reads.  Finally, we prove an observation-indistinguishability
-statement for open-world abstention.  These are representation results
-relative to a fixed task semantics; they neither show that natural-language
-canonicalization can be learned nor show that it cannot.
+class of states and queries that yields the same declared query view and read
+transcript.  We also prove that a faithful, predeclared query witness turns
+this semantic execution into physical Store reads, and exhibit a family of
+finite two-hop tasks with two adaptive reads but an arbitrarily large
+worst-case gap against address-oblivious point reads.  Finally, we prove an
+observation-indistinguishability statement for open-world abstention.  These
+are representation results relative to a fixed task semantics; they neither
+show that natural-language canonicalization can be learned nor show that it
+cannot.
 \end{abstract}
 
 \section{Motivation (prose)}
@@ -679,8 +682,14 @@ either direction.
 The note does not claim that natural-language canonicalization is achievable
 or impossible, that latent delivery is superior to textual context, that a
 value codec or reasoning executor can be learned, or that a measured failure
-of a particular neural mechanism refutes SAF.  It characterizes the exact
-address interface required by one restricted store contract.
+of a particular neural mechanism refutes SAF.  Nor does its declared
+point-read, worst-case separation imply an advantage for neural architectures
+or learned address decoding.  Within fixed schemas, zero-error point reads,
+no-bypass execution, and the declared state/query/policy scopes, it instead
+characterizes a one-shot exact address interface, an executor-locality and
+physical-realization boundary for bounded reads, a family of finite tasks
+with an unbounded address-adaptivity gap, and the extra observational
+assumptions required for open-world abstention.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}
