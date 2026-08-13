@@ -24,7 +24,14 @@ P = json.load(open(os.path.join(HERE, "MF0C_prereg.json")))
 CL, SL = P["controller_compute_lock"], P["sampling_law"]
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 B, E, NA, NC, HD, TAU = 8, 16, 12, 3, 16, 1.0
-IN = NC + E + NA
+# ---- CI-1（Codex [185]）：兩臂唯一差異是一個**冗餘的 derived bit** --------
+#   `+` : q = 1[cat(attr) == goal]              ← 真的 conjunction
+#   `-` : q = 1[cat(attr) == (goal+1) mod 3]    ← 錯位的 decoy
+# 兩者都**由既有輸入完全決定**、維度皆 32、邊際皆 1/3。
+# 這是**顯式提供 conjunction 的 inductive-bias intervention，不是資訊增加**，
+# 因此**永遠不可**稱 natural／emergent formation。
+ARM = None                      # None = 原始 MF0-C（31 維，逐位元不變）
+IN = NC + E + NA + (0 if ARM is None else 1)
 G_SESS, M_ROLL, UPD = 8, 4, 20000
 IDX_SEED = 2026081391
 CAT_OF = D.CAT_OF
@@ -85,7 +92,11 @@ def rollout(m, ev, gl, stochastic, gen=None, ablate=False):
     for t in range(T):
         e, a = ev[:, t, 0].to(DEV), ev[:, t, 1].to(DEV)
         u = torch.cat([gl1, F.one_hot(e, E).float(), F.one_hot(a, NA).float()], -1)
-        assert u.shape[1] == IN == 31, "controller input 必須恰 31 維"
+        if ARM is not None:
+            cat = torch.tensor(CAT_OF, device=DEV)[a]
+            tgt = gl.to(DEV) if ARM == "+" else (gl.to(DEV) + 1) % NC
+            u = torch.cat([u, (cat == tgt).float().unsqueeze(1)], -1)
+        assert u.shape[1] == IN, f"controller input 必須恰 {IN} 維"
         sc, h = m.step(u, h, ablate)
         assert h.dtype == torch.float16, "兩步之間不得保留 FP32 state"
         tie = KH.to(DEV)[e, a]
