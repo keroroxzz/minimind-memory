@@ -193,6 +193,13 @@ and query view \(u\), the induced transcript
 \(x_{t+1}=S^{\bt}(d_{t+1})\), where
 \(d_{t+1}=\pi(u,h_t)\), until it halts or has made \(r\) reads.
 
+For a state scope \(\mathcal X\subseteq\mathcal S\), an admissible policy
+is \emph{oblivious on \(\mathcal X\)} if, for every \(u\in\mathcal T\),
+there is one finite nonrepeating referent sequence such that the referent
+sequence of \(\operatorname{tr}_{\pi}(S,u)\) is that sequence for every
+\(S\in\mathcal X\).  Thus both the next referent and the decision to halt
+are independent of retrieved values on the declared state scope.
+
 An executor is \emph{no-bypass relative to \((\tau,\pi)\)} if its output has
 the form
 \[
@@ -242,13 +249,14 @@ nothing, however, about how the resulting factor depends on \(S\).
 \end{remark}
 
 \begin{remark}[Oblivious plans and the real access budget]
-An oblivious plan is the special case in which \(\pi\)'s sequence of queried
-referents depends on \(\tau(q)\) alone.  The earlier ``fixed read set'' condition
-would measure the support of that plan, not the number of physical reads.
-The adaptive formulation is necessary: a two-read policy may first read a
-pointer \(p\) and then read the referent named by its value, whereas an
-oblivious plan for the same task may need to include every possible target.
-Here \(r\) always counts actual point reads along a runtime path.
+The earlier ``fixed read set'' condition would measure the support of an
+oblivious plan, not the number of physical reads.
+The adaptive formulation is not merely cosmetic: a two-read policy may first
+read a pointer \(p\) and then read the referent named by its value, whereas
+an oblivious plan for the same task can require every possible target.
+Corollary~\ref{cor:gap} gives an unbounded point-read separation under this
+declared interface.  Here \(r\) always counts actual point reads along a
+runtime path.
 \end{remark}
 
 \begin{proposition}[A nontrivial two-hop target]\label{prop:twohop}
@@ -263,7 +271,7 @@ view.
 Let \(\mathcal R\) be a finite set with \(\lvert\mathcal R\rvert\geq2\),
 let \(\Dom_0=\{p\}\sqcup\mathcal R\),
 \(\Va=\mathcal R\sqcup\{0,1\}\), and
-\(\mathcal Y=\Va\cup\{\bt\}\).  For every \(d\in\Dom_0\), take a query
+\(\mathcal Y=\{0,1,\bt\}\).  For every \(d\in\Dom_0\), take a query
 \(q_d\), set \(\Qu_0=\{q_d:d\in\Dom_0\}\), let \(\semq(q_d)=d\), and
 set \(\tau(q_d)=d\).  Let \(\Wr_0\) consist of \(w_{p,t}\) with
 \(\semw(w_{p,t})=(p,t)\) for each
@@ -307,6 +315,41 @@ Finally, take a key space admitting an injective
 and \(\rho(d)=q_d\) is a fixed query-witness selector, so the two semantic
 reads above also have the physical realization of
 Corollary~\ref{cor:composition}.
+\end{proof}
+
+\begin{corollary}[Unbounded adaptive--oblivious point-read gap]
+  \label{cor:gap}
+For every integer \(m\geq2\), the instance of
+Proposition~\ref{prop:twohop} with \(\lvert\mathcal R\rvert=m\) has an
+exact adaptive two-read executor, while every exact no-bypass executor whose
+policy is oblivious on \(\mathcal S_{\Wr_0}\) relative to the same \(\tau\)
+uses at least \(m+1\)
+semantic point reads on query \(q_p\).
+\end{corollary}
+
+\begin{proof}
+Fix an oblivious policy and query \(q_p\).  Since both its referent sequence
+and its halting time depend only on \(\tau(q_p)=p\), it has a fixed
+nonrepeating read sequence, with underlying set \(D\subseteq\Dom_0\).
+First suppose
+\(p\notin D\).  Choose distinct \(t_0,t_1\in\mathcal R\) and compare
+the legal histories
+\[
+ H_0=(w_{p,t_0},w_{t_0,0},w_{t_1,1}),
+ \qquad
+ H_1=(w_{p,t_1},w_{t_0,0},w_{t_1,1}).
+\]
+Every read in \(D\) has the same value in the two induced states, while
+\(B(S_{H_0},q_p)=0\neq1=B(S_{H_1},q_p)\).  Thus exactness requires
+\(p\in D\).
+
+If the policy uses at most \(m\) reads, then
+\(D\setminus\{p\}\) omits some \(t\in\mathcal R\).  The histories
+\(H_b=(w_{p,t},w_{t,b})\), \(b=0,1\), have the same complete read
+transcript: the read at \(p\) returns \(t\), and every other referent in
+\(D\) is absent.  Their answers are different, so condition (L) fails.
+Theorem~\ref{thm:locality} rules out such an executor.  The adaptive
+two-read upper bound is Proposition~\ref{prop:twohop}.
 \end{proof}
 
 \begin{remark}[Where the content is]
