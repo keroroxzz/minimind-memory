@@ -46,8 +46,9 @@ operations be correct for \emph{every} legal runtime state?  In a one-shot,
 key-addressed model, universal zero-error retrieval is equivalent to the
 existence of a common injective address factorization of write and query
 interfaces.  Second, we characterize exactly what a claimed bounded-read
-``reasoning'' module entails: the task answer must be invariant to all state
-changes outside its declared read set.  We also prove an
+``reasoning'' module entails: the task answer must be invariant on every
+class of states that yields the same declared read transcript.  We also prove
+an
 observation-indistinguishability statement for open-world abstention.  These
 are representation results relative to a fixed task semantics; they neither
 show that natural-language canonicalization can be learned nor show that it
@@ -158,56 +159,82 @@ notion of correctness.  Its role is load-bearing but elementary.
 
 \section{What a reasoning--knowledge split can formally mean}
 
-The slogan has content only after the executor's information interface is
+The slogan has content only after the executor's observation interface is
 fixed.  Let \(\overline{\Va}=\Va\cup\{\bt\}\), and let
 \(S^{\bt}(d)=S(d)\) if \(d\in\operatorname{dom}S\) and \(\bt\) otherwise.
 
-\begin{definition}[State-independent \(r\)-read decomposition]
-  \label{def:locality}
-Fix an output set \(\mathcal Y\), a query view \(\tau:\Qu_0\to\mathcal T\),
-and an integer \(r\geq0\).  A task answer
-\(A:\mathcal S\times\Qu_0\to\mathcal Y\) has a
-\emph{state-independent \(r\)-read decomposition} if there are a map
-\(R:\Qu_0\to\bigcup_{m=0}^{r}\Dom_0^m\), whose entries are distinct, and an
-executor
+\begin{definition}[Adaptive point-read policy]\label{def:policy}
+Fix a query view \(\tau:\Qu_0\to\mathcal T\) and an integer \(r\geq0\).
+Write
 \[
- E:\mathcal T\times\bigcup_{m=0}^{r}\overline{\Va}^{m}\to\mathcal Y
+ \mathcal H_r=\bigcup_{t=0}^{r}(\Dom_0\times\overline{\Va})^t
 \]
-such that for every legal state \(S\in\mathcal S\) and query \(q\), writing
-\(R(q)=(d_1,\ldots,d_m)\),
+for the set of possible read transcripts.  An \emph{adaptive \(r\)-read
+policy} \(\pi\) maps a query \(q\) and every
+prior transcript
 \[
- A(S,q)=E\bigl(\tau(q),(S^{\bt}(d_1),\ldots,S^{\bt}(d_m))\bigr).
+ h=((d_1,x_1),\ldots,(d_t,x_t))
+ \in(\Dom_0\times\overline{\Va})^t,\qquad t<r,
 \]
-The read plan \(R(q)\) and query view \(\tau(q)\) are functions of the task
-query, not of the hidden runtime state or of the implementation's output.
+to either \(\mathsf{halt}\) or a next referent \(d\in\Dom_0\).  It may not
+repeat a referent already appearing in \(h\).  On state \(S\), the induced
+transcript \(\operatorname{tr}_{\pi}(S,q)\) is obtained by recursively reading
+\(x_{t+1}=S^{\bt}(d_{t+1})\), where
+\(d_{t+1}=\pi(q,h_t)\), until it halts or has made \(r\) reads.
+
+An executor is \emph{no-bypass relative to \((\tau,\pi)\)} if its output has
+the form
+\[
+ E\bigl(\tau(q),\operatorname{tr}_{\pi}(S,q)\bigr),
+ \qquad E:\mathcal T\times\mathcal H_r\to\mathcal Y,
+\]
+for a deterministic function \(E\), with no other access to \(S\).  Thus
+``no bypass'' is an explicit information-flow restriction, not merely an
+architectural description.
 \end{definition}
 
-\begin{theorem}[Executor locality criterion]\label{thm:locality}
-Consider a no-bypass deterministic system whose executor, on query \(q\),
-receives only \(\tau(q)\) and the ordered values
-\((S^{\bt}(d):d\in R(q))\), where \(\lvert R(q)\rvert\leq r\).  It is
-exact on every legal state if and only if \(A\) has the state-independent
-\(r\)-read decomposition of Definition~\ref{def:locality} with the system's
-read plan and query view.
+\begin{theorem}[Adaptive executor-locality criterion]\label{thm:locality}
+Fix \(\tau\), an adaptive \(r\)-read policy \(\pi\), and a task answer
+\(A:\mathcal S\times\Qu_0\to\mathcal Y\).  There exists an exact
+deterministic executor no-bypass relative to \((\tau,\pi)\) if and only if
+for every \(S,S'\in\mathcal S\) and \(q,q'\in\Qu_0\),
+\[
+ \bigl(\tau(q),\operatorname{tr}_{\pi}(S,q)\bigr)
+ =\bigl(\tau(q'),\operatorname{tr}_{\pi}(S',q')\bigr)
+ \quad\Longrightarrow\quad A(S,q)=A(S',q'). \tag{L}
+\]
 \end{theorem}
 
 \begin{proof}
-If the system is exact, take its deterministic executor as \(E\).  Two
-states agreeing on every member of \(R(q)\) give it identical inputs, hence
-the same output; exactness makes that output \(A(S,q)\), proving the stated
-factorization.  Conversely, an executor implementing the displayed \(E\)
-is exact by the defining equality.
+If an exact no-bypass executor exists, equal pairs on the left give it equal
+inputs and hence equal outputs, which exactness identifies with the two task
+answers.  Conversely, under (L), define \(E(t,h)\) to be \(A(S,q)\) for any
+legal pair with \((\tau(q),\operatorname{tr}_{\pi}(S,q))=(t,h)\), and assign
+an arbitrary output to pairs that never occur.  Condition (L) makes this
+definition well defined, and the resulting executor is exact by construction.
 \end{proof}
 
+\begin{remark}[Oblivious plans and the real access budget]
+An oblivious plan is the special case in which \(\pi\)'s sequence of queried
+referents depends on \(q\) alone.  The earlier ``fixed read set'' condition
+would measure the support of that plan, not the number of physical reads.
+The adaptive formulation is necessary: a two-read policy may first read a
+pointer \(p\) and then read the referent named by its value, whereas an
+oblivious plan for the same task may need to include every possible target.
+Here \(r\) always counts actual point reads along a runtime path.
+\end{remark}
+
 \begin{remark}[Where the content is]
-The theorem is non-vacuous only when \(r\), \(R\), and \(\tau\) are declared
-independently of the implementation and \(r\) is a real access constraint.
-Otherwise an implementation can supply its whole current state to \(E\) and
-conceal all work there.  Thus it formalizes a conditional interface claim,
-not an assertion that ``reasoning'' and ``knowledge'' are independently
-learnable or orthogonal.  With exact access to each \(d\in R(q)\),
+Theorem~\ref{thm:locality} is deliberately a realizability criterion, not a
+claim that an arbitrary given executor is exact.  It is non-vacuous only when
+\(r\), \(\tau\), and \(\pi\) are declared independently of the implementation
+and \(r\) is a real access constraint.  Otherwise an implementation can
+supply its whole current state to \(E\) and conceal all work there.  Thus it
+formalizes a conditional interface claim, not an assertion that ``reasoning''
+and ``knowledge'' are independently learnable or orthogonal.  With exact
+addressing for every point read selected by \(\pi\),
 Theorem~\ref{thm:factor} supplies the memory-side condition; the executor
-side remains the separately specified map \(E\).
+side remains the separately specified function \(E\).
 \end{remark}
 
 \section{Semantic address factorization}
